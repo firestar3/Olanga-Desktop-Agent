@@ -1,0 +1,532 @@
+﻿node.exe : npm warn Unknown env config "devdir". This will stop working in the next major version of npm.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (npm warn Unknow...version of npm.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+USERDATA: C:\Users\aarav\AppData\Roaming\olanga-control
+STORE_CANDIDATE: C:\Users\aarav\AppData\Roaming\olanga-control\secure-store.json EXISTS
+KEY_PREFIX: nvapi-49...
+FUNCTION_ID: 877104f7-e885-42b9-8de8-f6e4c6303969
+GRPC_PATH: /nvidia.riva.tts.RivaSpeechSynthesis/GetRivaSynthesisConfig
+HTTP_STATUS: 200
+RESPONSE_BYTES: 10474
+--- FULL_MODEL_CONFIG_JSON ---
+{
+  "modelConfig": [
+    {
+      "model_name": "magpie_tts_ensemble-Magpie-Multilingual",
+      "parameters": {
+        "model_family": "riva",
+        "wfst_post_process_model": "lang_files",
+        "sample_rate": "22050",
+        "chunk_ms": "300",
+        "wfst_verbalizer_model": "lang_files",
+        "chunk_length": "80",
+        "overlap_length": "5",
+        "verbalizer_proto_files": "lang_files",
+        "postprocessor_proto_files": "lang_files",
+        "voice_name": "Magpie-Multilingual",
+        "wfst_tokenizer_model": "lang_files",
+        "multilingual": "True",
+        "tokenizer_proto_files": "lang_files",
+        "transcript_decoder_layers": "3,4,5,6,7,8",
+        "subvoices": "EN-US.Mia:0,EN-US.Mia.Neutral:1,EN-US.Mia.Calm:2,EN-US.Mia.Angry:3,EN-US.Mia.Happy:4,EN-US.Mia.Sad:5,EN-US.Jason:6,EN-US.Jason.Neutral:7,EN-US.Jason.Calm:8,EN-US.Jason.Angry:9,EN-US.Jason.Happy:10,EN-US.Aria:11,EN-US.Aria.Neutral:12,EN-US.Aria.Calm:13,EN-US.Aria.Angry:14,EN-US.Aria.Happy:15,EN-US.Aria.Sad:16,EN-US.Aria.Fearful:17,EN-US.Leo:18,EN-US.Leo.Neutral:19,EN-US.Leo.Calm:20,EN-US.Leo.Angry:21,EN-US.Leo.Sad:22,EN-US.Leo.Fearful:23,ZH-CN.HouZhen:24,ZH-CN.Siwei:25,FR-FR.Louise:26,FR-FR.Pascal:27,FR-FR.Pascal.Neutral:28,FR-FR.Pascal.Calm:29,FR-FR.Pascal.Angry:30,FR-FR.Pascal.Happy:31,FR-FR.Pascal.Disgust:32,FR-FR.Pascal.Sad:33,ES-US.Isabela:34,ES-US.Isabela.Neutral:36,ES-US.Isabela.Calm:37,ES-US.Isabela.Sad:38,ES-US.Isabela.Angry:39,ES-US.Isabela.Happy:40,ES-US.Isabela.PleasantSurprised:41,ES-US.Isabela.Fearful:42,ES-US.Diego:35,ES-US.Diego.Neutral:43,ES-US.Diego.Calm:44,ES-US.Diego.Angry:45,ES-US.Diego.Happy:46,ES-US.Diego.PleasantSurprised:47,ES-US.Diego.Disgust:48,EN-US.Sofia:49,EN-US.Sofia.Neutral:50,EN-US.Sofia.Calm:51,EN-US.Sofia.Angry:52,EN-US.Sofia.Happy:53,EN-US.Sofia.Fearful:54,EN-US.Ray:55,EN-US.Ray.Neutral:56,EN-US.Ray.Calm:57,EN-US.Ray.Angry:58,EN-US.Ray.Happy:59,EN-US.Ray.Fearful:60,VI-VN.Long.Neutral:61,VI-VN.Long.Angry:62,VI-VN.Long.Calm:63,VI-VN.Long.Disgusted:64,VI-VN.Long.Fearful:65,VI-VN.Long.Happy:66,VI-VN.Long.Sad:67,VI-VN.Phung.Neutral:68,VI-VN.Phung.Angry:69,VI-VN.Phung.Disgusted:70,VI-VN.Phung.Fearful:71,VI-VN.Phung.Happy:72,VI-VN.Phung.Sad:73,IT-IT.Isabela:34,IT-IT.Isabela.Neutral:36,IT-IT.Isabela.Calm:37,IT-IT.Isabela.Sad:38,IT-IT.Isabela.Angry:39,IT-IT.Isabela.Happy:40,IT-IT.Isabela.PleasantSurprised:41,IT-IT.Isabela.Fearful:42,IT-IT.Pascal:27,IT-IT.Pascal.Neutral:28,IT-IT.Pascal.Calm:29,IT-IT.Pascal.Angry:30,IT-IT.Pascal.Happy:31,IT-IT.Pascal.Disgust:32,IT-IT.Pascal.Sad:33,DE-DE.Pascal:27,DE-DE.Pascal.Neutral:28,DE-DE.Pascal.Calm:29,DE-DE.Pascal.Angry:30,DE-DE.Pascal.Happy:31,DE-DE.Pascal.Disgust:32,DE-DE.Pascal.Sad:33,DE-DE.Mia:0,DE-DE.Mia.Neutral:1,DE-DE.Mia.Calm:2,DE-DE.Mia.Angry:3,DE-DE.Mia.Happy:4,DE-DE.Mia.Sad:5,DE-DE.Diego:35,DE-DE.Diego.Neutral:43,DE-DE.Diego.Calm:44,DE-DE.Diego.Angry:45,DE-DE.Diego.Happy:46,DE-DE.Diego.PleasantSurprised:47,DE-DE.Diego.Disgust:48,DE-DE.Sofia:49,DE-DE.Sofia.Neutral:50,DE-DE.Sofia.Calm:51,DE-DE.Sofia.Angry:52,DE-DE.Sofia.Happy:53,DE-DE.Sofia.Fearful:54,EN-US.Pascal:27,EN-US.Pascal.Neutral:28,EN-US.Pascal.Calm:29,EN-US.Pascal.Angry:30,EN-US.Pascal.Happy:31,EN-US.Pascal.Disgust:32,EN-US.Pascal.Sad:33,EN-US.Diego:35,EN-US.Diego.Neutral:43,EN-US.Diego.Calm:44,EN-US.Diego.Angry:45,EN-US.Diego.Happy:46,EN-US.Diego.PleasantSurprised:47,EN-US.Diego.Disgust:48,EN-US.Louise:26,EN-US.Isabela:34,EN-US.Isabela.Neutral:36,EN-US.Isabela.Calm:37,EN-US.Isabela.Sad:38,EN-US.Isabela.Angry:39,EN-US.Isabela.Happy:40,EN-US.Isabela.PleasantSurprised:41,EN-US.Isabela.Fearful:42,ZH-CN.Louise:26,ZH-CN.Pascal:27,ZH-CN.Pascal.Neutral:28,ZH-CN.Pascal.Calm:29,ZH-CN.Pascal.Angry:30,ZH-CN.Pascal.Happy:31,ZH-CN.Pascal.Disgust:32,ZH-CN.Pascal.Sad:33,ZH-CN.Isabela:34,ZH-CN.Isabela.Neutral:36,ZH-CN.Isabela.Calm:37,ZH-CN.Isabela.Sad:38,ZH-CN.Isabela.Angry:39,ZH-CN.Isabela.Happy:40,ZH-CN.Isabela.PleasantSurprised:41,ZH-CN.Isabela.Fearful:42,ZH-CN.Diego:35,ZH-CN.Diego.Neutral:43,ZH-CN.Diego.Calm:44,ZH-CN.Diego.Angry:45,ZH-CN.Diego.Happy:46,ZH-CN.Diego.PleasantSurprised:47,ZH-CN.Diego.Disgust:48,ZH-CN.Ray:55,ZH-CN.Ray.Neutral:56,ZH-CN.Ray.Calm:57,ZH-CN.Ray.Angry:58,ZH-CN.Ray.Happy:59,ZH-CN.Ray.Fearful:60,ZH-CN.Mia:0,ZH-CN.Mia.Neutral:1,ZH-CN.Mia.Calm:2,ZH-CN.Mia.Angry:3,ZH-CN.Mia.Happy:4,ZH-CN.Mia.Sad:5,ZH-CN.Aria:11,ZH-CN.Aria.Neutral:12,ZH-CN.Aria.Calm:13,ZH-CN.Aria.Angry:14,ZH-CN.Aria.Happy:15,ZH-CN.Aria.Sad:16,ZH-CN.Aria.Fearful:17,ZH-CN.Long.Neutral:61,ZH-CN.Long.Angry:62,ZH-CN.Long.Calm:63,ZH-CN.Long.Disgusted:64,ZH-CN.Long.Fearful:65,ZH-CN.Long.Happy:66,ZH-CN.Long.Sad:67,ES-US.Louise:26,ES-US.Pascal:27,ES-US.Pascal.Neutral:28,ES-US.Pascal.Calm:29,ES-US.Pascal.Angry:30,ES-US.Pascal.Happy:31,ES-US.Pascal.Disgust:32,ES-US.Pascal.Sad:33,ES-US.Sofia:49,ES-US.Sofia.Neutral:50,ES-US.Sofia.Calm:51,ES-US.Sofia.Angry:52,ES-US.Sofia.Happy:53,ES-US.Sofia.Fearful:54,ES-US.Ray:55,ES-US.Ray.Neutral:56,ES-US.Ray.Calm:57,ES-US.Ray.Angry:58,ES-US.Ray.Happy:59,ES-US.Ray.Fearful:60,ES-US.Mia:0,ES-US.Mia.Neutral:1,ES-US.Mia.Calm:2,ES-US.Mia.Angry:3,ES-US.Mia.Happy:4,ES-US.Mia.Sad:5,ES-US.Aria:11,ES-US.Aria.Neutral:12,ES-US.Aria.Calm:13,ES-US.Aria.Angry:14,ES-US.Aria.Happy:15,ES-US.Aria.Sad:16,ES-US.Aria.Fearful:17,ES-US.Jason:6,ES-US.Jason.Neutral:7,ES-US.Jason.Calm:8,ES-US.Jason.Angry:9,ES-US.Jason.Happy:10,ES-US.Leo:18,ES-US.Leo.Neutral:19,ES-US.Leo.Calm:20,ES-US.Leo.Angry:21,ES-US.Leo.Sad:22,ES-US.Leo.Fearful:23,FR-FR.Mia:0,FR-FR.Mia.Neutral:1,FR-FR.Mia.Calm:2,FR-FR.Mia.Angry:3,FR-FR.Mia.Happy:4,FR-FR.Mia.Sad:5,FR-FR.Jason:6,FR-FR.Jason.Neutral:7,FR-FR.Jason.Calm:8,FR-FR.Jason.Angry:9,FR-FR.Jason.Happy:10,FR-FR.Aria:11,FR-FR.Aria.Neutral:12,FR-FR.Aria.Calm:13,FR-FR.Aria.Angry:14,FR-FR.Aria.Happy:15,FR-FR.Aria.Sad:16,FR-FR.Aria.Fearful:17,FR-FR.Leo:18,FR-FR.Leo.Neutral:19,FR-FR.Leo.Calm:20,FR-FR.Leo.Angry:21,FR-FR.Leo.Sad:22,FR-FR.Leo.Fearful:23,FR-FR.Sofia:49,FR-FR.Sofia.Neutral:50,FR-FR.Sofia.Calm:51,FR-FR.Sofia.Angry:52,FR-FR.Sofia.Happy:53,FR-FR.Sofia.Fearful:54,FR-FR.Ray:55,FR-FR.Ray.Neutral:56,FR-FR.Ray.Calm:57,FR-FR.Ray.Angry:58,FR-FR.Ray.Happy:59,FR-FR.Ray.Fearful:60,FR-FR.Isabela:34,FR-FR.Isabela.Neutral:36,FR-FR.Isabela.Calm:37,FR-FR.Isabela.Sad:38,FR-FR.Isabela.Angry:39,FR-FR.Isabela.Happy:40,FR-FR.Isabela.PleasantSurprised:41,FR-FR.Isabela.Fearful:42,FR-FR.Diego:35,FR-FR.Diego.Neutral:43,FR-FR.Diego.Calm:44,FR-FR.Diego.Angry:45,FR-FR.Diego.Happy:46,FR-FR.Diego.PleasantSurprised:47,FR-FR.Diego.Disgust:48,VI-VN.Mia:0,VI-VN.Mia.Neutral:1,VI-VN.Mia.Calm:2,VI-VN.Mia.Angry:3,VI-VN.Mia.Happy:4,VI-VN.Mia.Sad:5,VI-VN.Jason:6,VI-VN.Jason.Neutral:7,VI-VN.Jason.Calm:8,VI-VN.Jason.Angry:9,VI-VN.Jason.Happy:10,VI-VN.Aria:11,VI-VN.Aria.Neutral:12,VI-VN.Aria.Calm:13,VI-VN.Aria.Angry:14,VI-VN.Aria.Happy:15,VI-VN.Aria.Sad:16,VI-VN.Aria.Fearful:17,VI-VN.Leo:18,VI-VN.Leo.Neutral:19,VI-VN.Leo.Calm:20,VI-VN.Leo.Angry:21,VI-VN.Leo.Sad:22,VI-VN.Leo.Fearful:23,ZH-CN.HouZhen:24,ZH-CN.Siwei:25,FR-FR.Louise:26,FR-FR.Pascal:27,FR-FR.Pascal.Neutral:28,FR-FR.Pascal.Calm:29,FR-FR.Pascal.Angry:30,FR-FR.Pascal.Happy:31,FR-FR.Pascal.Disgust:32,FR-FR.Pascal.Sad:33,ES-US.Isabela:34,ES-US.Isabela.Neutral:36,ES-US.Isabela.Calm:37,ES-US.Isabela.Sad:38,ES-US.Isabela.Angry:39,ES-US.Isabela.Happy:40,ES-US.Isabela.PleasantSurprised:41,ES-US.Isabela.Fearful:42,ES-US.Diego:35,ES-US.Diego.Neutral:43,ES-US.Diego.Calm:44,ES-US.Diego.Angry:45,ES-US.Diego.Happy:46,ES-US.Diego.PleasantSurprised:47,ES-US.Diego.Disgust:48,VI-VN.Sofia:49,VI-VN.Sofia.Neutral:50,VI-VN.Sofia.Calm:51,VI-VN.Sofia.Angry:52,VI-VN.Sofia.Happy:53,VI-VN.Sofia.Fearful:54,VI-VN.Ray:55,VI-VN.Ray.Neutral:56,VI-VN.Ray.Calm:57,VI-VN.Ray.Angry:58,VI-VN.Ray.Happy:59,VI-VN.Ray.Fearful:60,HI-IN.Mia:0,HI-IN.Mia.Neutral:1,HI-IN.Mia.Calm:2,HI-IN.Mia.Angry:3,HI-IN.Mia.Happy:4,HI-IN.Mia.Sad:5,HI-IN.Jason:6,HI-IN.Jason.Neutral:7,HI-IN.Jason.Calm:8,HI-IN.Jason.Angry:9,HI-IN.Jason.Happy:10,HI-IN.Aria:11,HI-IN.Aria.Neutral:12,HI-IN.Aria.Calm:13,HI-IN.Aria.Angry:14,HI-IN.Aria.Happy:15,HI-IN.Aria.Sad:16,HI-IN.Aria.Fearful:17,HI-IN.Leo:18,HI-IN.Leo.Neutral:19,HI-IN.Leo.Calm:20,HI-IN.Leo.Angry:21,HI-IN.Leo.Sad:22,HI-IN.Leo.Fearful:23,HI-IN.HouZhen:24,HI-IN.Siwei:25,HI-IN.Pascal:27,HI-IN.Pascal.Neutral:28,HI-IN.Pascal.Calm:29,HI-IN.Pascal.Angry:30,HI-IN.Pascal.Happy:31,HI-IN.Pascal.Disgust:32,HI-IN.Pascal.Sad:33,HI-IN.Isabela:34,HI-IN.Isabela.Neutral:36,HI-IN.Isabela.Calm:37,HI-IN.Isabela.Sad:38,HI-IN.Isabela.Angry:39,HI-IN.Isabela.Happy:40,HI-IN.Isabela.PleasantSurprised:41,HI-IN.Isabela.Fearful:42,HI-IN.Diego:35,HI-IN.Diego.Neutral:43,HI-IN.Diego.Calm:44,HI-IN.Diego.Angry:45,HI-IN.Diego.Happy:46,HI-IN.Diego.PleasantSurprised:47,HI-IN.Diego.Disgust:48,HI-IN.Sofia:49,HI-IN.Sofia.Neutral:50,HI-IN.Sofia.Calm:51,HI-IN.Sofia.Angry:52,HI-IN.Sofia.Happy:53,HI-IN.Sofia.Fearful:54,HI-IN.Ray:55,HI-IN.Ray.Neutral:56,HI-IN.Ray.Calm:57,HI-IN.Ray.Angry:58,HI-IN.Ray.Happy:59,HI-IN.Ray.Fearful:60,HI-IN.Long.Neutral:61,HI-IN.Long.Angry:62,HI-IN.Long.Calm:63,HI-IN.Long.Disgusted:64,HI-IN.Long.Fearful:65,HI-IN.Long.Happy:66,HI-IN.Long.Sad:67,HI-IN.Phung.Neutral:68,HI-IN.Phung.Angry:69,HI-IN.Phung.Disgusted:70,HI-IN.Phung.Fearful:71,HI-IN.Phung.Happy:72,HI-IN.Phung.Sad:73,JA-JP.Mia:0,JA-JP.Mia.Neutral:1,JA-JP.Mia.Calm:2,JA-JP.Mia.Angry:3,JA-JP.Mia.Happy:4,JA-JP.Mia.Sad:5,JA-JP.Jason:6,JA-JP.Jason.Neutral:7,JA-JP.Jason.Calm:8,JA-JP.Jason.Angry:9,JA-JP.Jason.Happy:10,JA-JP.Aria:11,JA-JP.Aria.Neutral:12,JA-JP.Aria.Calm:13,JA-JP.Aria.Angry:14,JA-JP.Aria.Happy:15,JA-JP.Aria.Sad:16,JA-JP.Aria.Fearful:17,JA-JP.HouZhen:24,JA-JP.Siwei:25,JA-JP.Louise:26,JA-JP.Pascal:27,JA-JP.Pascal.Neutral:28,JA-JP.Pascal.Calm:29,JA-JP.Pascal.Angry:30,JA-JP.Pascal.Happy:31,JA-JP.Pascal.Disgust:32,JA-JP.Pascal.Sad:33,JA-JP.Isabela:34,JA-JP.Isabela.Neutral:36,JA-JP.Isabela.Calm:37,JA-JP.Isabela.Sad:38,JA-JP.Isabela.Angry:39,JA-JP.Isabela.Happy:40,JA-JP.Isabela.PleasantSurprised:41,JA-JP.Isabela.Fearful:42,JA-JP.Diego:35,JA-JP.Diego.Neutral:43,JA-JP.Diego.Calm:44,JA-JP.Diego.Angry:45,JA-JP.Diego.Happy:46,JA-JP.Diego.PleasantSurprised:47,JA-JP.Diego.Disgust:48,JA-JP.Sofia:49,JA-JP.Sofia.Neutral:50,JA-JP.Sofia.Calm:51,JA-JP.Sofia.Angry:52,JA-JP.Sofia.Happy:53,JA-JP.Sofia.Fearful:54,JA-JP.Ray:55,JA-JP.Ray.Neutral:56,JA-JP.Ray.Calm:57,JA-JP.Ray.Angry:58,JA-JP.Ray.Happy:59,JA-JP.Ray.Fearful:60,JA-JP.Long.Neutral:61,JA-JP.Long.Angry:62,JA-JP.Long.Calm:63,JA-JP.Long.Disgusted:64,JA-JP.Long.Fearful:65,JA-JP.Long.Happy:66,JA-JP.Long.Sad:67",
+        "is_zero_shot": "False",
+        "num_samples_per_frame": "256",
+        "zero_shot_sample_rate": "22050",
+        "model_class": "magpie_tts",
+        "language_code": "en-US,es-US,fr-FR,de-DE,zh-CN,vi-VN,it-IT,hi-IN,ja-JP",
+        "context_decoder_layers": "0,1,2,9,10,11",
+        "sparrowhawk_proto_files": "lang_files",
+        "n_timesteps": "32"
+      }
+    }
+  ]
+}
+--- MODEL: magpie_tts_ensemble-Magpie-Multilingual
+PARAM model_family= riva
+PARAM wfst_post_process_model= lang_files
+PARAM sample_rate= 22050
+PARAM chunk_ms= 300
+PARAM wfst_verbalizer_model= lang_files
+PARAM chunk_length= 80
+PARAM overlap_length= 5
+PARAM verbalizer_proto_files= lang_files
+PARAM postprocessor_proto_files= lang_files
+PARAM voice_name= Magpie-Multilingual
+PARAM wfst_tokenizer_model= lang_files
+PARAM multilingual= True
+PARAM tokenizer_proto_files= lang_files
+PARAM transcript_decoder_layers= 3,4,5,6,7,8
+PARAM subvoices= EN-US.Mia:0,EN-US.Mia.Neutral:1,EN-US.Mia.Calm:2,EN-US.Mia.Angry:3,EN-US.Mia.Happy:4,EN-US.Mia.Sad:5,EN-US.Jason:6,EN-US.Jason.Neutral:7,EN-US.Jason.Calm:8,EN-US.Jason.Angry:9,EN-US.Jason.Happy:10,EN-US.Aria:11,EN-US.Aria.Neutral:12,EN-US.Aria.Calm:13,EN-US.Aria.Angry:14,EN-US.Aria.Happy:15,EN-US.Aria.Sad:16,EN-US.Aria.Fearful:17,EN-US.Leo:18,EN-US.Leo.Neutral:19,EN-US.Leo.Calm:20,EN-US.Leo.Angry:21,EN-US.Leo.Sad:22,EN-US.Leo.Fearful:23,ZH-CN.HouZhen:24,ZH-CN.Siwei:25,FR-FR.Louise:26,FR-FR.Pascal:27,FR-FR.Pascal.Neutral:28,FR-FR.Pascal.Calm:29,FR-FR.Pascal.Angry:30,FR-FR.Pascal.Happy:31,FR-FR.Pascal.Disgust:32,FR-FR.Pascal.Sad:33,ES-US.Isabela:34,ES-US.Isabela.Neutral:36,ES-US.Isabela.Calm:37,ES-US.Isabela.Sad:38,ES-US.Isabela.Angry:39,ES-US.Isabela.Happy:40,ES-US.Isabela.PleasantSurprised:41,ES-US.Isabela.Fearful:42,ES-US.Diego:35,ES-US.Diego.Neutral:43,ES-US.Diego.Calm:44,ES-US.Diego.Angry:45,ES-US.Diego.Happy:46,ES-US.Diego.PleasantSurprised:47,ES-US.Diego.Disgust:48,EN-US.Sofia:49,EN-US.Sofia.Neutral:50,EN-US.Sofia.Calm:51,EN-US.Sofia.Angry:52,EN-US.Sofia.Happy:53,EN-US.Sofia.Fearful:54,EN-US.Ray:55,EN-US.Ray.Neutral:56,EN-US.Ray.Calm:57,EN-US.Ray.Angry:58,EN-US.Ray.Happy:59,EN-US.Ray.Fearful:60,VI-VN.Long.Neutral:61,VI-VN.Long.Angry:62,VI-VN.Long.Calm:63,VI-VN.Long.Disgusted:64,VI-VN.Long.Fearful:65,VI-VN.Long.Happy:66,VI-VN.Long.Sad:67,VI-VN.Phung.Neutral:68,VI-VN.Phung.Angry:69,VI-VN.Phung.Disgusted:70,VI-VN.Phung.Fearful:71,VI-VN.Phung.Happy:72,VI-VN.Phung.Sad:73,IT-IT.Isabela:34,IT-IT.Isabela.Neutral:36,IT-IT.Isabela.Calm:37,IT-IT.Isabela.Sad:38,IT-IT.Isabela.Angry:39,IT-IT.Isabela.Happy:40,IT-IT.Isabela.PleasantSurprised:41,IT-IT.Isabela.Fearful:42,IT-IT.Pascal:27,IT-IT.Pascal.Neutral:28,IT-IT.Pascal.Calm:29,IT-IT.Pascal.Angry:30,IT-IT.Pascal.Happy:31,IT-IT.Pascal.Disgust:32,IT-IT.Pascal.Sad:33,DE-DE.Pascal:27,DE-DE.Pascal.Neutral:28,DE-DE.Pascal.Calm:29,DE-DE.Pascal.Angry:30,DE-DE.Pascal.Happy:31,DE-DE.Pascal.Disgust:32,DE-DE.Pascal.Sad:33,DE-DE.Mia:0,DE-DE.Mia.Neutral:1,DE-DE.Mia.Calm:2,DE-DE.Mia.Angry:3,DE-DE.Mia.Happy:4,DE-DE.Mia.Sad:5,DE-DE.Diego:35,DE-DE.Diego.Neutral:43,DE-DE.Diego.Calm:44,DE-DE.Diego.Angry:45,DE-DE.Diego.Happy:46,DE-DE.Diego.PleasantSurprised:47,DE-DE.Diego.Disgust:48,DE-DE.Sofia:49,DE-DE.Sofia.Neutral:50,DE-DE.Sofia.Calm:51,DE-DE.Sofia.Angry:52,DE-DE.Sofia.Happy:53,DE-DE.Sofia.Fearful:54,EN-US.Pascal:27,EN-US.Pascal.Neutral:28,EN-US.Pascal.Calm:29,EN-US.Pascal.Angry:30,EN-US.Pascal.Happy:31,EN-US.Pascal.Disgust:32,EN-US.Pascal.Sad:33,EN-US.Diego:35,EN-US.Diego.Neutral:43,EN-US.Diego.Calm:44,EN-US.Diego.Angry:45,EN-US.Diego.Happy:46,EN-US.Diego.PleasantSurprised:47,EN-US.Diego.Disgust:48,EN-US.Louise:26,EN-US.Isabela:34,EN-US.Isabela.Neutral:36,EN-US.Isabela.Calm:37,EN-US.Isabela.Sad:38,EN-US.Isabela.Angry:39,EN-US.Isabela.Happy:40,EN-US.Isabela.PleasantSurprised:41,EN-US.Isabela.Fearful:42,ZH-CN.Louise:26,ZH-CN.Pascal:27,ZH-CN.Pascal.Neutral:28,ZH-CN.Pascal.Calm:29,ZH-CN.Pascal.Angry:30,ZH-CN.Pascal.Happy:31,ZH-CN.Pascal.Disgust:32,ZH-CN.Pascal.Sad:33,ZH-CN.Isabela:34,ZH-CN.Isabela.Neutral:36,ZH-CN.Isabela.Calm:37,ZH-CN.Isabela.Sad:38,ZH-CN.Isabela.Angry:39,ZH-CN.Isabela.Happy:40,ZH-CN.Isabela.PleasantSurprised:41,ZH-CN.Isabela.Fearful:42,ZH-CN.Diego:35,ZH-CN.Diego.Neutral:43,ZH-CN.Diego.Calm:44,ZH-CN.Diego.Angry:45,ZH-CN.Diego.Happy:46,ZH-CN.Diego.PleasantSurprised:47,ZH-CN.Diego.Disgust:48,ZH-CN.Ray:55,ZH-CN.Ray.Neutral:56,ZH-CN.Ray.Calm:57,ZH-CN.Ray.Angry:58,ZH-CN.Ray.Happy:59,ZH-CN.Ray.Fearful:60,ZH-CN.Mia:0,ZH-CN.Mia.Neutral:1,ZH-CN.Mia.Calm:2,ZH-CN.Mia.Angry:3,ZH-CN.Mia.Happy:4,ZH-CN.Mia.Sad:5,ZH-CN.Aria:11,ZH-CN.Aria.Neutral:12,ZH-CN.Aria.Calm:13,ZH-CN.Aria.Angry:14,ZH-CN.Aria.Happy:15,ZH-CN.Aria.Sad:16,ZH-CN.Aria.Fearful:17,ZH-CN.Long.Neutral:61,ZH-CN.Long.Angry:62,ZH-CN.Long.Calm:63,ZH-CN.Long.Disgusted:64,ZH-CN.Long.Fearful:65,ZH-CN.Long.Happy:66,ZH-CN.Long.Sad:67,ES-US.Louise:26,ES-US.Pascal:27,ES-US.Pascal.Neutral:28,ES-US.Pascal.Calm:29,ES-US.Pascal.Angry:30,ES-US.Pascal.Happy:31,ES-US.Pascal.Disgust:32,ES-US.Pascal.Sad:33,ES-US.Sofia:49,ES-US.Sofia.Neutral:50,ES-US.Sofia.Calm:51,ES-US.Sofia.Angry:52,ES-US.Sofia.Happy:53,ES-US.Sofia.Fearful:54,ES-US.Ray:55,ES-US.Ray.Neutral:56,ES-US.Ray.Calm:57,ES-US.Ray.Angry:58,ES-US.Ray.Happy:59,ES-US.Ray.Fearful:60,ES-US.Mia:0,ES-US.Mia.Neutral:1,ES-US.Mia.Calm:2,ES-US.Mia.Angry:3,ES-US.Mia.Happy:4,ES-US.Mia.Sad:5,ES-US.Aria:11,ES-US.Aria.Neutral:12,ES-US.Aria.Calm:13,ES-US.Aria.Angry:14,ES-US.Aria.Happy:15,ES-US.Aria.Sad:16,ES-US.Aria.Fearful:17,ES-US.Jason:6,ES-US.Jason.Neutral:7,ES-US.Jason.Calm:8,ES-US.Jason.Angry:9,ES-US.Jason.Happy:10,ES-US.Leo:18,ES-US.Leo.Neutral:19,ES-US.Leo.Calm:20,ES-US.Leo.Angry:21,ES-US.Leo.Sad:22,ES-US.Leo.Fearful:23,FR-FR.Mia:0,FR-FR.Mia.Neutral:1,FR-FR.Mia.Calm:2,FR-FR.Mia.Angry:3,FR-FR.Mia.Happy:4,FR-FR.Mia.Sad:5,FR-FR.Jason:6,FR-FR.Jason.Neutral:7,FR-FR.Jason.Calm:8,FR-FR.Jason.Angry:9,FR-FR.Jason.Happy:10,FR-FR.Aria:11,FR-FR.Aria.Neutral:12,FR-FR.Aria.Calm:13,FR-FR.Aria.Angry:14,FR-FR.Aria.Happy:15,FR-FR.Aria.Sad:16,FR-FR.Aria.Fearful:17,FR-FR.Leo:18,FR-FR.Leo.Neutral:19,FR-FR.Leo.Calm:20,FR-FR.Leo.Angry:21,FR-FR.Leo.Sad:22,FR-FR.Leo.Fearful:23,FR-FR.Sofia:49,FR-FR.Sofia.Neutral:50,FR-FR.Sofia.Calm:51,FR-FR.Sofia.Angry:52,FR-FR.Sofia.Happy:53,FR-FR.Sofia.Fearful:54,FR-FR.Ray:55,FR-FR.Ray.Neutral:56,FR-FR.Ray.Calm:57,FR-FR.Ray.Angry:58,FR-FR.Ray.Happy:59,FR-FR.Ray.Fearful:60,FR-FR.Isabela:34,FR-FR.Isabela.Neutral:36,FR-FR.Isabela.Calm:37,FR-FR.Isabela.Sad:38,FR-FR.Isabela.Angry:39,FR-FR.Isabela.Happy:40,FR-FR.Isabela.PleasantSurprised:41,FR-FR.Isabela.Fearful:42,FR-FR.Diego:35,FR-FR.Diego.Neutral:43,FR-FR.Diego.Calm:44,FR-FR.Diego.Angry:45,FR-FR.Diego.Happy:46,FR-FR.Diego.PleasantSurprised:47,FR-FR.Diego.Disgust:48,VI-VN.Mia:0,VI-VN.Mia.Neutral:1,VI-VN.Mia.Calm:2,VI-VN.Mia.Angry:3,VI-VN.Mia.Happy:4,VI-VN.Mia.Sad:5,VI-VN.Jason:6,VI-VN.Jason.Neutral:7,VI-VN.Jason.Calm:8,VI-VN.Jason.Angry:9,VI-VN.Jason.Happy:10,VI-VN.Aria:11,VI-VN.Aria.Neutral:12,VI-VN.Aria.Calm:13,VI-VN.Aria.Angry:14,VI-VN.Aria.Happy:15,VI-VN.Aria.Sad:16,VI-VN.Aria.Fearful:17,VI-VN.Leo:18,VI-VN.Leo.Neutral:19,VI-VN.Leo.Calm:20,VI-VN.Leo.Angry:21,VI-VN.Leo.Sad:22,VI-VN.Leo.Fearful:23,ZH-CN.HouZhen:24,ZH-CN.Siwei:25,FR-FR.Louise:26,FR-FR.Pascal:27,FR-FR.Pascal.Neutral:28,FR-FR.Pascal.Calm:29,FR-FR.Pascal.Angry:30,FR-FR.Pascal.Happy:31,FR-FR.Pascal.Disgust:32,FR-FR.Pascal.Sad:33,ES-US.Isabela:34,ES-US.Isabela.Neutral:36,ES-US.Isabela.Calm:37,ES-US.Isabela.Sad:38,ES-US.Isabela.Angry:39,ES-US.Isabela.Happy:40,ES-US.Isabela.PleasantSurprised:41,ES-US.Isabela.Fearful:42,ES-US.Diego:35,ES-US.Diego.Neutral:43,ES-US.Diego.Calm:44,ES-US.Diego.Angry:45,ES-US.Diego.Happy:46,ES-US.Diego.PleasantSurprised:47,ES-US.Diego.Disgust:48,VI-VN.Sofia:49,VI-VN.Sofia.Neutral:50,VI-VN.Sofia.Calm:51,VI-VN.Sofia.Angry:52,VI-VN.Sofia.Happy:53,VI-VN.Sofia.Fearful:54,VI-VN.Ray:55,VI-VN.Ray.Neutral:56,VI-VN.Ray.Calm:57,VI-VN.Ray.Angry:58,VI-VN.Ray.Happy:59,VI-VN.Ray.Fearful:60,HI-IN.Mia:0,HI-IN.Mia.Neutral:1,HI-IN.Mia.Calm:2,HI-IN.Mia.Angry:3,HI-IN.Mia.Happy:4,HI-IN.Mia.Sad:5,HI-IN.Jason:6,HI-IN.Jason.Neutral:7,HI-IN.Jason.Calm:8,HI-IN.Jason.Angry:9,HI-IN.Jason.Happy:10,HI-IN.Aria:11,HI-IN.Aria.Neutral:12,HI-IN.Aria.Calm:13,HI-IN.Aria.Angry:14,HI-IN.Aria.Happy:15,HI-IN.Aria.Sad:16,HI-IN.Aria.Fearful:17,HI-IN.Leo:18,HI-IN.Leo.Neutral:19,HI-IN.Leo.Calm:20,HI-IN.Leo.Angry:21,HI-IN.Leo.Sad:22,HI-IN.Leo.Fearful:23,HI-IN.HouZhen:24,HI-IN.Siwei:25,HI-IN.Pascal:27,HI-IN.Pascal.Neutral:28,HI-IN.Pascal.Calm:29,HI-IN.Pascal.Angry:30,HI-IN.Pascal.Happy:31,HI-IN.Pascal.Disgust:32,HI-IN.Pascal.Sad:33,HI-IN.Isabela:34,HI-IN.Isabela.Neutral:36,HI-IN.Isabela.Calm:37,HI-IN.Isabela.Sad:38,HI-IN.Isabela.Angry:39,HI-IN.Isabela.Happy:40,HI-IN.Isabela.PleasantSurprised:41,HI-IN.Isabela.Fearful:42,HI-IN.Diego:35,HI-IN.Diego.Neutral:43,HI-IN.Diego.Calm:44,HI-IN.Diego.Angry:45,HI-IN.Diego.Happy:46,HI-IN.Diego.PleasantSurprised:47,HI-IN.Diego.Disgust:48,HI-IN.Sofia:49,HI-IN.Sofia.Neutral:50,HI-IN.Sofia.Calm:51,HI-IN.Sofia.Angry:52,HI-IN.Sofia.Happy:53,HI-IN.Sofia.Fearful:54,HI-IN.Ray:55,HI-IN.Ray.Neutral:56,HI-IN.Ray.Calm:57,HI-IN.Ray.Angry:58,HI-IN.Ray.Happy:59,HI-IN.Ray.Fearful:60,HI-IN.Long.Neutral:61,HI-IN.Long.Angry:62,HI-IN.Long.Calm:63,HI-IN.Long.Disgusted:64,HI-IN.Long.Fearful:65,HI-IN.Long.Happy:66,HI-IN.Long.Sad:67,HI-IN.Phung.Neutral:68,HI-IN.Phung.Angry:69,HI-IN.Phung.Disgusted:70,HI-IN.Phung.Fearful:71,HI-IN.Phung.Happy:72,HI-IN.Phung.Sad:73,JA-JP.Mia:0,JA-JP.Mia.Neutral:1,JA-JP.Mia.Calm:2,JA-JP.Mia.Angry:3,JA-JP.Mia.Happy:4,JA-JP.Mia.Sad:5,JA-JP.Jason:6,JA-JP.Jason.Neutral:7,JA-JP.Jason.Calm:8,JA-JP.Jason.Angry:9,JA-JP.Jason.Happy:10,JA-JP.Aria:11,JA-JP.Aria.Neutral:12,JA-JP.Aria.Calm:13,JA-JP.Aria.Angry:14,JA-JP.Aria.Happy:15,JA-JP.Aria.Sad:16,JA-JP.Aria.Fearful:17,JA-JP.HouZhen:24,JA-JP.Siwei:25,JA-JP.Louise:26,JA-JP.Pascal:27,JA-JP.Pascal.Neutral:28,JA-JP.Pascal.Calm:29,JA-JP.Pascal.Angry:30,JA-JP.Pascal.Happy:31,JA-JP.Pascal.Disgust:32,JA-JP.Pascal.Sad:33,JA-JP.Isabela:34,JA-JP.Isabela.Neutral:36,JA-JP.Isabela.Calm:37,JA-JP.Isabela.Sad:38,JA-JP.Isabela.Angry:39,JA-JP.Isabela.Happy:40,JA-JP.Isabela.PleasantSurprised:41,JA-JP.Isabela.Fearful:42,JA-JP.Diego:35,JA-JP.Diego.Neutral:43,JA-JP.Diego.Calm:44,JA-JP.Diego.Angry:45,JA-JP.Diego.Happy:46,JA-JP.Diego.PleasantSurprised:47,JA-JP.Diego.Disgust:48,JA-JP.Sofia:49,JA-JP.Sofia.Neutral:50,JA-JP.Sofia.Calm:51,JA-JP.Sofia.Angry:52,JA-JP.Sofia.Happy:53,JA-JP.Sofia.Fearful:54,JA-JP.Ray:55,JA-JP.Ray.Neutral:56,JA-JP.Ray.Calm:57,JA-JP.Ray.Angry:58,JA-JP.Ray.Happy:59,JA-JP.Ray.Fearful:60,JA-JP.Long.Neutral:61,JA-JP.Long.Angry:62,JA-JP.Long.Calm:63,JA-JP.Long.Disgusted:64,JA-JP.Long.Fearful:65,JA-JP.Long.Happy:66,JA-JP.Long.Sad:67
+PARAM is_zero_shot= False
+PARAM num_samples_per_frame= 256
+PARAM zero_shot_sample_rate= 22050
+PARAM model_class= magpie_tts
+PARAM language_code= en-US,es-US,fr-FR,de-DE,zh-CN,vi-VN,it-IT,hi-IN,ja-JP
+PARAM context_decoder_layers= 0,1,2,9,10,11
+PARAM sparrowhawk_proto_files= lang_files
+PARAM n_timesteps= 32
+--- VOICE_IDS_ELECTRON (454) ---
+magpie_tts_ensemble-Magpie-Multilingual
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Diego
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Diego.Angry
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Diego.Calm
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Diego.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Diego.Happy
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Diego.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Diego.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Mia
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Mia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Mia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Mia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Mia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Mia.Sad
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Pascal
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Pascal.Angry
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Pascal.Calm
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Pascal.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Pascal.Happy
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Pascal.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Pascal.Sad
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Sofia
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Sofia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Sofia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Sofia.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Sofia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.DE-DE.Sofia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Aria
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Aria.Angry
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Aria.Calm
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Aria.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Aria.Happy
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Aria.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Aria.Sad
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Diego
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Diego.Angry
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Diego.Calm
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Diego.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Diego.Happy
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Diego.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Diego.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Isabela
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Isabela.Angry
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Isabela.Calm
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Isabela.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Isabela.Happy
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Isabela.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Isabela.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Isabela.Sad
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Jason
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Jason.Angry
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Jason.Calm
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Jason.Happy
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Jason.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Leo
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Leo.Angry
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Leo.Calm
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Leo.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Leo.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Leo.Sad
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Louise
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Mia
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Mia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Mia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Mia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Mia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Mia.Sad
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Pascal
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Pascal.Angry
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Pascal.Calm
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Pascal.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Pascal.Happy
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Pascal.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Pascal.Sad
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Ray
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Ray.Angry
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Ray.Calm
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Ray.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Ray.Happy
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Ray.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Sofia
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Sofia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Sofia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Sofia.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Sofia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.EN-US.Sofia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Aria
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Aria.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Aria.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Aria.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Aria.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Aria.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Aria.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Diego
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Diego.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Diego.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Diego.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Diego.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Diego.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Diego.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Isabela
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Isabela.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Isabela.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Isabela.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Isabela.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Isabela.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Isabela.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Isabela.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Jason
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Jason.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Jason.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Jason.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Jason.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Leo
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Leo.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Leo.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Leo.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Leo.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Leo.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Louise
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Mia
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Mia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Mia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Mia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Mia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Mia.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Pascal
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Pascal.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Pascal.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Pascal.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Pascal.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Pascal.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Pascal.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Ray
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Ray.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Ray.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Ray.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Ray.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Ray.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Sofia
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Sofia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Sofia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Sofia.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Sofia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ES-US.Sofia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Aria
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Aria.Angry
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Aria.Calm
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Aria.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Aria.Happy
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Aria.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Aria.Sad
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Diego
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Diego.Angry
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Diego.Calm
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Diego.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Diego.Happy
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Diego.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Diego.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Isabela
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Isabela.Angry
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Isabela.Calm
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Isabela.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Isabela.Happy
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Isabela.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Isabela.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Isabela.Sad
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Jason
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Jason.Angry
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Jason.Calm
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Jason.Happy
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Jason.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Leo
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Leo.Angry
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Leo.Calm
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Leo.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Leo.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Leo.Sad
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Louise
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Mia
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Mia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Mia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Mia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Mia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Mia.Sad
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Pascal
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Pascal.Angry
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Pascal.Calm
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Pascal.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Pascal.Happy
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Pascal.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Pascal.Sad
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Ray
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Ray.Angry
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Ray.Calm
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Ray.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Ray.Happy
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Ray.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Sofia
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Sofia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Sofia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Sofia.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Sofia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.FR-FR.Sofia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Aria
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Aria.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Aria.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Aria.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Aria.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Aria.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Aria.Sad
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Diego
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Diego.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Diego.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Diego.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Diego.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Diego.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Diego.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.HouZhen
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Isabela
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Isabela.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Isabela.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Isabela.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Isabela.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Isabela.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Isabela.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Isabela.Sad
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Jason
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Jason.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Jason.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Jason.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Jason.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Leo
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Leo.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Leo.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Leo.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Leo.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Leo.Sad
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Long.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Long.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Long.Disgusted
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Long.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Long.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Long.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Long.Sad
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Mia
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Mia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Mia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Mia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Mia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Mia.Sad
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Pascal
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Pascal.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Pascal.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Pascal.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Pascal.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Pascal.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Pascal.Sad
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Phung.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Phung.Disgusted
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Phung.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Phung.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Phung.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Phung.Sad
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Ray
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Ray.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Ray.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Ray.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Ray.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Ray.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Siwei
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Sofia
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Sofia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Sofia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Sofia.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Sofia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.HI-IN.Sofia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Isabela
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Isabela.Angry
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Isabela.Calm
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Isabela.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Isabela.Happy
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Isabela.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Isabela.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Isabela.Sad
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Pascal
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Pascal.Angry
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Pascal.Calm
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Pascal.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Pascal.Happy
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Pascal.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.IT-IT.Pascal.Sad
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Aria
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Aria.Angry
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Aria.Calm
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Aria.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Aria.Happy
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Aria.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Aria.Sad
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Diego
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Diego.Angry
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Diego.Calm
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Diego.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Diego.Happy
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Diego.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Diego.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.HouZhen
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Isabela
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Isabela.Angry
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Isabela.Calm
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Isabela.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Isabela.Happy
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Isabela.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Isabela.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Isabela.Sad
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Jason
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Jason.Angry
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Jason.Calm
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Jason.Happy
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Jason.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Long.Angry
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Long.Calm
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Long.Disgusted
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Long.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Long.Happy
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Long.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Long.Sad
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Louise
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Mia
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Mia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Mia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Mia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Mia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Mia.Sad
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Pascal
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Pascal.Angry
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Pascal.Calm
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Pascal.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Pascal.Happy
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Pascal.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Pascal.Sad
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Ray
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Ray.Angry
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Ray.Calm
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Ray.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Ray.Happy
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Ray.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Siwei
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Sofia
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Sofia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Sofia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Sofia.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Sofia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.JA-JP.Sofia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Aria
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Aria.Angry
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Aria.Calm
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Aria.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Aria.Happy
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Aria.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Aria.Sad
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Jason
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Jason.Angry
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Jason.Calm
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Jason.Happy
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Jason.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Leo
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Leo.Angry
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Leo.Calm
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Leo.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Leo.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Leo.Sad
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Long.Angry
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Long.Calm
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Long.Disgusted
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Long.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Long.Happy
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Long.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Long.Sad
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Mia
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Mia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Mia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Mia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Mia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Mia.Sad
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Phung.Angry
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Phung.Disgusted
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Phung.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Phung.Happy
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Phung.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Phung.Sad
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Ray
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Ray.Angry
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Ray.Calm
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Ray.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Ray.Happy
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Ray.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Sofia
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Sofia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Sofia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Sofia.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Sofia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.VI-VN.Sofia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Aria
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Aria.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Aria.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Aria.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Aria.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Aria.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Aria.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Diego
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Diego.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Diego.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Diego.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Diego.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Diego.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Diego.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.HouZhen
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Isabela
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Isabela.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Isabela.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Isabela.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Isabela.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Isabela.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Isabela.PleasantSurprised
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Isabela.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Long.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Long.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Long.Disgusted
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Long.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Long.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Long.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Long.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Louise
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Mia
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Mia.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Mia.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Mia.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Mia.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Mia.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Pascal
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Pascal.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Pascal.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Pascal.Disgust
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Pascal.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Pascal.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Pascal.Sad
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Ray
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Ray.Angry
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Ray.Calm
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Ray.Fearful
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Ray.Happy
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Ray.Neutral
+magpie_tts_ensemble-Magpie-Multilingual.ZH-CN.Siwei
+--- PYTHON_RIVA_CLIENT ---
+PYTHON_CMD: python exit= 4
+KEY_PREFIX: nvapi-49...
+NO_GET_CONFIG_METHOD: []
+

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Olanga Status</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    #corner {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transform: scale(0.92);
+      transform-origin: 100% 100%;
+      transition: opacity 0.3s ease, transform 0.35s ease;
+      animation: none;
+    }
+
+    #corner.on {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    #corner svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      overflow: visible;
+    }
+
+    .bloom {
+      opacity: 0.5;
+      filter: blur(8px);
+    }
+
+    .fill {
+      opacity: 0.72;
+      filter: blur(2.5px);
+    }
+
+    .core {
+      opacity: 0.9;
+    }
+
+    #corner.idle .bloom,
+    #corner.idle .fill,
+    #corner.idle .core { fill: #8b7cf7; }
+
+    #corner.listening .bloom,
+    #corner.listening .fill,
+    #corner.listening .core { fill: #1dd1a1; }
+
+    #corner.thinking .bloom,
+    #corner.thinking .fill,
+    #corner.thinking .core { fill: #ff7b54; }
+
+    #corner.speaking .bloom,
+    #corner.speaking .fill,
+    #corner.speaking .core { fill: #54a0ff; }
+
+    #corner.idle.on { animation: breathe 2.2s ease-in-out infinite; }
+    #corner.listening.on { animation: breathe 1.5s ease-in-out infinite; }
+    #corner.thinking.on { animation: breathe 1.15s ease-in-out infinite; }
+    #corner.speaking.on { animation: breathe 0.95s ease-in-out infinite; }
+
+    @keyframes breathe {
+      0%, 100% { opacity: 0.78; transform: scale(0.97); }
+      50% { opacity: 1; transform: scale(1.03); }
+    }
+  </style>
+</head>
+<body>
+  <div id="corner" aria-hidden="true">
+    <svg viewBox="0 0 72 72" preserveAspectRatio="xMaxYMax meet">
+      <!-- Outer soft bloom -->
+      <path class="bloom" d="M 72 72 L 72 2 C 72 56, 56 72, 2 72 Z" />
+      <!-- Main filled wedge curling into the corner -->
+      <path class="fill" d="M 72 72 L 72 10 C 72 52, 52 72, 10 72 Z" />
+      <!-- Brighter tip near the corner -->
+      <path class="core" d="M 72 72 L 72 30 C 72 58, 58 72, 30 72 Z" />
+    </svg>
+  </div>
+  <script>
+    const corner = document.getElementById('corner');
+
+    function applyState(state) {
+      const next = String(state || 'off');
+      corner.classList.remove('on', 'idle', 'listening', 'thinking', 'speaking');
+      if (next === 'idle' || next === 'listening' || next === 'thinking' || next === 'speaking') {
+        corner.classList.add('on', next);
+      }
+    }
+
+    if (window.electronAPI?.onStatusState) {
+      window.electronAPI.onStatusState(applyState);
+    }
+
+    applyState('off');
+  </script>
+</body>
+</html>
