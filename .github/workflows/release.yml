@@ -4,6 +4,10 @@ name: Release
 # matching GitHub release. Running the workflow by hand builds and uploads the
 # installer as a workflow artifact instead, which is handy for testing.
 #
+# To publish a new version:
+#   git tag v1.0.1
+#   git push origin v1.0.1
+#
 # Prerequisite: electron-builder must be in devDependencies (npm install
 # --save-dev electron-builder) and that change committed.
 

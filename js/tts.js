@@ -198,67 +198,179 @@ function armSpeakingWatchdog(ms = 60000, onTimeout) {
   }, ms);
 }
 
-function playAudioBlob(blob, callback, doneLabel) {
-  const audioUrl = URL.createObjectURL(blob);
-  const audio = new Audio(audioUrl);
-  audio.volume = isMuted ? 0 : currentVolume;
-  audio.playbackRate = Number.isFinite(ttsRate) ? ttsRate : 1;
-  currentTTSAudio = audio;
+// Plays one synthesized chunk. Resolves true when it finished on its own and
+// false when it was interrupted, so the queue knows whether to keep going.
+function playSpeechChunk(blob, { isFinal, onFinal }) {
+  return new Promise((resolve) => {
+    const audioUrl = URL.createObjectURL(blob);
+    const audio = new Audio(audioUrl);
+    audio.volume = isMuted ? 0 : currentVolume;
+    audio.playbackRate = Number.isFinite(ttsRate) ? ttsRate : 1;
+    currentTTSAudio = audio;
 
-  let finished = false;
-  const finish = () => {
-    if (finished) return;
-    finished = true;
-    clearSpeakingWatchdog();
-    URL.revokeObjectURL(audioUrl);
-    if (currentTTSAudio === audio) currentTTSAudio = null;
-    if (doneLabel) console.log(doneLabel);
-    if (callback) callback();
-    else setState(State.IDLE);
-  };
+    let finished = false;
+    const finish = (interrupted) => {
+      if (finished) return;
+      finished = true;
+      URL.revokeObjectURL(audioUrl);
+      if (currentTTSAudio === audio) currentTTSAudio = null;
+      if (!interrupted && isFinal) {
+        clearSpeakingWatchdog();
+        onFinal();
+      }
+      resolve(!interrupted);
+    };
 
-  audio.addEventListener('ended', finish);
-  audio.addEventListener('error', (error) => {
-    console.error('[Olanga] TTS playback error:', error);
-    finish();
-  });
+    audio.addEventListener('ended', () => finish(false));
+    audio.addEventListener('error', (error) => {
+      console.error('[Olanga] TTS playback error:', error);
+      finish(true);
+    });
+    // Escape and the wake-word interrupt pause the element rather than calling
+    // in here, and a paused element never fires 'ended' — treat it as an
+    // interruption so the queue stops instead of waiting forever.
+    audio.addEventListener('pause', () => {
+      if (!audio.ended) finish(true);
+    });
 
-  // Safety: if 'ended' never fires, leave speaking state after estimated duration.
-  audio.addEventListener('loadedmetadata', () => {
-    const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
-      ? (audio.duration * 1000) / (Number.isFinite(ttsRate) && ttsRate > 0 ? ttsRate : 1) + 2500
-      : 45000;
-    armSpeakingWatchdog(Math.min(Math.max(durationMs, 5000), 120000), finish);
-  });
+    // Safety: if 'ended' never fires, leave speaking state after estimated duration.
+    audio.addEventListener('loadedmetadata', () => {
+      const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
+        ? (audio.duration * 1000) / (Number.isFinite(ttsRate) && ttsRate > 0 ? ttsRate : 1) + 2500
+        : 45000;
+      armSpeakingWatchdog(Math.min(Math.max(durationMs, 5000), 120000), () => finish(true));
+    });
 
-  audio.play().catch((error) => {
-    console.error('[Olanga] TTS autoplay error:', error);
-    finish();
+    audio.play().catch((error) => {
+      console.error('[Olanga] TTS autoplay error:', error);
+      finish(true);
+    });
   });
 }
+
+const SPEECH_CHUNK_TARGET_CHARS = 220;
+
+// Magpie synthesizes a whole request before returning any audio, so a long
+// reply means a long silence. Splitting on sentence boundaries lets playback
+// start after the first sentence while the rest is still being generated.
+function splitIntoSpeechChunks(text, targetChars = SPEECH_CHUNK_TARGET_CHARS) {
+  const clean = String(text || '').trim();
+  if (!clean) return [];
+  if (clean.length <= targetChars) return [clean];
+
+  const sentences = clean.match(/[^.!?…]+[.!?…]+\s*|[^.!?…]+$/g) || [clean];
+  const packed = [];
+  let current = '';
+  for (const sentence of sentences) {
+    const piece = sentence.trim();
+    if (!piece) continue;
+    if (!current) {
+      current = piece;
+    } else if ((`${current} ${piece}`).length <= targetChars) {
+      current = `${current} ${piece}`;
+    } else {
+      packed.push(current);
+      current = piece;
+    }
+  }
+  if (current) packed.push(current);
+
+  // A single sentence can still exceed the target; break those on word bounds.
+  return packed.flatMap((chunk) => (
+    chunk.length <= targetChars * 2 ? [chunk] : splitOnWordBoundaries(chunk, targetChars)
+  ));
+}
+
+function splitOnWordBoundaries(text, targetChars) {
+  const chunks = [];
+  let current = '';
+  for (const word of text.split(/\s+/)) {
+    if (current && (`${current} ${word}`).length > targetChars) {
+      chunks.push(current);
+      current = word;
+    } else {
+      current = current ? `${current} ${word}` : word;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+// Bumped for every new Magpie reply so a superseded queue stops itself.
+let magpieSpeechSequence = 0;
 
 async function speakWithNvidiaTts(text, callback) {
   if (!nvidiaApiKey) {
     throw new Error('NVIDIA API key is missing');
   }
 
-  const voiceConfig = getSelectedNvidiaVoiceConfig();
-  const synthesizePromise = window.electronAPI.nvidiaTtsSynthesize({
-    apiKey: nvidiaApiKey,
-    text,
-    voiceName: voiceConfig.voiceName || defaultNvidiaVoiceName,
-    languageCode: voiceConfig.languageCode || 'en-US'
-  });
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Magpie TTS timed out')), 45000);
-  });
-  const result = await Promise.race([synthesizePromise, timeoutPromise]);
-  const audioBytes = decodeBase64ToUint8Array(result.audioBase64 || '');
-  if (!audioBytes.length) {
-    throw new Error('Magpie returned empty audio');
+  const chunks = splitIntoSpeechChunks(text);
+  if (chunks.length === 0) {
+    throw new Error('Nothing to speak');
   }
-  const audioBlob = pcmToWav(audioBytes, 22050, 1, 16);
-  playAudioBlob(audioBlob, callback, '[Olanga] Done speaking (Magpie TTS)');
+
+  const voiceConfig = getSelectedNvidiaVoiceConfig();
+  const token = ++magpieSpeechSequence;
+
+  const synthesize = async (chunk) => {
+    const result = await Promise.race([
+      window.electronAPI.nvidiaTtsSynthesize({
+        apiKey: nvidiaApiKey,
+        text: chunk,
+        voiceName: voiceConfig.voiceName || defaultNvidiaVoiceName,
+        languageCode: voiceConfig.languageCode || 'en-US'
+      }),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Magpie TTS timed out')), 45000);
+      })
+    ]);
+    const audioBytes = decodeBase64ToUint8Array(result.audioBase64 || '');
+    if (!audioBytes.length) {
+      throw new Error('Magpie returned empty audio');
+    }
+    return pcmToWav(audioBytes, 22050, 1, 16);
+  };
+
+  const finishSpeaking = () => {
+    console.log('[Olanga] Done speaking (Magpie TTS)');
+    if (callback) callback();
+    else setState(State.IDLE);
+  };
+
+  const abandon = (promise) => {
+    // Nothing will await a discarded synthesis; swallow its rejection.
+    if (promise) promise.catch(() => {});
+  };
+
+  // Always keep the next chunk synthesizing while the current one plays.
+  let pending = synthesize(chunks[0]);
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    let blob;
+    try {
+      blob = await pending;
+    } catch (error) {
+      if (index === 0) throw error; // let the Windows fallback take the whole reply
+      console.warn('[Olanga] Magpie stopped mid-reply:', error.message);
+      finishSpeaking();
+      return true;
+    }
+
+    if (token !== magpieSpeechSequence) return true; // a newer reply took over
+
+    pending = index + 1 < chunks.length ? synthesize(chunks[index + 1]) : null;
+
+    const completed = await playSpeechChunk(blob, {
+      isFinal: index === chunks.length - 1,
+      onFinal: finishSpeaking
+    });
+
+    if (!completed || token !== magpieSpeechSequence) {
+      abandon(pending);
+      return true;
+    }
+  }
+
   return true;
 }
 
@@ -332,16 +444,36 @@ function speakWithWindowsTts(text, callback) {
   });
 }
 
+// NVIDIA's hosted Magpie worker can be unavailable for stretches at a time, and
+// every attempt costs the full request deadline before anything is spoken. After
+// a failure, use the Windows voice outright for a while so replies stay instant.
+const MAGPIE_COOLDOWN_MS = 5 * 60 * 1000;
+let magpieUnavailableUntil = 0;
+
 async function speakWithSelectedEngine(text, callback) {
   if (ttsEngine === 'magpie') {
     if (!nvidiaApiKey) {
       throw new Error('Add an NVIDIA API key in Settings to use Magpie TTS, or switch to Windows voice.');
     }
+
+    if (Date.now() < magpieUnavailableUntil) {
+      await speakWithWindowsTts(text, callback);
+      return;
+    }
+
     try {
       await speakWithNvidiaTts(text, callback);
+      magpieUnavailableUntil = 0;
       return;
     } catch (err) {
-      console.warn('[Olanga] Magpie TTS failed, falling back to Windows:', err.message);
+      magpieUnavailableUntil = Date.now() + MAGPIE_COOLDOWN_MS;
+      console.warn(
+        `[Olanga] Magpie TTS failed, using the Windows voice for ${MAGPIE_COOLDOWN_MS / 60000} min:`,
+        err.message
+      );
+      if (typeof showError === 'function') {
+        showError('Magpie voice unavailable — using the Windows voice for now');
+      }
       await speakWithWindowsTts(text, callback);
       return;
     }

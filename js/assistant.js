@@ -101,6 +101,10 @@ You HAVE FULL CAPABILITY to open or launch applications on the user's computer. 
 Example: "Opening Discord for you now. [OPEN_APP: Discord]"
 Example: "I'll launch Chrome right away. [OPEN_APP: Google Chrome]"
 
+You can also CLOSE or QUIT applications. Whenever the user asks you to close, quit, exit, or shut down an app, you MUST output the command [CLOSE_APP: AppName] in your RESPONSE. NEVER say you cannot close apps. Use the app's normal name, not its executable. Only real applications can be closed — never Olanga itself, File Explorer, or parts of Windows.
+Example: "Closing Discord now. [CLOSE_APP: Discord]"
+Example: "Shutting down Chrome for you. [CLOSE_APP: Google Chrome]"
+
 IMPORTANT FOLLOW-UP:
 If you need more information from the user to complete their request (e.g. you need to know which timer, which task, a clarification, a name, etc.), you MUST output the command [FOLLOW_UP] at the END of your RESPONSE. This will open a 5-second microphone window for them to answer. Only use this when genuinely needed.
 Example: "Which timer would you like me to cancel? [FOLLOW_UP]"
@@ -279,6 +283,24 @@ function applyAssistantCommands(spokenResponse) {
     window.electronAPI.openApp(appName);
     spokenResponse = spokenResponse.replace(openAppMatch[0], '').trim();
     if (!spokenResponse) spokenResponse = `Opening ${appName} for you now.`;
+  }
+
+  const closeAppMatch = spokenResponse.match(/\[CLOSE_APP:\s*([^\]]+)\]/i);
+  if (closeAppMatch) {
+    const appName = closeAppMatch[1].trim();
+    console.log(`[Olanga] 🛑 Closing App: ${appName}`);
+    window.electronAPI.closeApp(appName)
+      .then((result) => {
+        if (result?.ok) {
+          console.log(`[Olanga] Closed ${result.closed}${result.forced ? ' (forced)' : ''}`);
+        } else {
+          console.warn(`[Olanga] Nothing open matched "${appName}"`);
+          if (typeof showError === 'function') showError(`No open ${appName} window to close`);
+        }
+      })
+      .catch((error) => console.error('[Olanga] Close app failed:', error));
+    spokenResponse = spokenResponse.replace(closeAppMatch[0], '').trim();
+    if (!spokenResponse) spokenResponse = `Closing ${appName} now.`;
   }
 
   const spotifyMatch = spokenResponse.match(/\[SPOTIFY_(SONG|ALBUM|PLAYLIST|ARTIST):\s*([^\]]+)\]/i);

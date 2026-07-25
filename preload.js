@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   reloadSpotify: () => ipcRenderer.send('reload-spotify'),
   mediaControl: (cmd) => ipcRenderer.send('media-control', cmd),
   openApp: (appName) => ipcRenderer.send('open-app', appName),
+  closeApp: (appName) => ipcRenderer.invoke('close-app', appName),
   requestScreenshot: () => ipcRenderer.invoke('request-screenshot'),
   executeCommand: (payload) => ipcRenderer.invoke('execute-command', payload),
   createTerminalSession: (payload) => ipcRenderer.invoke('terminal-session-create', payload),

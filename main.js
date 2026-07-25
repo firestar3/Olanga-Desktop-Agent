@@ -314,7 +314,20 @@ function createWindow() {
 
   mainWindow.loadFile('index.html');
   if (isDev) {
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    // Docked rather than detached: a detached window hides behind the
+    // full-screen transparent window and looks like it never opened.
+    mainWindow.webContents.openDevTools({ mode: 'bottom' });
+
+    // Mirror renderer logs into the terminal so errors are copyable even when
+    // DevTools is not visible. Electron 35+ passes a details object; older
+    // versions pass positional arguments.
+    mainWindow.webContents.on('console-message', (...args) => {
+      const details = args[1] && typeof args[1] === 'object'
+        ? args[1]
+        : { level: args[1], message: args[2], lineNumber: args[3], sourceId: args[4] };
+      const where = details.sourceId ? ` (${details.sourceId}:${details.lineNumber})` : '';
+      console.log(`[Renderer:${details.level}] ${details.message}${where}`);
+    });
   }
 
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -637,18 +650,65 @@ function buildSynthesisRequest({ text, voiceName, languageCode, sampleRateHz }) 
   ]));
 }
 
-function grpcUnaryCall({ pathName, apiKey, functionId, requestBytes }) {
+// A fresh TLS handshake per request added a few hundred ms to every spoken
+// chunk, so the session is kept open between calls and dropped once idle.
+const TTS_SESSION_IDLE_MS = 5 * 60 * 1000;
+let ttsSession = null;
+let ttsSessionIdleTimer = null;
+let ttsCallsInFlight = 0;
+
+function releaseTtsSession(session) {
+  if (ttsSession === session) ttsSession = null;
+}
+
+function scheduleTtsSessionClose() {
+  if (ttsSessionIdleTimer) clearTimeout(ttsSessionIdleTimer);
+  ttsSessionIdleTimer = setTimeout(() => {
+    ttsSessionIdleTimer = null;
+    if (ttsCallsInFlight > 0 || !ttsSession) return;
+    const session = ttsSession;
+    ttsSession = null;
+    try { session.close(); } catch (_) {}
+  }, TTS_SESSION_IDLE_MS);
+  if (typeof ttsSessionIdleTimer.unref === 'function') ttsSessionIdleTimer.unref();
+}
+
+function getTtsSession() {
+  if (ttsSession && !ttsSession.closed && !ttsSession.destroyed) return ttsSession;
+
+  const session = http2.connect(`https://${GRPC_TTS_AUTHORITY}`);
+  // Permanent listener so a late failure can never become an unhandled 'error'.
+  session.on('error', () => releaseTtsSession(session));
+  session.on('close', () => releaseTtsSession(session));
+  session.on('goaway', () => releaseTtsSession(session));
+  ttsSession = session;
+  return session;
+}
+
+// NVCF answers with DEADLINE_EXCEEDED when a function has no worker ready, but
+// only after stalling for far longer than a reply can wait on.
+const GRPC_TTS_DEADLINE_MS = 12000;
+
+function grpcUnaryCall({ pathName, apiKey, functionId, requestBytes, timeoutMs = GRPC_TTS_DEADLINE_MS }) {
   return new Promise((resolve, reject) => {
-    const client = http2.connect('https://grpc.nvcf.nvidia.com:443');
+    const client = getTtsSession();
     const responseChunks = [];
     let responseHeaders = {};
     let responseTrailers = {};
     let settled = false;
+    let abortTimer = null;
+
+    const onSessionError = (error) => finish(error);
 
     const finish = (error, buffer) => {
       if (settled) return;
       settled = true;
-      client.close();
+      if (abortTimer) clearTimeout(abortTimer);
+      client.off('error', onSessionError);
+      ttsCallsInFlight = Math.max(0, ttsCallsInFlight - 1);
+      // A session that just failed can't be trusted; the next call reconnects.
+      if (error) releaseTtsSession(client);
+      scheduleTtsSessionClose();
       if (error) {
         reject(error);
       } else {
@@ -656,21 +716,37 @@ function grpcUnaryCall({ pathName, apiKey, functionId, requestBytes }) {
       }
     };
 
-    client.on('error', (error) => finish(error));
+    client.on('error', onSessionError);
+    ttsCallsInFlight += 1;
 
-    const request = client.request({
-      ':method': 'POST',
-      ':path': pathName,
-      ':scheme': 'https',
-      // Match official Riva clients: host:port in authority + function-id metadata.
-      ':authority': 'grpc.nvcf.nvidia.com:443',
-      'content-type': 'application/grpc',
-      'te': 'trailers',
-      'grpc-accept-encoding': 'identity',
-      'user-agent': 'olanga-control/1.0 grpc-node-http2',
-      'authorization': `Bearer ${apiKey}`,
-      'function-id': functionId
-    });
+    let request;
+    try {
+      request = client.request({
+        ':method': 'POST',
+        ':path': pathName,
+        ':scheme': 'https',
+        // Match official Riva clients: host:port in authority + function-id metadata.
+        ':authority': GRPC_TTS_AUTHORITY,
+        'content-type': 'application/grpc',
+        'te': 'trailers',
+        'grpc-accept-encoding': 'identity',
+        'user-agent': 'olanga-control/1.0 grpc-node-http2',
+        'authorization': `Bearer ${apiKey}`,
+        'function-id': functionId,
+        // Standard gRPC deadline, in milliseconds.
+        'grpc-timeout': `${timeoutMs}m`
+      });
+    } catch (error) {
+      releaseTtsSession(client);
+      finish(error);
+      return;
+    }
+
+    // The server doesn't always honour grpc-timeout, so give up locally too.
+    abortTimer = setTimeout(() => {
+      finish(new Error(`Magpie did not respond within ${timeoutMs}ms`));
+      try { request.close(http2.constants.NGHTTP2_CANCEL); } catch (_) {}
+    }, timeoutMs + 500);
 
     request.on('response', (headers) => {
       responseHeaders = headers;
@@ -690,6 +766,10 @@ function grpcUnaryCall({ pathName, apiKey, functionId, requestBytes }) {
         const grpcMessage = decodeURIComponent(String(responseTrailers['grpc-message'] || responseHeaders['grpc-message'] || 'gRPC request failed'));
         if (grpcStatus === '5' && /function .*not found for account/i.test(grpcMessage)) {
           finish(new Error(`TTS function id not found for this account (${functionId})`));
+          return;
+        }
+        if (/failed to establish link to worker/i.test(grpcMessage)) {
+          finish(new Error('Magpie has no worker available right now (NVIDIA capacity)'));
           return;
         }
         finish(new Error(`gRPC ${grpcStatus}: ${grpcMessage}`));
@@ -835,7 +915,27 @@ async function fetchNvidiaTtsConfig(apiKey, functionId) {
 // Function ids are account-scoped, so we try the fast path (an explicit id from
 // Settings, then the public Magpie id) and, if those aren't authorized for the
 // account, fall back to discovering a TTS function the account can actually call.
+let lastWorkingTtsFunctionId = null;
+
+const TRANSIENT_TTS_ERROR = /no worker available|failed to establish link to worker|did not respond within|unavailable|gRPC 4:/i;
+// Retry only a failure that came back quickly: a call that already burned its
+// deadline would just double how long the caller waits before speaking.
+const FAST_FAILURE_MS = 4000;
+
 async function synthesizeNvidiaTts(apiKey, functionId, text, voiceName, languageCode) {
+  const startedAt = Date.now();
+  try {
+    return await synthesizeNvidiaTtsOnce(apiKey, functionId, text, voiceName, languageCode);
+  } catch (error) {
+    const failedFast = Date.now() - startedAt < FAST_FAILURE_MS;
+    if (!failedFast || !TRANSIENT_TTS_ERROR.test(error.message || '')) throw error;
+    console.warn(`[Main] Magpie unavailable, retrying once: ${error.message}`);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return synthesizeNvidiaTtsOnce(apiKey, functionId, text, voiceName, languageCode);
+  }
+}
+
+async function synthesizeNvidiaTtsOnce(apiKey, functionId, text, voiceName, languageCode) {
   const requestBytes = buildSynthesisRequest({
     text,
     voiceName: voiceName || DEFAULT_TTS_VOICE_NAME,
@@ -857,7 +957,9 @@ async function synthesizeNvidiaTts(apiKey, functionId, text, voiceName, language
         functionId: id,
         requestBytes
       });
-      return parseSynthResponse(responseBuffer);
+      const audio = parseSynthResponse(responseBuffer);
+      lastWorkingTtsFunctionId = id;
+      return audio;
     } catch (error) {
       lastError = error;
       // Only move on to another id when this one simply isn't usable for the
@@ -870,6 +972,10 @@ async function synthesizeNvidiaTts(apiKey, functionId, text, voiceName, language
   };
 
   let audio = await attempt(functionId);
+  if (audio) return audio;
+  // Whatever worked last time first: re-walking the candidate list (and the
+  // function-discovery request behind it) costs a round trip per chunk.
+  audio = await attempt(lastWorkingTtsFunctionId);
   if (audio) return audio;
   audio = await attempt(MAGPIE_TTS_FUNCTION_ID);
   if (audio) return audio;
@@ -1271,6 +1377,124 @@ ipcMain.on('open-app', (event, appName) => {
   });
 });
 
+// Spoken app names rarely match the executable ("Word" is WINWORD.EXE).
+const CLOSE_APP_ALIASES = {
+  chrome: 'chrome',
+  'google chrome': 'chrome',
+  edge: 'msedge',
+  'microsoft edge': 'msedge',
+  firefox: 'firefox',
+  word: 'winword',
+  'microsoft word': 'winword',
+  excel: 'excel',
+  powerpoint: 'powerpnt',
+  outlook: 'outlook',
+  code: 'code',
+  'vs code': 'code',
+  'visual studio code': 'code',
+  cursor: 'cursor',
+  terminal: 'windowsterminal',
+  'windows terminal': 'windowsterminal',
+  teams: 'teams',
+  'microsoft teams': 'teams',
+  obs: 'obs64',
+  roblox: 'robloxplayerbeta'
+};
+
+// Closing these would break the desktop, the session, or Olanga itself.
+const CLOSE_APP_BLOCKLIST = [
+  'explorer', 'olanga', 'electron', 'dwm', 'winlogon', 'csrss', 'wininit',
+  'services', 'lsass', 'smss', 'svchost', 'fontdrvhost', 'sihost', 'ctfmon',
+  'searchhost', 'shellexperiencehost', 'startmenuexperiencehost', 'textinputhost',
+  'applicationframehost', 'systemsettings', 'lockapp', 'runtimebroker', 'audiodg',
+  'conhost'
+];
+
+function escapeForPowerShellString(value) {
+  return String(value ?? '').replace(/'/g, "''");
+}
+
+// Wildcards would widen the -like match to unrelated (or all) processes.
+function sanitizeAppName(value) {
+  return String(value ?? '').replace(/[*?\[\]`$;|&<>]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function buildCloseAppTargets(appName) {
+  const clean = sanitizeAppName(appName).toLowerCase();
+  if (!clean) return [];
+
+  const alias = CLOSE_APP_ALIASES[clean];
+  const targets = alias ? [alias, clean] : [clean];
+  // "Microsoft Word" should still match a window titled "... - Word".
+  const words = clean.split(' ').filter((word) => word.length >= 3);
+  if (words.length > 1) targets.push(words[words.length - 1]);
+
+  return [...new Set(targets)];
+}
+
+// Closes visible application windows matching a spoken name. Only processes that
+// own a main window are eligible, which keeps background services out of reach.
+ipcMain.handle('close-app', async (event, appName) => {
+  const targets = buildCloseAppTargets(appName);
+  if (targets.length === 0) {
+    return { ok: false, reason: 'empty-name' };
+  }
+
+  const targetList = targets.map((target) => `'${escapeForPowerShellString(target)}'`).join(',');
+  const blockedList = CLOSE_APP_BLOCKLIST.map((name) => `'${name}'`).join(',');
+
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$targets = @(${targetList})
+$blocked = @(${blockedList})
+$byName = @()
+$byTitle = @()
+foreach ($p in Get-Process) {
+  if ($p.MainWindowHandle -eq 0) { continue }
+  $name = $p.ProcessName.ToLower()
+  if ($blocked -contains $name) { continue }
+  $title = ''
+  if ($p.MainWindowTitle) { $title = $p.MainWindowTitle.ToLower() }
+  $nameHit = $false
+  $titleHit = $false
+  foreach ($t in $targets) {
+    if ($name -like "*$t*") { $nameHit = $true }
+    elseif ($title -like "*$t*") { $titleHit = $true }
+  }
+  if ($nameHit) { $byName += $p } elseif ($titleHit) { $byTitle += $p }
+}
+# A window merely titled "Spotify" (a browser tab, say) is only a candidate when
+# no actual Spotify process matched.
+$candidates = $byTitle
+if ($byName.Count -gt 0) { $candidates = $byName }
+if ($candidates.Count -eq 0) { Write-Output 'NONE'; exit 0 }
+$names = (($candidates | ForEach-Object { $_.ProcessName }) | Sort-Object -Unique) -join ', '
+$ids = $candidates | ForEach-Object { $_.Id }
+foreach ($p in $candidates) { $null = $p.CloseMainWindow() }
+Start-Sleep -Milliseconds 2000
+$survivors = Get-Process -Id $ids
+if ($survivors) {
+  $survivors | Stop-Process -Force
+  Write-Output "FORCED:$names"
+} else {
+  Write-Output "CLOSED:$names"
+}
+`;
+
+  console.log(`[Main] Closing app matching: ${targets.join(' | ')}`);
+  const { stdout } = await runPowerShell(script);
+  const output = String(stdout || '').trim();
+
+  if (/^FORCED:/.test(output) || /^CLOSED:/.test(output)) {
+    const [status, closed] = output.split(':');
+    console.log(`[Main] ${status === 'FORCED' ? 'Force-closed' : 'Closed'}: ${closed}`);
+    return { ok: true, closed, forced: status === 'FORCED' };
+  }
+
+  console.log(`[Main] No open window matched: ${targets.join(' | ')}`);
+  return { ok: false, reason: 'not-running' };
+});
+
 ipcMain.handle('request-screenshot', async () => {
   return new Promise((resolve) => {
     clipboard.clear();
@@ -1337,9 +1561,15 @@ ipcMain.handle('nvidia-tts-synthesize', async (event, payload = {}) => {
     throw new Error('Missing TTS text');
   }
 
-  console.log(`[Main] Magpie TTS synthesize (${text.length} chars, voice=${voiceName})`);
-  const audioBytes = await synthesizeNvidiaTts(apiKey, functionId, text, voiceName, languageCode);
-  return { audioBase64: Buffer.from(audioBytes).toString('base64') };
+  const startedAt = Date.now();
+  try {
+    const audioBytes = await synthesizeNvidiaTts(apiKey, functionId, text, voiceName, languageCode);
+    console.log(`[Main] Magpie TTS ${text.length} chars, voice=${voiceName}, ${Date.now() - startedAt}ms`);
+    return { audioBase64: Buffer.from(audioBytes).toString('base64') };
+  } catch (error) {
+    console.warn(`[Main] Magpie TTS failed after ${Date.now() - startedAt}ms: ${error.message}`);
+    throw error;
+  }
 });
 
 // NVIDIA chat completions proxy (renderer can't call it directly now that
