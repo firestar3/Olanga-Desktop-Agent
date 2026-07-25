@@ -33,7 +33,6 @@ Open the gear icon anytime (or finish first-launch setup).
 | Setting | What it does |
 | --- | --- |
 | **Gemini API key(s)** | Required for chat, search, and vision. Multiple keys supported; encrypted at rest. |
-| **Key rotation** | Optional auto-switch to another Gemini key on rate limits. |
 | **NVIDIA API key** | Optional. Powers Magpie TTS and AI helpers in Notepad / News. |
 | **TTS engine** | Windows (default) or Magpie. |
 | **Speech rate & Magpie voice** | Speed slider and voice picker when Magpie is on. |
