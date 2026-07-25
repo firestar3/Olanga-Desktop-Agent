@@ -89,6 +89,49 @@ npm install
 npm start
 ```
 
+## Building a Windows installer
+
+Olanga packages into a normal Windows application with [electron-builder](https://www.electron.build/): a Start-menu entry, a desktop shortcut, its own icon, and no terminal window.
+
+```bash
+npm install --save-dev electron-builder
+npm run dist
+```
+
+The build needs no extra setup: it reuses the repo's `icon.png` (converted to a Windows `.ico` automatically) and bundles the Vosk model alongside the app.
+
+The installer lands in `dist/` as `Olanga-Setup-1.0.0.exe`. It installs per-user, so no administrator prompt is required. Use `npm run pack` for an unpacked build in `dist/win-unpacked/` when you want to test packaging without producing an installer.
+
+### Publishing a release
+
+Pushing a version tag builds the installer on GitHub and attaches it to the matching release, so users always have a download link:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow lives in `.github/workflows/release.yml`. It runs the unit tests, verifies the icon and Vosk model are present, builds the installer, and publishes it. You can also trigger it manually from the Actions tab, which uploads the installer as a workflow artifact without creating a release.
+
+For this to work, `electron-builder` must be in `devDependencies` — the workflow fails with an explicit message if it or any packaging input is missing.
+
+A few notes:
+
+- **The icon** comes from `icon.png` in the repo root, which must be at least 256×256. electron-builder converts it to a multi-resolution `.ico` for you.
+- **The Vosk model** ships next to the app rather than inside the `app.asar` archive, because the model is fetched over a `file://` URL and Chromium cannot read inside an asar.
+- **Your API keys carry over.** The packaged build uses the same `olanga-control` user-data directory as `npm start`, so the encrypted key store is shared.
+- **Windows SmartScreen** will warn about an unknown publisher because the build is unsigned. Choose **More info → Run anyway** to install. Removing the warning requires a code-signing certificate.
+
+## Running tests
+
+```bash
+npm test
+```
+
+## Launch at login
+
+Under **Settings → Startup**, enable **Launch at login** to have Windows start Olanga automatically. It starts hidden in the tray with the wake word already armed. The toggle is only available in an installed build.
+
 ## Troubleshooting
 
 <<<<<<< HEAD

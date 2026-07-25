@@ -1,4 +1,20 @@
 node_modules/
 .DS_Store
 dist/
+build/
+out/
 *.log
+
+# Local diagnostic scripts and their captured output. These talk to the
+# secure store and vendor APIs, so they stay out of the repo.
+tests/diagnose_*
+tests/diag_*
+tests/_build_*
+tests/export_*
+tests/*_tmp.js
+tests/*.txt
+
+# Encrypted key store and anything that decrypts it
+secure-store.json
+*.env
+.env.*

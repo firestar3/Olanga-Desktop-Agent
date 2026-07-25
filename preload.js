@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setStatusState: (state) => ipcRenderer.send('status-indicator-set', state),
   setStatusLightMode: (mode) => ipcRenderer.send('status-indicator-set-mode', mode),
   setStatusLightSize: (size) => ipcRenderer.send('status-indicator-set-size', size),
+  getOpenAtLogin: () => ipcRenderer.invoke('get-open-at-login'),
+  setOpenAtLogin: (enabled) => ipcRenderer.invoke('set-open-at-login', enabled),
   openExternal: (url) => ipcRenderer.send('open-external', url),
   playSpotify: (type, term) => ipcRenderer.send('play-spotify', { type, term }),
   reloadSpotify: () => ipcRenderer.send('reload-spotify'),

@@ -1,0 +1,80 @@
+name: Release
+
+# Tagging a version builds the Windows installer and attaches it to the
+# matching GitHub release. Running the workflow by hand builds and uploads the
+# installer as a workflow artifact instead, which is handy for testing.
+#
+# Prerequisite: electron-builder must be in devDependencies (npm install
+# --save-dev electron-builder) and that change committed.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          # The Vosk model may be stored via Git LFS.
+          lfs: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: |
+          if (Test-Path package-lock.json) { npm ci } else { npm install --no-audit --no-fund }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify packaging inputs
+        run: |
+          $missing = @()
+          if (-not (Test-Path 'vosk-model-v2.tar.gz')) { $missing += 'vosk-model-v2.tar.gz (offline wake word model)' }
+          if (-not (Test-Path 'icon.png')) { $missing += 'icon.png (app and installer icon, 256x256 or larger)' }
+          if (-not (Test-Path 'node_modules/electron-builder')) { $missing += 'electron-builder in devDependencies' }
+          if ($missing.Count -gt 0) {
+            Write-Host '::error::Cannot build a working installer. Missing:'
+            $missing | ForEach-Object { Write-Host "::error::  - $_" }
+            exit 1
+          }
+          Write-Host 'All packaging inputs present.'
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build the installer
+        run: npm run dist
+
+      - name: Upload installer as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: olanga-installer
+          path: dist/Olanga-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Attach the installer to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $installer = (Get-ChildItem dist/Olanga-Setup-*.exe | Select-Object -First 1).FullName
+          if (-not $installer) { throw 'No installer found in dist/' }
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $installer --clobber
+          } else {
+            gh release create $tag $installer --title "Olanga $tag" --generate-notes
+          }

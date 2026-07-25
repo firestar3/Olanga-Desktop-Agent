@@ -18,24 +18,20 @@ let apiKeyRotation = false;
 let currentKeyIndex = 0;
 let apiKey = ''; // current active key
 let nvidiaApiKey = ''; // NVIDIA API key for TTS
-const defaultNvidiaVoiceName = 'Magpie-Multilingual.EN-US.Sofia';
-let nvidiaVoiceName = localStorage.getItem('olanga_nvidia_voice') || defaultNvidiaVoiceName;
-let ttsRate = Number.parseFloat(localStorage.getItem('olanga_tts_rate') || '1.05');
+const defaultNvidiaVoiceName = OlangaPrefs.DEFAULT_NVIDIA_VOICE;
+
+// Boot values come from the shared schema, which also runs any one-time
+// migrations before the rest of the app reads these globals.
+const bootPrefs = OlangaPrefs.load(localStorage);
+OlangaPrefs.writeToStorage(localStorage, bootPrefs, ['statusLightSize']);
+
+let nvidiaVoiceName = bootPrefs.nvidiaVoice;
+let ttsRate = bootPrefs.ttsRate;
 // Default to Windows built-in TTS; Magpie is opt-in until it's working reliably.
-let ttsEngine = localStorage.getItem('olanga_tts_engine') === 'magpie' ? 'magpie' : 'windows';
+let ttsEngine = bootPrefs.ttsEngine;
 let nvidiaVoiceCatalog = [];
-let statusLightMode = localStorage.getItem('olanga_status_light_mode') || 'active';
-if (!['off', 'active', 'all'].includes(statusLightMode)) statusLightMode = 'active';
-let statusLightSize = localStorage.getItem('olanga_status_light_size') || 'small';
-// One-time remap: old Normal→Small, old Large→Normal
-if (!localStorage.getItem('olanga_status_light_size_v2')) {
-  const legacy = localStorage.getItem('olanga_status_light_size');
-  if (legacy === 'large') statusLightSize = 'normal';
-  else statusLightSize = 'small';
-  localStorage.setItem('olanga_status_light_size', statusLightSize);
-  localStorage.setItem('olanga_status_light_size_v2', '1');
-}
-if (!['small', 'normal', 'large'].includes(statusLightSize)) statusLightSize = 'small';
+let statusLightMode = bootPrefs.statusLightMode;
+let statusLightSize = bootPrefs.statusLightSize;
 let userCity = '';
 let userState = '';
 let userCountry = '';

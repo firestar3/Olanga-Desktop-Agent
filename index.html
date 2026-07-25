@@ -3,6 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Model replies and RSS text land in the DOM, so script-src deliberately
+       omits 'unsafe-inline': injected <script> tags and inline handlers can't
+       run. eval stays allowed because the Vosk WASM glue needs it, and `file:`
+       is listed alongside 'self' because Chromium treats file:// origins as
+       opaque, where 'self' does not reliably match local subresources. -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self' file:;
+    script-src 'self' file: 'wasm-unsafe-eval' 'unsafe-eval';
+    style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com;
+    font-src 'self' file: data: https://fonts.gstatic.com;
+    img-src 'self' file: data: blob:;
+    media-src 'self' file: data: blob:;
+    worker-src 'self' file: blob:;
+    connect-src 'self' file: blob: data: olanga-asset: https://generativelanguage.googleapis.com;
+    object-src 'none';
+    base-uri 'none';
+    form-action 'none';
+    frame-src 'none';
+  ">
   <title>Olanga</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -474,6 +493,18 @@
       </div>
 
       <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
+        <h3>Startup</h3>
+        <p class="settings-hint">Start Olanga with Windows so the wake word is armed without opening it yourself. It launches straight to the system tray.</p>
+        <div class="rotation-toggle-row">
+          <label class="toggle-switch">
+            <input type="checkbox" id="openAtLoginToggle">
+            <span class="slider"></span>
+          </label>
+          <span>Launch at login</span>
+        </div>
+      </div>
+
+      <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
         <h3>Corner Status Light</h3>
         <p class="settings-hint">Click to cycle how the bottom-right glow behaves while Olanga runs in the background.</p>
         <div class="status-light-controls">
@@ -563,6 +594,8 @@
   </div>
 
   <script src="./node_modules/vosk-browser/dist/vosk.js"></script>
+  <script src="./shared/status-light.js"></script>
+  <script src="./shared/prefs-schema.js"></script>
   <script src="./js/core.js"></script>
   <script src="./js/audio-controls.js"></script>
   <script src="./js/voice.js"></script>

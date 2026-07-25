@@ -9,34 +9,17 @@
 const GEMINI_KEYS_STORE = 'gemini_api_keys';
 const NVIDIA_KEY_STORE = 'nvidia_api_key';
 const APP_PREFS_STORE = 'app_preferences';
-const FEATURES_STORAGE_KEY = 'olanga_enabled_features';
-const OPTIONAL_FEATURES = ['notepadScreen', 'newsScreen', 'terminalScreen'];
+const OPTIONAL_FEATURES = OlangaPrefs.OPTIONAL_FEATURES;
 
 let settingsSaveTimer = null;
 
 function readPrefsFromLocalStorage() {
-  let features = [];
-  try {
-    const stored = JSON.parse(localStorage.getItem(FEATURES_STORAGE_KEY) || '[]');
-    features = Array.isArray(stored) ? stored.filter((f) => OPTIONAL_FEATURES.includes(f)) : [];
-  } catch {
-    features = [];
-  }
-
   return {
-    city: localStorage.getItem('olanga_city') || '',
-    state: localStorage.getItem('olanga_state') || '',
-    country: localStorage.getItem('olanga_country') || '',
-    ttsEngine: localStorage.getItem('olanga_tts_engine') === 'magpie' ? 'magpie' : 'windows',
-    ttsRate: Number.parseFloat(localStorage.getItem('olanga_tts_rate') || '1.05') || 1.05,
-    nvidiaVoice: localStorage.getItem('olanga_nvidia_voice') || defaultNvidiaVoiceName,
-    features,
-    keyRotation: localStorage.getItem('olanga_key_rotation') === 'true',
+    ...OlangaPrefs.load(localStorage),
+    // Runtime holds the authoritative copy of these two.
     customWakeWordGroups: Array.isArray(customWakeWordGroups) ? customWakeWordGroups : [],
-    statusLightMode: ['off', 'active', 'all'].includes(statusLightMode) ? statusLightMode : 'active',
-    statusLightMode: ['off', 'active', 'all'].includes(statusLightMode) ? statusLightMode : 'active',
-    statusLightSize: ['small', 'normal', 'large'].includes(statusLightSize) ? statusLightSize : 'small',
-    statusLightSizeV2: true
+    statusLightMode: OlangaStatusLight.normalizeMode(statusLightMode),
+    statusLightSize: OlangaStatusLight.normalizeSize(statusLightSize)
   };
 }
 
@@ -49,53 +32,29 @@ function collectPrefsFromUI() {
     }
   });
 
-  const engine = (ttsEngineSelect?.value || ttsEngine || 'windows') === 'magpie' ? 'magpie' : 'windows';
-  const rateRaw = Number.parseFloat(ttsRateInput?.value || String(ttsRate) || '1.05');
-  const voiceRaw = (nvidiaVoiceSelect?.value || nvidiaVoiceName || defaultNvidiaVoiceName).trim();
-
   return {
-    city: (cityInput?.value || '').trim(),
-    state: (stateInput?.value || '').trim(),
-    country: (countryInput?.value || '').trim(),
-    ttsEngine: engine,
-    ttsRate: Number.isFinite(rateRaw) ? rateRaw : 1.05,
-    nvidiaVoice: voiceRaw || defaultNvidiaVoiceName,
-    features,
-    keyRotation: !!(rotationToggle?.checked),
-    customWakeWordGroups: Array.isArray(customWakeWordGroups) ? customWakeWordGroups : [],
-    statusLightMode: ['off', 'active', 'all'].includes(statusLightMode) ? statusLightMode : 'active',
-    statusLightSize: ['small', 'normal', 'large'].includes(statusLightSize) ? statusLightSize : 'small',
-    statusLightSizeV2: true
+    ...OlangaPrefs.sanitize({
+      city: cityInput?.value,
+      state: stateInput?.value,
+      country: countryInput?.value,
+      ttsEngine: ttsEngineSelect?.value || ttsEngine,
+      ttsRate: ttsRateInput?.value || ttsRate,
+      nvidiaVoice: nvidiaVoiceSelect?.value || nvidiaVoiceName,
+      features,
+      keyRotation: !!(rotationToggle?.checked),
+      statusLightMode,
+      statusLightSize,
+      statusLightSizeV2: true
+    }),
+    customWakeWordGroups: Array.isArray(customWakeWordGroups) ? customWakeWordGroups : []
   };
 }
 
-function normalizeStoredStatusLightSize(prefs) {
-  let size = prefs?.statusLightSize;
-  if (!prefs?.statusLightSizeV2) {
-    if (size === 'large') size = 'normal';
-    else size = 'small';
-  }
-  return ['small', 'normal', 'large'].includes(size) ? size : 'small';
-}
-
 function writePrefsToLocalStorage(prefs) {
-  localStorage.setItem('olanga_city', prefs.city || '');
-  localStorage.setItem('olanga_state', prefs.state || '');
-  localStorage.setItem('olanga_country', prefs.country || '');
-  localStorage.setItem('olanga_tts_engine', prefs.ttsEngine === 'magpie' ? 'magpie' : 'windows');
-  localStorage.setItem('olanga_tts_rate', String(prefs.ttsRate ?? 1.05));
-  localStorage.setItem('olanga_nvidia_voice', prefs.nvidiaVoice || defaultNvidiaVoiceName);
-  localStorage.setItem(FEATURES_STORAGE_KEY, JSON.stringify(Array.isArray(prefs.features) ? prefs.features : []));
-  localStorage.setItem('olanga_key_rotation', prefs.keyRotation ? 'true' : 'false');
-  if (prefs.statusLightMode) {
-    statusLightMode = ['off', 'active', 'all'].includes(prefs.statusLightMode) ? prefs.statusLightMode : 'active';
-    localStorage.setItem('olanga_status_light_mode', statusLightMode);
-  }
-  if (prefs.statusLightSize != null || prefs.statusLightSizeV2 != null) {
-    statusLightSize = normalizeStoredStatusLightSize(prefs);
-    localStorage.setItem('olanga_status_light_size', statusLightSize);
-    localStorage.setItem('olanga_status_light_size_v2', '1');
-  }
+  const clean = OlangaPrefs.applyMigrations(prefs);
+  OlangaPrefs.writeToStorage(localStorage, clean);
+  statusLightMode = clean.statusLightMode;
+  statusLightSize = clean.statusLightSize;
   if (Array.isArray(prefs.customWakeWordGroups)) {
     customWakeWordGroups = prefs.customWakeWordGroups;
     persistCustomWakeWordGroups();
@@ -103,31 +62,24 @@ function writePrefsToLocalStorage(prefs) {
 }
 
 function applyPrefsToRuntime(prefs) {
-  userCity = prefs.city || '';
-  userState = prefs.state || '';
-  userCountry = prefs.country || '';
-  ttsEngine = prefs.ttsEngine === 'magpie' ? 'magpie' : 'windows';
-  ttsRate = Number.isFinite(prefs.ttsRate) ? prefs.ttsRate : 1.05;
-  nvidiaVoiceName = prefs.nvidiaVoice || defaultNvidiaVoiceName;
+  const clean = OlangaPrefs.applyMigrations(prefs);
+  userCity = clean.city;
+  userState = clean.state;
+  userCountry = clean.country;
+  ttsEngine = clean.ttsEngine;
+  ttsRate = clean.ttsRate;
+  nvidiaVoiceName = clean.nvidiaVoice;
   if (typeof ALLOWED_ENGLISH_VOICE_IDS !== 'undefined' && !ALLOWED_ENGLISH_VOICE_IDS.has(nvidiaVoiceName)) {
     nvidiaVoiceName = defaultNvidiaVoiceName;
   }
-  apiKeyRotation = !!prefs.keyRotation;
-  if (prefs.statusLightMode) {
-    statusLightMode = ['off', 'active', 'all'].includes(prefs.statusLightMode) ? prefs.statusLightMode : 'active';
-    localStorage.setItem('olanga_status_light_mode', statusLightMode);
-    if (window.electronAPI?.setStatusLightMode) {
-      window.electronAPI.setStatusLightMode(statusLightMode);
-    }
-  }
-  if (prefs.statusLightSize != null || prefs.statusLightSizeV2 != null) {
-    statusLightSize = normalizeStoredStatusLightSize(prefs);
-    localStorage.setItem('olanga_status_light_size', statusLightSize);
-    localStorage.setItem('olanga_status_light_size_v2', '1');
-    if (window.electronAPI?.setStatusLightSize) {
-      window.electronAPI.setStatusLightSize(statusLightSize);
-    }
-  }
+  apiKeyRotation = clean.keyRotation;
+
+  statusLightMode = clean.statusLightMode;
+  statusLightSize = clean.statusLightSize;
+  OlangaPrefs.writeToStorage(localStorage, clean, ['statusLightMode', 'statusLightSize']);
+  window.electronAPI?.setStatusLightMode?.(statusLightMode);
+  window.electronAPI?.setStatusLightSize?.(statusLightSize);
+
   if (Array.isArray(prefs.customWakeWordGroups)) {
     customWakeWordGroups = prefs.customWakeWordGroups
       .map((group) => {
@@ -200,19 +152,10 @@ async function loadAppPreferences() {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
           prefs = {
-            ...prefs,
-            ...parsed,
-            features: Array.isArray(parsed.features)
-              ? parsed.features.filter((f) => OPTIONAL_FEATURES.includes(f))
-              : prefs.features,
+            ...OlangaPrefs.merge(prefs, parsed),
             customWakeWordGroups: Array.isArray(parsed.customWakeWordGroups)
               ? parsed.customWakeWordGroups
-              : prefs.customWakeWordGroups,
-            statusLightMode: ['off', 'active', 'all'].includes(parsed.statusLightMode)
-              ? parsed.statusLightMode
-              : prefs.statusLightMode,
-            statusLightSize: parsed.statusLightSize,
-            statusLightSizeV2: !!parsed.statusLightSizeV2
+              : prefs.customWakeWordGroups
           };
         }
       }
@@ -671,6 +614,7 @@ async function init() {
   if (rotationToggle) {
     rotationToggle.addEventListener('change', scheduleSaveAppSettings);
   }
+  initOpenAtLoginToggle();
 
   // Auto-save on every settings change.
   for (const input of [cityInput, stateInput, countryInput]) {
@@ -817,32 +761,54 @@ async function init() {
 // CORNER STATUS LIGHT MODE
 // ============================================
 
-const STATUS_LIGHT_MODE_ORDER = ['off', 'active', 'all'];
-const STATUS_LIGHT_MODE_LABELS = {
-  off: 'No Lights',
-  active: 'No Constant Light',
-  all: 'All Lights'
-};
-const STATUS_LIGHT_SIZE_ORDER = ['small', 'normal', 'large'];
-const STATUS_LIGHT_SIZE_LABELS = {
-  small: 'Small',
-  normal: 'Normal',
-  large: 'Large'
-};
+// Windows owns the login-item state, so the checkbox mirrors the OS rather
+// than a stored preference.
+async function initOpenAtLoginToggle() {
+  const toggle = document.getElementById('openAtLoginToggle');
+  if (!toggle) return;
+
+  if (!window.electronAPI?.getOpenAtLogin) {
+    applyOpenAtLoginState(toggle, { supported: false, enabled: false });
+    return;
+  }
+
+  try {
+    applyOpenAtLoginState(toggle, await window.electronAPI.getOpenAtLogin());
+  } catch (error) {
+    console.warn('[Olanga] Could not read launch-at-login state:', error.message);
+  }
+
+  toggle.addEventListener('change', async () => {
+    try {
+      applyOpenAtLoginState(toggle, await window.electronAPI.setOpenAtLogin(toggle.checked));
+    } catch (error) {
+      console.warn('[Olanga] Could not change launch-at-login:', error.message);
+    }
+  });
+}
+
+function applyOpenAtLoginState(toggle, state) {
+  const supported = !!state?.supported;
+  toggle.checked = !!state?.enabled;
+  toggle.disabled = !supported;
+  const row = toggle.closest('.rotation-toggle-row');
+  if (row) {
+    row.title = supported ? '' : 'Available once Olanga is installed (not in npm start).';
+    row.style.opacity = supported ? '' : '0.55';
+  }
+}
 
 function updateStatusLightModeButton() {
   const btn = document.getElementById('statusLightModeBtn');
   if (!btn) return;
-  const mode = STATUS_LIGHT_MODE_ORDER.includes(statusLightMode) ? statusLightMode : 'active';
-  btn.textContent = STATUS_LIGHT_MODE_LABELS[mode] || STATUS_LIGHT_MODE_LABELS.active;
+  const mode = OlangaStatusLight.normalizeMode(statusLightMode);
+  btn.textContent = OlangaStatusLight.MODE_LABELS[mode];
   btn.dataset.mode = mode;
 }
 
 function cycleStatusLightMode() {
-  const current = STATUS_LIGHT_MODE_ORDER.includes(statusLightMode) ? statusLightMode : 'active';
-  const next = STATUS_LIGHT_MODE_ORDER[(STATUS_LIGHT_MODE_ORDER.indexOf(current) + 1) % STATUS_LIGHT_MODE_ORDER.length];
-  statusLightMode = next;
-  localStorage.setItem('olanga_status_light_mode', statusLightMode);
+  statusLightMode = OlangaStatusLight.nextMode(statusLightMode);
+  OlangaPrefs.writeToStorage(localStorage, { statusLightMode }, ['statusLightMode']);
   if (window.electronAPI?.setStatusLightMode) {
     window.electronAPI.setStatusLightMode(statusLightMode);
   }
@@ -853,17 +819,18 @@ function cycleStatusLightMode() {
 function updateStatusLightSizeButton() {
   const btn = document.getElementById('statusLightSizeBtn');
   if (!btn) return;
-  const size = STATUS_LIGHT_SIZE_ORDER.includes(statusLightSize) ? statusLightSize : 'small';
-  btn.textContent = STATUS_LIGHT_SIZE_LABELS[size] || STATUS_LIGHT_SIZE_LABELS.small;
+  const size = OlangaStatusLight.normalizeSize(statusLightSize);
+  btn.textContent = OlangaStatusLight.SIZE_LABELS[size];
   btn.dataset.size = size;
 }
 
 function cycleStatusLightSize() {
-  const current = STATUS_LIGHT_SIZE_ORDER.includes(statusLightSize) ? statusLightSize : 'small';
-  const next = STATUS_LIGHT_SIZE_ORDER[(STATUS_LIGHT_SIZE_ORDER.indexOf(current) + 1) % STATUS_LIGHT_SIZE_ORDER.length];
-  statusLightSize = next;
-  localStorage.setItem('olanga_status_light_size', statusLightSize);
-  localStorage.setItem('olanga_status_light_size_v2', '1');
+  statusLightSize = OlangaStatusLight.nextSize(statusLightSize);
+  OlangaPrefs.writeToStorage(
+    localStorage,
+    { statusLightSize, statusLightSizeV2: true },
+    ['statusLightSize']
+  );
   if (window.electronAPI?.setStatusLightSize) {
     window.electronAPI.setStatusLightSize(statusLightSize);
   }
@@ -930,12 +897,7 @@ function renderCustomWakeWords() {
 // ============================================
 
 function getEnabledFeatures() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(FEATURES_STORAGE_KEY) || '[]');
-    return Array.isArray(stored) ? stored.filter(f => OPTIONAL_FEATURES.includes(f)) : [];
-  } catch {
-    return [];
-  }
+  return OlangaPrefs.readFromStorage(localStorage).features;
 }
 
 function setFeatureEnabled(feature, enabled) {
@@ -943,7 +905,7 @@ function setFeatureEnabled(feature, enabled) {
   const next = enabled
     ? [...new Set([...current, feature])]
     : current.filter(f => f !== feature);
-  localStorage.setItem(FEATURES_STORAGE_KEY, JSON.stringify(next));
+  OlangaPrefs.writeToStorage(localStorage, { features: next }, ['features']);
   applyFeatureToggles();
   // Durable save (localStorage + secure store).
   if (typeof scheduleSaveAppSettings === 'function') {

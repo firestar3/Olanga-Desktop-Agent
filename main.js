@@ -11,40 +11,30 @@ const os = require('os');
 // across npm start / electron . / diagnostic scripts.
 app.setName('olanga-control');
 
+const statusLight = require('./shared/status-light.js');
+
 let mainWindow;
 let tray = null;
 let statusIndicatorWindow = null;
 let currentStatusState = 'idle';
 // off = never glow; active = glow only when listening/thinking/speaking; all = include idle purple
-let statusLightMode = 'active';
-let statusLightSize = 'small';
-
-const STATUS_INDICATOR_SIZE_SMALL = 72;
-const STATUS_LIGHT_MODES = ['off', 'active', 'all'];
-const STATUS_LIGHT_SIZES = ['small', 'normal', 'large'];
+let statusLightMode = statusLight.DEFAULT_MODE;
+let statusLightSize = statusLight.DEFAULT_SIZE;
 
 function normalizeStatusLightMode(mode) {
-  return STATUS_LIGHT_MODES.includes(mode) ? mode : 'active';
+  return statusLight.normalizeMode(mode);
 }
 
 function normalizeStatusLightSize(size) {
-  return STATUS_LIGHT_SIZES.includes(size) ? size : 'small';
+  return statusLight.normalizeSize(size);
 }
 
 function getStatusIndicatorSize() {
-  const small = STATUS_INDICATOR_SIZE_SMALL;
-  const normal = Math.round(small * 1.2);
-  if (statusLightSize === 'large') return Math.round(normal * 1.25);
-  if (statusLightSize === 'normal') return normal;
-  return small;
+  return statusLight.sizeToPixels(statusLightSize);
 }
 
 function resolveStatusVisualState(state, mode = statusLightMode) {
-  const next = ['idle', 'listening', 'thinking', 'speaking'].includes(state) ? state : 'idle';
-  const lightMode = normalizeStatusLightMode(mode);
-  if (lightMode === 'off') return 'off';
-  if (lightMode === 'active' && next === 'idle') return 'off';
-  return next;
+  return statusLight.resolveVisualState(state, mode);
 }
 
 function positionStatusIndicator() {
@@ -117,7 +107,7 @@ function createStatusIndicatorWindow() {
 }
 
 function sendStatusIndicatorState(state) {
-  const next = ['idle', 'listening', 'thinking', 'speaking'].includes(state) ? state : 'idle';
+  const next = statusLight.normalizeState(state);
   currentStatusState = next;
   if (!statusIndicatorWindow || statusIndicatorWindow.isDestroyed()) return;
   try {
@@ -178,6 +168,42 @@ function ensureWindowExpanded() {
 }
 
 const isDev = process.argv.includes('--dev');
+// Set when Windows starts Olanga at login, so it boots straight to the tray.
+const startsHidden = process.argv.includes('--hidden');
+
+const APP_ID = 'com.aarav.olanga';
+// Without this, Windows groups the taskbar entry and notifications under the
+// generic Electron identity instead of Olanga.
+app.setAppUserModelId(APP_ID);
+
+// Only an installed build can register itself: during `npm start` the
+// executable is electron.exe, which Windows could not relaunch on its own.
+function getOpenAtLogin() {
+  if (!app.isPackaged) return { supported: false, enabled: false };
+  try {
+    return {
+      supported: true,
+      enabled: !!app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin
+    };
+  } catch (error) {
+    console.warn('[Main] Failed to read login item settings:', error.message);
+    return { supported: true, enabled: false };
+  }
+}
+
+function setOpenAtLogin(enabled) {
+  if (!app.isPackaged) return { supported: false, enabled: false };
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: !!enabled,
+      openAsHidden: !!enabled,
+      args: ['--hidden']
+    });
+  } catch (error) {
+    console.warn('[Main] Failed to write login item settings:', error.message);
+  }
+  return getOpenAtLogin();
+}
 
 // Serve local read-only assets (the Vosk model tarball) over a CORS-enabled
 // custom scheme so the renderer can fetch() them while webSecurity stays on.
@@ -196,17 +222,38 @@ protocol.registerSchemesAsPrivileged([
   }
 ]);
 
+// Directories the asset scheme may serve from, most specific first. A packaged
+// build keeps the Vosk model beside the asar (see extraResources in
+// package.json) because Chromium's file:// handler cannot read inside an asar
+// archive, which is what net.fetch below ends up using.
+function getAssetRoots() {
+  const roots = [__dirname];
+  if (app.isPackaged && process.resourcesPath) {
+    roots.unshift(process.resourcesPath, path.join(process.resourcesPath, 'app.asar.unpacked'));
+  }
+  return roots.map((root) => path.normalize(root + path.sep));
+}
+
+function resolveAssetPath(requestPath) {
+  for (const root of getAssetRoots()) {
+    const resolved = path.normalize(path.join(root, requestPath));
+    // Never serve files outside the root being checked.
+    if (!resolved.startsWith(root)) continue;
+    if (fs.existsSync(resolved)) return resolved;
+  }
+  return null;
+}
+
 function registerAssetProtocol() {
   protocol.handle(ASSET_SCHEME, async (request) => {
     const url = new URL(request.url);
     // pathname is absolute-looking ("/vosk-...."); strip the leading slash so
-    // path.join keeps the file under the app directory on Windows.
+    // path.join keeps the file under the asset root on Windows.
     const requestPath = decodeURIComponent(url.pathname).replace(/^\/+/, '');
-    const resolved = path.normalize(path.join(__dirname, requestPath));
-    const appRoot = path.normalize(__dirname + path.sep);
+    const resolved = resolveAssetPath(requestPath);
 
-    // Never serve files outside the app directory.
-    if (!resolved.startsWith(appRoot)) {
+    if (!resolved) {
+      console.warn(`[Main] Asset not found for ${ASSET_SCHEME}:// request:`, requestPath);
       return new Response('Not found', { status: 404 });
     }
 
@@ -252,6 +299,9 @@ function createWindow() {
   });
 
   mainWindow.once('ready-to-show', () => {
+    // A login-item launch stays in the tray; the renderer still boots so the
+    // wake word is armed without ever showing the window.
+    if (startsHidden) return;
     ensureWindowExpanded();
     mainWindow.show();
     // Re-assert after show — Windows sometimes applies a tiny default size on first paint.
@@ -1013,6 +1063,10 @@ ipcMain.on('status-indicator-set-mode', (_event, mode) => {
 ipcMain.on('status-indicator-set-size', (_event, size) => {
   setStatusLightSize(size);
 });
+
+ipcMain.handle('get-open-at-login', () => getOpenAtLogin());
+
+ipcMain.handle('set-open-at-login', (_event, enabled) => setOpenAtLogin(enabled));
 
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['https:', 'http:', 'spotify:']);
 
