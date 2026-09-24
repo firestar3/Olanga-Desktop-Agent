@@ -4,7 +4,7 @@
 
 Olanga listens for its wake word **entirely offline**. Nothing is sent anywhere until you actually wake it.
 
-<img width="1917" height="1078" alt="Olanga home screen" src="https://github.com/user-attachments/assets/c89b4dfb-f145-4375-a3a0-c6cab62474a3" />
+https://github.com/user-attachments/assets/d76c1174-1269-4949-855f-a5e954b14844
 
 ---
 
@@ -188,6 +188,7 @@ Both `npm start` and the installed build share the same `olanga-control` user-da
 
 ## Screenshots
 
+<img width="1917" height="1078" alt="Olanga home screen" src="https://github.com/user-attachments/assets/c89b4dfb-f145-4375-a3a0-c6cab62474a3" />
 <img width="1919" height="1079" alt="Olanga listening" src="https://github.com/user-attachments/assets/82cb99a9-a946-40ad-ac86-a40cbdc27f95" />
 <img width="1919" height="1079" alt="Olanga answering" src="https://github.com/user-attachments/assets/ff343bde-0902-4da5-a110-a63a916ec40a" />
 <img width="1919" height="1079" alt="Olanga settings" src="https://github.com/user-attachments/assets/38fcaddf-c2fa-490a-abb4-187dc72f0479" />
