@@ -1,203 +1,203 @@
-# Olanga
+<p align="center">
+  <img src="icon.png" alt="Olanga" width="112" height="112">
+</p>
 
-**A hands-free AI voice assistant for your Windows desktop.** Say a wake word, ask anything, and Olanga answers out loud — it can also look at your screen, control your music, open your apps, and keep your timers and tasks.
+<h1 align="center">Olanga</h1>
 
-Olanga listens for its wake word **entirely offline**. Nothing is sent anywhere until you actually wake it.
+<p align="center"><strong>Your desktop, one request away.</strong></p>
 
-<img width="1917" height="1078" alt="Olanga home screen" src="https://github.com/user-attachments/assets/c89b4dfb-f145-4375-a3a0-c6cab62474a3" />
+<p align="center">
+  Open apps. Control Spotify. Set the volume. Ask questions.<br>
+  Get help with your screen and review edits before they run.
+</p>
 
----
+<p align="center">
+  <a href="https://github.com/firestar3/Olanga-Desktop-Agent/releases/latest">Download for Windows</a>
+  · <a href="#see-it-in-action">Try commands</a>
+  · <a href="#speed-you-can-measure">Measured speed</a>
+  · <a href="docs/ARCHITECTURE.md">How it works</a>
+</p>
 
-## Download and install
-
-1. Go to the [**latest release**](https://github.com/firestar3/Olanga-Desktop-Agent/releases/latest) and download the installer — `Olanga-Setup-1.1.0.exe` at the time of writing.
-2. Run it. Windows will show a blue **"Windows protected your PC"** screen because the app isn't code-signed — click **More info → Run anyway**. (Olanga is unsigned because certificates cost hundreds of dollars a year; the source is right here if you'd rather build it yourself.)
-3. Follow the installer. It installs for your user only, so there's no administrator prompt, and it adds Start-menu and desktop shortcuts.
-4. Launch **Olanga**.
-
-**Requirements:** Windows 10 or 11 (64-bit), a microphone, and a free Google Gemini API key (below).
-
----
-
-## First run: get your API key
-
-Olanga needs your own Gemini API key to think. Keys are free.
-
-1. Visit [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and sign in with a Google account.
-2. Click **Create API key** and copy it.
-3. Paste it into Olanga's setup screen and save.
-
-Your key is encrypted at rest on your own machine using Windows' credential protection — it never goes anywhere except to Google when you ask a question.
-
-**Optional but recommended:**
-
-- **Location** — Add your city and state in Settings so weather and local questions are accurate.
-- **NVIDIA API key** — Add one for two things: the more natural-sounding Magpie voices, and the text generation behind the writing helpers in the Notepad and News panels. Get one at [build.nvidia.com](https://build.nvidia.com/). Without it, Olanga falls back to built-in Windows voices and those helpers stay off.
+<p align="center">Windows 10/11 x64 · Offline wake word · Gemini intelligence · Windows or Magpie voice</p>
 
 ---
 
-## Using Olanga
+Olanga brings voice commands, conversation, music control and screen assistance into one Windows app. Speak naturally or type a request. Olanga acknowledges it, runs supported actions, and tells you the result. A small corner orb keeps shortcuts within reach while you work in other apps.
 
-Just say **"Hey Olanga"** (or simply **"Hey"**), wait for the orb to turn green, then ask your question.
+## See it in action
 
-The orb and the corner glow tell you what's happening:
+> **You:** Open Spotify and raise the volume to 75%.
+>
+> **Olanga:** On it.
+>
+> **Olanga:** Spotify is open. System volume is 75%.
 
-| Color | Meaning |
+That sequence opens Spotify, checks for its window, sets the Windows output volume, and reads the volume back before reporting completion. The acknowledgment and final reply take separate turns, so a quick result does not cut off the opening response.
+
+| Say this | What Olanga does |
 | --- | --- |
-| Purple | Idle — waiting for the wake word |
-| Green | Listening to you |
-| Orange | Thinking |
-| Blue | Speaking |
+| “Play my liked songs on Spotify.” | Opens your personal Liked Songs collection and checks playback before confirming. |
+| “Play my playlist Road Trip.” | Looks for the named playlist in your Spotify library. |
+| “Pause it.” / “Resume.” / “What's playing?” | Controls playback or checks the current track; recent Spotify context carries into follow-ups. |
+| “Set the volume to seventy-five percent.” | Sets the Windows system volume to 75% and verifies the result. |
+| “Turn the volume down, then play my liked songs.” | Runs the supported steps in order, stopping and explaining if one fails. |
+| “Set a timer for five minutes.” | Starts a timer through the local command path. |
+| “Open Chrome.” | Requests an app launch through Windows Search and states when the window has not been verified. |
+| “Add buy milk to my tasks.” | Adds an item to your checklist. |
+| “Explain the error on my screen.” | Requests a screen capture, then uses Gemini to help diagnose it. |
+| “Fix the bug on my screen.” | Prepares a scoped edit for review and approval, then checks the visible result. |
 
-You can also **type** instead of talking, using the input box on the home screen. Press **Escape** at any time to stop Olanga and return it to idle.
+You can also ask ordinary questions or request current information through Google Search. Optional **Notepad**, **News** and **Terminal** panels keep notes, briefings and your own PowerShell sessions in the same app.
 
-Closing the window with the **X** doesn't quit — Olanga keeps listening from the system tray. Click the tray icon to bring it back, or right-click it and choose **Quit** to exit completely.
+## Speed you can measure
 
-### Things to try
+**Quick acknowledgment. Direct execution. A clear finish.**
 
-- *"Hey Olanga, what's the weather today?"*
-- *"Look at my screen — why am I getting this error?"*
-- *"Play Shape of You on Spotify."*
-- *"Skip this track."* / *"Turn the volume down."*
-- *"Open Discord."* / *"Close Discord."*
-- *"Set a timer for ten minutes."*
-- *"Add a task: finish the report by Friday."*
+Common, explicit app, music, volume and timer commands use a local intent matcher. Typed commands on this path need **zero model calls**; spoken commands need **one transcription call**. The local Windows voice can acknowledge the request while the work starts. Ambiguous requests use Gemini for interpretation and planning.
 
----
+For the Spotify + 75% volume command above, the verified 1.3.1 runs measured:
 
-## What Olanga can do
+| From request submission | Typed command | Generated spoken command |
+| --- | ---: | ---: |
+| Acknowledgment speech starts | **0.16 s** | **0.30 s** |
+| Final confirmation speech starts | **1.53 s** | **1.79 s** |
+| Final confirmation finishes | 6.60 s | 6.86 s |
+| Gemini requests | 0 | 1 |
 
-**Answer questions and search the web.** Powered by Google Gemini, with live lookups for weather, news, sports, and current events.
+Both runs used the production Electron app, real Spotify and Windows audio controls, and Windows speech. Both observed Spotify's window, independently read back **75% volume**, and recorded completed speech events without interruption. The tests restored the original volume afterward.
 
-**See your screen.** Ask about something visual and Olanga opens the Windows snipping tool — select an area and it analyzes that image alongside your question.
+These are individual measurements from one Windows machine on September 24, 2026, not a latency guarantee. The spoken test used a generated WAV and live Gemini transcription; timing starts at audio submission and excludes microphone recording and end-of-speech detection. Hardware, network conditions, provider load, voice engine and app startup can change results. See the [validation report](docs/VALIDATION.md) for methods and coverage, including **169 passing unit tests** for this release.
 
-**Control your PC by voice.**
+## Get started
 
-- **Spotify** — play songs, artists, albums, or playlists (keep the Spotify desktop app open)
-- **Media keys** — play/pause, next, previous, volume, mute
-- **Launch and close apps** — *"Open Chrome"*, *"Launch Word"*, *"Close Spotify"* (closing asks the app to shut down normally, so you still get any "save your work?" prompt)
+1. Download **`Olanga-Setup-1.3.1.exe`** from [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases) once 1.3.1 is published, and run the installer. It adds desktop and Start-menu shortcuts.
+2. Add your own [Google Gemini API key](https://aistudio.google.com/apikey) during setup. Gemini powers speech transcription, conversation, screen understanding, planning, and Notes/News AI.
+3. Use the built-in **Windows voice**, or choose **NVIDIA Magpie** in Settings and add a separate [NVIDIA hosted API key](https://build.nvidia.com/settings/api-keys). Use **Save & Test** to verify Magpie synthesis.
+4. Say **“Hey Olanga”**, wait for the listening orb, and give your request. You can also type in the command box.
 
-**Keep track of things.** Timers with labels and looping alarms, plus a task list with due dates. Both work by voice or by clicking.
+**Requirements:** Windows 10/11 x64; a microphone for voice input; internet and available Gemini quota for cloud features. Spotify commands require the Spotify desktop app, signed in. Its collection controls currently depend on English accessible labels. The installer is unsigned.
 
-**Stay out of your way.** Mute the mic or Olanga's voice from the toolbar, and it runs quietly in the tray until you need it.
+NVIDIA is optional and used only for Magpie speech. **A Google key and an NVIDIA key are separate credentials.** Exact volume commands change the Windows output volume; a nonzero target also unmutes it.
 
----
+## Made for everyday use
 
-## Wake words
+- **A corner orb that stays within reach.** Click it for five customizable shortcuts, hide it for five seconds or an hour, or reopen Olanga. Use number keys 1–5 for shortcuts. Choose **Settings → Corner Status Light → All Lights** to keep it available while idle.
+- **A clear state at a glance.** Purple is idle, green is listening, orange is thinking or working, and blue is speaking.
+- **Conversation that carries forward.** Olanga remembers recent exchanges and listens for 12 seconds after asking a follow-up question. You can answer by voice or type later. Context stays in memory, with limits of 24 messages, 24,000 characters and 30 minutes of inactivity.
+- **Your preferred voice and wake phrase.** Choose voice and speaking rate, add a custom wake word, and optionally launch Olanga with Windows.
+- **An easy stop.** Press **Escape** to cancel the current request and remaining actions. Closing the window keeps Olanga in the system tray; choose **Quit** there to exit.
+- **Speech that can recover.** Magpie caches short replies per voice. If synthesis or playback fails, Olanga can continue through the Windows voice; already-started audio may be repeated with an explanation.
 
-The built-in phrases — including *"Hey"* and *"Hey Olanga"* — are always active.
+## Screen assistance, with you in control
 
-To add your own, go to **Settings → Wake Words → Add Custom Wake Word**, type the phrase you intend to say, then say it five times. Olanga saves your typed phrase plus each spoken variation (up to six total), so it recognizes how *you* actually pronounce it.
+Olanga can help explain an error, inspect shared screen content, or prepare an edit in another app. Screen changes follow a reviewable sequence:
 
----
+1. **Share the screen.** Approve a primary-display capture for diagnosis and planning.
+2. **Define the scope.** Review the identified editor or mark the intended region on the screenshot.
+3. **Review the plan.** Say “yes” or choose **Review & run** to see the proposed actions.
+4. **Approve the input.** Two native confirmations are required before edits run.
+5. **Check the result.** Olanga captures the result and reports what the visible evidence supports, including anything still unverified.
 
-## Corner status light
+Open **Desktop task** below the command box to start a workflow directly. Supported actions include focusing an observed window, clicking, typing, bounded keyboard shortcuts, scrolling and short waits.
 
-A small glow curls around the bottom-right corner of your screen so you can tell Olanga's state even when the window is hidden. It's click-through, so it never blocks anything.
+A visible code correction does not establish that compilation or tests passed. Olanga reports that distinction, and does not execute model-generated shell commands or code. The optional Terminal panel is controlled by the user.
 
-Under **Settings → Corner Status Light**:
+<details>
+<summary>Desktop scope and current limits</summary>
 
-- **Mode** — *No Lights*, *No Constant Light* (only glows while active — the default), or *All Lights* (also shows the idle purple)
-- **Size** — *Small*, *Normal*, or *Large*
+- Each plan permits at most **12 steps**, **2,000 typed characters**, **30 seconds of execution**, and **five minutes before expiry**.
+- Editor-only input requires an accessible, non-password editable control fully inside the approved rectangle. The target app may need accessibility support enabled.
+- Elevated windows, secure desktops, secondary-display targets and background terminal automation are unsupported.
+- A different app or a further phase requires fresh observation and approval.
+- Escape stops remaining input. Changes already delivered are not automatically rolled back.
+- The corner light stays above ordinary windows; exclusive fullscreen apps and Windows secure desktops may cover it.
 
----
+</details>
 
-## Launch at login
+## Providers and privacy
 
-Under **Settings → Startup**, turn on **Launch at login** and Windows will start Olanga automatically, hidden in the tray with the wake word already armed. This option is only available in the installed app.
-
----
-
-## Optional panels
-
-Olanga keeps the voice assistant front and center, so these extras are off by default. Turn any of them on under **Settings → Features**:
-
-- **Notepad** — multi-tab notes with formatting and import/export. With an NVIDIA key, an AI sidebar can rewrite and edit for you.
-- **News** — a short, location-aware briefing built from news feeds, with topic filters and optional AI Q&A.
-- **Terminal** — multi-tab PowerShell sessions inside the app.
-
----
-
-## All settings
-
-| Setting | What it does |
+| Component | What it handles |
 | --- | --- |
-| **Gemini API key(s)** | Required. Add more than one and Olanga can rotate between them if you hit a rate limit. |
-| **NVIDIA API key** | Optional. Powers Magpie voices and the text generation in the Notepad and News helpers. |
-| **TTS engine** | Windows voices (default) or NVIDIA Magpie. |
-| **Speech rate** | How fast Olanga talks. |
-| **Magpie voice** | Ten voices to choose from when Magpie is enabled. |
-| **Location** | City, state, and country for weather, local search, and news. |
-| **Wake words** | Presets stay on; add your own custom phrases. |
-| **Startup** | Launch at login. |
-| **Corner Status Light** | Glow mode and size. |
-| **Features** | Show or hide the Notepad, News, and Terminal panels. |
-| **View Intro** | Replay the first-run animation. |
+| **Local Vosk** | Offline wake-word detection. Idle microphone audio is not streamed to a provider. |
+| **Google Gemini** | Submitted speech and model-routed text, conversation, explicitly shared screen images, action planning, and Notes/News AI. |
+| **NVIDIA Magpie — optional** | Response text for cloud speech synthesis when selected. |
+| **Windows voice and native controls** | Local acknowledgment/speech, supported app and media actions, and approved desktop input. |
 
----
+API keys are encrypted locally with Windows-backed credential protection. Conversation context, desktop captures and plans stay in memory. The separate Windows Snipping Tool used for selected-area diagnosis may retain captures according to its own settings.
 
-## Troubleshooting
+Current model defaults are **Gemini 3.5 Flash-Lite** for transcription, routing and responses, and **Gemini 3.5 Flash** for reasoning, with Flash-Lite as an availability fallback. Current-information requests use a separate Google Search call, so search quota is not required for routine actions.
 
-**Olanga doesn't respond to the wake word.** Check that Windows is using the microphone you expect and that the mic isn't muted in the toolbar. Speak the phrase as a single steady phrase rather than shouting it.
+<details>
+<summary>Connection troubleshooting</summary>
 
-**It won't reopen after I closed it.** It's still running in the system tray, near the clock. Click the tray icon to show the window. To quit for real, right-click the tray icon and choose **Quit**.
+- **Google 429:** quota or rate limit; check your Google AI Studio usage and billing.
+- **Google 503:** temporary provider unavailability; retry later.
+- **Magpie authentication failure:** check the separate NVIDIA key with **Save & Test**, or select the Windows voice. This does not disable Gemini features.
+- **An older version is still running:** closing the main window leaves the tray process active. Quit it, install the new version, then reopen Olanga from your shortcut.
 
-**No voice, or errors when asking questions.** This is almost always the API key — check that it's saved in Settings and that you haven't exhausted the free tier. Press `Ctrl+Shift+I` with Olanga focused to open developer tools and look for rate-limit or key messages.
+</details>
 
-**Windows says the app is unsafe.** That's the unsigned-installer warning described above. Choose **More info → Run anyway**.
+## Build and verify
 
----
+Use Windows and Node.js 22 for the same environment as the release workflow:
 
-## Privacy
-
-- Wake word detection runs **locally** with Vosk. Your microphone audio is not streamed anywhere while Olanga is idle.
-- Only after you wake it does your request go to Google Gemini (and to NVIDIA if you've enabled Magpie voices).
-- API keys are encrypted on your machine. Notes, tasks, and timers stay local.
-
----
-
-## Build from source
-
-For developers, or if you'd rather not run a prebuilt binary.
-
-```bash
-npm install
+```powershell
+git clone https://github.com/firestar3/Olanga-Desktop-Agent.git
+cd Olanga-Desktop-Agent
+npm ci
 npm start
 ```
 
-Run the unit tests with:
+Run the regular checks and build a complete installer:
 
-```bash
+```powershell
+npm run check
 npm test
-```
-
-### Build the installer
-
-```bash
-npm install --save-dev electron-builder
+npm run smoke
 npm run dist
+npm run verify:package
 ```
 
-The installer appears in `dist/` as `Olanga-Setup-<version>.exe`, matching the version in `package.json`. Use `npm run pack` for an unpacked build in `dist/win-unpacked/` when you want to check packaging without producing an installer.
+The installer is written to **`dist/Olanga-Setup-1.3.1.exe`**. It bundles the offline wake-word model and native helpers. Building alone does not update an existing installation; run the new installer to update, preserving saved settings and keys.
 
-The build needs no extra setup — it reuses the repo's `icon.png` (converted to a Windows `.ico` automatically) and bundles the Vosk model beside the app rather than inside the `app.asar` archive, since the model is fetched over a `file://` URL that can't reach inside an archive.
+<details>
+<summary>Optional live Windows checks</summary>
 
-Both `npm start` and the installed build share the same `olanga-control` user-data directory, so your saved API keys work in either.
+```powershell
+npm run smoke:overlay
+npm run smoke:overlay:native
+npm run smoke:desktop
+npm run smoke:voice
+npm run smoke:voice:audio
+```
+
+The native overlay and desktop checks operate disposable test windows. Close other Olanga instances and leave the keyboard and pointer alone during those tests.
+
+The voice checks open Spotify, briefly set system volume to 75%, play acknowledgment and completion speech, then restore volume and mute state. The audio variant uses a generated WAV and your saved Gemini key for live transcription; run it only when you intend that provider request.
+
+The regular unit and startup checks need no live credentials. Live checks write local reports under ignored `build/qa/`. Physical microphone quality and wake-word recognition are not covered by the generated-audio test. See [validation](docs/VALIDATION.md) for the exact coverage of this release.
+
+</details>
+
+## Publish a release
+
+The [Release workflow](.github/workflows/release.yml) builds the Windows installer and attaches it to a GitHub Release when you push a **`v*` tag**. The tag must match `package.json`; the current version is **`1.3.1`**.
+
+From your project directory, review and commit the source changes, then push the branch and tag:
+
+```powershell
+git add --all
+git diff --cached --stat
+git commit -m "Release v1.3.1: faster voice commands and verified actions"
+git push -u origin HEAD
+git tag -a v1.3.1 -m "Olanga v1.3.1"
+git push origin v1.3.1
+```
+
+The ignore rules exclude promotional videos/audio/screenshots in `artifacts/`, local diagnostic outputs, the extracted `model/` working copy, `dist/`, `build/` and `node_modules/`. The required app icon and `vosk-model-v2.tar.gz` stay versioned so a fresh checkout can build the complete app. The installer is uploaded as a release asset by the workflow.
+
+Watch [GitHub Actions](https://github.com/firestar3/Olanga-Desktop-Agent/actions/workflows/release.yml), then find the installer under [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases). For a future release, update the version in both `package.json` and `package-lock.json` and use a new matching tag. Manual workflow runs produce an installer artifact without publishing a release. Full instructions are in [RELEASING.md](docs/RELEASING.md).
 
 ---
 
-## Screenshots
-
-<img width="1919" height="1079" alt="Olanga listening" src="https://github.com/user-attachments/assets/82cb99a9-a946-40ad-ac86-a40cbdc27f95" />
-<img width="1919" height="1079" alt="Olanga answering" src="https://github.com/user-attachments/assets/ff343bde-0902-4da5-a110-a63a916ec40a" />
-<img width="1919" height="1079" alt="Olanga settings" src="https://github.com/user-attachments/assets/38fcaddf-c2fa-490a-abb4-187dc72f0479" />
-<img width="1917" height="1079" alt="Olanga notepad" src="https://github.com/user-attachments/assets/9fa513d5-59c7-4426-a06b-005bfa4b4687" />
-<img width="1919" height="1079" alt="Olanga news" src="https://github.com/user-attachments/assets/4b65289f-603d-4c9f-ac44-f4be48ffa1bf" />
-
----
-
-## Built with
-
-[Electron](https://www.electronjs.org/) · [Vosk](https://alphacephei.com/vosk/) for offline wake-word detection · [Google Gemini](https://ai.google.dev/) for intelligence and vision · [NVIDIA](https://build.nvidia.com/) for Magpie TTS voices and the text generation behind the Notepad and News helpers
-
-MIT licensed.
+[Architecture](docs/ARCHITECTURE.md) · [Validation](docs/VALIDATION.md) · [Release guide](docs/RELEASING.md) · [MIT license](LICENSE)

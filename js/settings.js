@@ -19,7 +19,8 @@ function readPrefsFromLocalStorage() {
     // Runtime holds the authoritative copy of these two.
     customWakeWordGroups: Array.isArray(customWakeWordGroups) ? customWakeWordGroups : [],
     statusLightMode: OlangaStatusLight.normalizeMode(statusLightMode),
-    statusLightSize: OlangaStatusLight.normalizeSize(statusLightSize)
+    statusLightSize: OlangaStatusLight.normalizeSize(statusLightSize),
+    quickActions
   };
 }
 
@@ -44,6 +45,7 @@ function collectPrefsFromUI() {
       keyRotation: !!(rotationToggle?.checked),
       statusLightMode,
       statusLightSize,
+      quickActions,
       statusLightSizeV2: true
     }),
     customWakeWordGroups: Array.isArray(customWakeWordGroups) ? customWakeWordGroups : []
@@ -55,6 +57,7 @@ function writePrefsToLocalStorage(prefs) {
   OlangaPrefs.writeToStorage(localStorage, clean);
   statusLightMode = clean.statusLightMode;
   statusLightSize = clean.statusLightSize;
+  quickActions = clean.quickActions;
   if (Array.isArray(prefs.customWakeWordGroups)) {
     customWakeWordGroups = prefs.customWakeWordGroups;
     persistCustomWakeWordGroups();
@@ -79,6 +82,8 @@ function applyPrefsToRuntime(prefs) {
   OlangaPrefs.writeToStorage(localStorage, clean, ['statusLightMode', 'statusLightSize']);
   window.electronAPI?.setStatusLightMode?.(statusLightMode);
   window.electronAPI?.setStatusLightSize?.(statusLightSize);
+  quickActions = clean.quickActions;
+  window.electronAPI?.setQuickActions?.(quickActions);
 
   if (Array.isArray(prefs.customWakeWordGroups)) {
     customWakeWordGroups = prefs.customWakeWordGroups
@@ -122,6 +127,7 @@ function applyPrefsToSettingsUI(prefs) {
   if (typeof renderCustomWakeWords === 'function') renderCustomWakeWords();
   if (typeof updateStatusLightModeButton === 'function') updateStatusLightModeButton();
   if (typeof updateStatusLightSizeButton === 'function') updateStatusLightSizeButton();
+  renderQuickActionsEditor();
 }
 
 function scheduleSaveAppSettings() {
@@ -140,6 +146,7 @@ async function persistAppPreferences(prefs) {
     }
   } catch (error) {
     console.warn('[Olanga] Secure prefs save failed:', error.message);
+    throw error;
   }
 }
 
@@ -184,34 +191,53 @@ async function saveAppSettings() {
 
 async function persistGeminiKeys() {
   const payload = JSON.stringify(Array.isArray(apiKeys) ? apiKeys.filter(Boolean) : []);
-  localStorage.setItem('olanga_api_keys', payload);
   try {
-    if (window.electronAPI?.secureStoreSet) {
-      await window.electronAPI.secureStoreSet(GEMINI_KEYS_STORE, payload);
-    }
+    if (!window.electronAPI?.secureStoreSet) throw new Error('Secure storage unavailable');
+    await window.electronAPI.secureStoreSet(GEMINI_KEYS_STORE, payload);
+    localStorage.removeItem('olanga_api_keys');
     localStorage.removeItem('olanga_api_key');
+    return true;
   } catch (error) {
     console.warn('[Olanga] Secure storage unavailable for Gemini keys:', error.message);
+    showError('Could not securely save your Gemini key. It is available for this session; try saving again.');
+    return false;
   }
 }
 
-async function persistNvidiaKey() {
-  const value = String(nvidiaApiKey || '');
-  if (value) {
-    localStorage.setItem('olanga_nvidia_key', value);
-  } else {
-    localStorage.removeItem('olanga_nvidia_key');
-  }
+async function persistNvidiaKey(candidate = nvidiaApiKey) {
   try {
-    if (window.electronAPI?.secureStoreSet) {
-      // Never write an empty string — that deletes the secure entry.
-      if (value) {
-        await window.electronAPI.secureStoreSet(NVIDIA_KEY_STORE, value);
-      }
-    }
+    const value = OlangaNvidiaKey.normalizeNvidiaKey(String(candidate || ''));
+    if (!window.electronAPI?.secureStoreSet) throw new Error('Secure storage unavailable');
+    await window.electronAPI.secureStoreSet(NVIDIA_KEY_STORE, value);
+    nvidiaApiKey = value;
+    localStorage.removeItem('olanga_nvidia_key');
+    return true;
   } catch (error) {
     console.warn('[Olanga] Secure storage unavailable for NVIDIA key:', error.message);
+    showError('Could not securely save your NVIDIA key. Try saving again.');
+    return false;
   }
+}
+
+let nvidiaConnectionCheckRunning = false;
+async function saveAndTestNvidiaKey() {
+  if (nvidiaConnectionCheckRunning) return;
+  const status = document.getElementById('nvidiaConnectionStatus');
+  nvidiaConnectionCheckRunning = true;
+  addNvidiaKeyBtn.disabled = true;
+  try {
+    const key = OlangaNvidiaKey.normalizeNvidiaKey(nvidiaSettingsKeyInput.value);
+    if (key && apiKeys.includes(key)) throw new Error('This is already saved as a Gemini key. Magpie needs a separate NVIDIA key.');
+    if (!await persistNvidiaKey(key)) throw new Error('The Magpie key could not be saved.');
+    if (typeof nvidiaKeyInput !== 'undefined' && nvidiaKeyInput) nvidiaKeyInput.value = nvidiaApiKey;
+    if (!key) { status.textContent = 'Magpie key removed. Gemini and the Windows voice still work.'; status.dataset.state = ''; return; }
+    status.textContent = 'Key saved. Checking Magpie voice…'; status.dataset.state = '';
+    const result = await window.electronAPI.nvidiaTtsSynthesize({ text: 'Magpie voice connection is ready.' });
+    if (!result?.audioBase64) throw new Error('Magpie returned no audio.');
+    status.textContent = 'Magpie returned audio successfully. Gemini is used for all reasoning and responses.'; status.dataset.state = 'success';
+    if (typeof refreshVoiceCatalog === 'function') refreshVoiceCatalog();
+  } catch (error) { status.textContent = error.message || 'Magpie connection failed. Gemini is unaffected.'; status.dataset.state = 'error'; }
+  finally { nvidiaConnectionCheckRunning = false; addNvidiaKeyBtn.disabled = false; }
 }
 
 function fillKeyInput(input, value) {
@@ -372,12 +398,11 @@ async function handleSaveKey() {
     apiKeys.push(key);
   }
   apiKey = key;
-  await persistGeminiKeys();
+  if (!await persistGeminiKeys()) return;
 
   if (nKey) {
-    nvidiaApiKey = nKey;
-    await persistNvidiaKey();
-    if (nvidiaSettingsKeyInput) nvidiaSettingsKeyInput.value = nKey;
+    if (!await persistNvidiaKey(nKey)) return;
+    if (nvidiaSettingsKeyInput) nvidiaSettingsKeyInput.value = nvidiaApiKey;
     refreshVoiceCatalog();
   }
   if (setupScreen) setupScreen.classList.remove('setup-first-launch');
@@ -482,6 +507,7 @@ async function init() {
   // Escape forces idle if TTS/listening gets stuck (blue/green orb).
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    if (typeof cancelAssistantRequest === 'function') cancelAssistantRequest();
     if (currentState === State.SPEAKING || currentState === State.LISTENING || currentState === State.THINKING) {
       try { if (typeof clearSpeakingWatchdog === 'function') clearSpeakingWatchdog(); } catch (_) {}
       try { if (currentTTSAudio) currentTTSAudio.pause(); } catch (_) {}
@@ -548,13 +574,9 @@ async function init() {
     });
   }
   if (addNvidiaKeyBtn) {
-    addNvidiaKeyBtn.addEventListener('click', () => {
-      const nKey = nvidiaSettingsKeyInput.value.trim();
-      nvidiaApiKey = nKey;
-      persistNvidiaKey();
-      if (typeof refreshVoiceCatalog === 'function') refreshVoiceCatalog();
-    });
+    addNvidiaKeyBtn.addEventListener('click', saveAndTestNvidiaKey);
   }
+  document.getElementById('getNvidiaKeyBtn')?.addEventListener('click', () => window.electronAPI.openExternal('https://build.nvidia.com/settings/api-keys'));
   const viewIntroBtn = document.getElementById('viewIntroBtn');
   if (viewIntroBtn) {
     viewIntroBtn.addEventListener('click', playSetupIntroReplay);
@@ -578,6 +600,25 @@ async function init() {
   }
   updateStatusLightModeButton();
   updateStatusLightSizeButton();
+  renderQuickActionsEditor();
+  document.getElementById('resetQuickActionsBtn')?.addEventListener('click', () => {
+    quickActions = OlangaQuickActions.normalizeQuickActions();
+    renderQuickActionsEditor();
+    scheduleSaveAppSettings();
+  });
+  window.electronAPI?.onQuickAction?.((action) => {
+    const slot = OlangaQuickActions.getQuickAction(quickActions, action?.id);
+    if (!slot) return;
+    const home = document.querySelector('.floating-icon[data-screen="mainScreen"]');
+    home?.click();
+    if (currentState !== State.IDLE || window.OlangaDesktop?.isBusy?.()) {
+      const input = document.getElementById('textCommandInput');
+      if (input) { input.value = slot.prompt; input.focus(); }
+      showError('Finish or cancel the current task, then send this shortcut.');
+      return;
+    }
+    processTextCommandWithGemini(slot.prompt);
+  });
   if (window.electronAPI?.setStatusLightMode) {
     window.electronAPI.setStatusLightMode(statusLightMode);
   }
@@ -1016,3 +1057,40 @@ document.addEventListener('DOMContentLoaded', () => {
     showError(`Initialization failed: ${error.message}`);
   });
 });
+
+// The editor stores requests as data; a shortcut never contains executable code.
+function renderQuickActionsEditor() {
+  const container = document.getElementById('quickActionsEditor');
+  if (!container || container.contains(document.activeElement)) return;
+  container.replaceChildren();
+  OlangaQuickActions.normalizeQuickActions(quickActions).forEach((slot, index) => {
+    const row = document.createElement('fieldset');
+    row.className = 'quick-action-editor';
+    const legend = document.createElement('legend');
+    legend.textContent = `Shortcut ${index + 1}`;
+    row.appendChild(legend);
+    for (const [key, caption, maximum] of [
+      ['label', 'Name', OlangaQuickActions.LABEL_MAX_LENGTH],
+      ['prompt', 'Request', OlangaQuickActions.PROMPT_MAX_LENGTH]
+    ]) {
+      const label = document.createElement('label');
+      label.textContent = caption;
+      const input = document.createElement(key === 'prompt' ? 'textarea' : 'input');
+      input.id = `quick-action-${index}-${key}`;
+      label.htmlFor = input.id;
+      input.maxLength = maximum;
+      input.value = slot[key];
+      if (key === 'prompt') input.rows = 2;
+      input.addEventListener('change', async () => {
+        quickActions[index] = { ...quickActions[index], [key]: input.value };
+        quickActions = OlangaQuickActions.normalizeQuickActions(quickActions);
+        input.value = quickActions[index][key];
+        const saved = await saveAppSettings();
+        const status = document.getElementById('quickActionsSaveStatus');
+        if (status) status.textContent = saved ? 'Shortcuts saved.' : 'Could not save shortcuts.';
+      });
+      row.append(label, input);
+    }
+    container.appendChild(row);
+  });
+}

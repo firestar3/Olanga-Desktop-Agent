@@ -39,6 +39,7 @@ test('normal is 20% over small and large is 25% over normal', () => {
   const large = statusLight.sizeToPixels('large');
 
   assert.equal(small, statusLight.SMALL_SIZE_PX);
+  assert.equal(small, 32, 'default light remains a compact corner control');
   assert.equal(normal, Math.round(small * 1.2));
   assert.equal(large, Math.round(normal * 1.25));
   assert.ok(small < normal && normal < large);

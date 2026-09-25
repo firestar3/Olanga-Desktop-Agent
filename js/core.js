@@ -32,11 +32,12 @@ let ttsEngine = bootPrefs.ttsEngine;
 let nvidiaVoiceCatalog = [];
 let statusLightMode = bootPrefs.statusLightMode;
 let statusLightSize = bootPrefs.statusLightSize;
+let quickActions = bootPrefs.quickActions;
 let userCity = '';
 let userState = '';
 let userCountry = '';
 let synthesis = window.speechSynthesis;
-let conversationHistory = []; // {role: 'user'|'model', text: '...'}
+let conversationHistory = []; // Session-only; survives idle and microphone timeouts.
 let orbCanvasCtx = null;
 let animationFrameId = null;
 
@@ -252,9 +253,8 @@ function setState(newState, preserveHistory = false) {
   switch (newState) {
     case State.IDLE:
       lastIdleTime = Date.now();
-      if (!preserveHistory) {
-        conversationHistory = []; // Only contain memory for the current strand of conversation
-      }
+      // Idle is a microphone/UI state, not the end of a conversation. TTS,
+      // silence and desktop review return here before the user's reply.
       hint.textContent = 'Listening for "Hey Olanga"...';
       hint.classList.remove('hidden');
       hint.innerHTML = 'Say <strong>"Hey Olanga"</strong> (or your custom wake word) to start';

@@ -163,3 +163,24 @@ test('every definition exposes a storage key and a usable default', () => {
     assert.notEqual(prefs.coerce(def, def.default), undefined, `${def.key} default must be valid`);
   }
 });
+
+test('removed NIM model preferences cannot affect Gemini or Magpie settings', () => {
+  const result = prefs.sanitize({ nvidiaReasoningModel: 'retired/model', nvidiaVisionModel: 'old/vision', nvidiaResponseModel: 'old/response', ttsEngine:'magpie' });
+  assert.equal(result.ttsEngine, 'magpie');
+  assert.equal(Object.hasOwn(result, 'nvidiaReasoningModel'), false);
+  assert.equal(Object.hasOwn(result, 'nvidiaVisionModel'), false);
+  assert.equal(Object.hasOwn(result, 'nvidiaResponseModel'), false);
+});
+
+test('five shortcut slots survive secure-store merge and storage roundtrip', () => {
+  const initial = prefs.defaults();
+  initial.quickActions[0].label = 'My editor';
+  initial.quickActions[0].prompt = 'Desktop task: polish the selected paragraph';
+  const storage = fakeStorage();
+  prefs.writeToStorage(storage, initial);
+  const result = prefs.merge(prefs.load(storage), { city: 'Seattle' });
+  assert.equal(result.quickActions.length, 5);
+  assert.equal(result.quickActions[0].label, 'My editor');
+  assert.equal(result.quickActions[0].prompt, initial.quickActions[0].prompt);
+  assert.notEqual(prefs.defaults().quickActions[0].label, 'My editor');
+});

@@ -33,7 +33,7 @@
   const DEFAULT_MODE = 'active';
   const DEFAULT_SIZE = 'small';
 
-  const SMALL_SIZE_PX = 72;
+  const SMALL_SIZE_PX = 32;
   const NORMAL_SCALE = 1.2;
   const LARGE_SCALE = 1.25;
 

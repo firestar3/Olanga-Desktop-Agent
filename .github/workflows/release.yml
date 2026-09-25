@@ -5,8 +5,8 @@ name: Release
 # installer as a workflow artifact instead, which is handy for testing.
 #
 # To publish a new version:
-#   git tag v1.0.1
-#   git push origin v1.0.1
+#   git tag -a v1.3.1 -m "Olanga v1.3.1"
+#   git push origin v1.3.1
 #
 # Prerequisite: electron-builder must be in devDependencies (npm install
 # --save-dev electron-builder) and that change committed.
@@ -57,8 +57,14 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+      - name: Check scripts, release version and packaged assets
+        run: npm run check
+
       - name: Build the installer
         run: npm run dist
+
+      - name: Verify the packaged application
+        run: npm run verify:package
 
       - name: Upload installer as a workflow artifact
         uses: actions/upload-artifact@v4

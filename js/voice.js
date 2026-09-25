@@ -420,7 +420,7 @@ function monitorAudio() {
         }
 
         // Wait 4 seconds for them to START speaking. If they're already speaking, wait 1.5s to STOP.
-        const timeout = hasSpokenDuringRecording ? SILENCE_DURATION : 4000;
+        const timeout = hasSpokenDuringRecording ? SILENCE_DURATION : (followUpTimer ? 12000 : 4000);
 
         if (Date.now() - silenceStartTime > timeout) {
           if (hasSpokenDuringRecording && (Date.now() - speechStartTime) > MIN_SPEECH_DURATION) {

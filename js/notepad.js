@@ -325,14 +325,14 @@ async function sendNotepadAiMessage() {
   // Get selected model
   const selectedModel = notepadAiModelSelect.value;
 
-  // Map model names to Nvidia API models
+  // Map model names to Gemini API models
   const modelMap = {
-    'fast': 'meta/llama-3.1-8b-instruct',
-    'smart': 'meta/llama-3.1-70b-instruct',
-    'code': 'meta/llama-3.1-70b-instruct'
+    'fast': 'gemini-3.5-flash-lite',
+    'smart': 'gemini-3.5-flash',
+    'code': 'gemini-3.5-flash'
   };
 
-  const modelName = modelMap[selectedModel] || 'meta/llama-3.1-70b-instruct';
+  const modelName = modelMap[selectedModel] || 'gemini-3.5-flash';
 
   // Prepare AI prompt with note context and chat history
   let systemPrompt;
@@ -393,7 +393,7 @@ Current note content:\n\n${noteContent || '(empty)'}`;
   messages.push({ role: 'user', content: message });
 
   try {
-    const data = await callNvidiaChat(modelName, messages, { temperature: 0.7, max_tokens: 2048 });
+    const data = await callGeminiChat(modelName, messages, { temperature: 0.7, max_tokens: 2048 });
     const aiResponse = data.choices[0].message.content;
 
     // Add AI response to chat
@@ -459,19 +459,9 @@ function setAiStatusIdle() {
   notepadAiSendBtn.disabled = false;
 }
 
-async function callNvidiaChat(modelName, messages, options = {}) {
-  if (!nvidiaApiKey) {
-    throw new Error('Please add your Nvidia API key in Settings to use the AI assistant.');
-  }
-
-  // Proxied through the main process to avoid renderer CORS restrictions.
-  return window.electronAPI.nvidiaChat({
-    apiKey: nvidiaApiKey,
-    model: modelName,
-    messages,
-    temperature: options.temperature ?? 0.7,
-    max_tokens: options.max_tokens ?? 2048
-  });
+async function callGeminiChat(modelName, messages, options = {}) {
+  const text = await callGeminiSpecialist('reasoning', messages, { model: modelName, temperature: options.temperature ?? 0.5, maxTokens: options.max_tokens ?? 2048, signal: options.signal });
+  return { choices: [{ message: { content: text } }] };
 }
 
 function addNotepadAiMessage(text, type) {
@@ -525,7 +515,7 @@ async function compactChatHistory() {
   const summaryPrompt = `Summarize the following conversation between a user and an AI assistant about editing notes. Keep it concise and focus on the main topics and decisions made:\n\n${messagesToCompact.map(m => `${m.role}: ${m.content}`).join('\n')}`;
 
   try {
-    const data = await callNvidiaChat('meta/llama-3.1-70b-instruct', [
+    const data = await callGeminiChat('gemini-3.5-flash', [
       { role: 'system', content: 'You are a helpful assistant that summarizes conversations concisely.' },
       { role: 'user', content: summaryPrompt }
     ], { temperature: 0.3, max_tokens: 500 });
