@@ -108,6 +108,9 @@ test('malformed native result rejects instead of producing a silent success', as
 
 test('Windows media helper and its Core Audio interop compile without issuing any command', { skip: process.platform !== 'win32' }, () => {
   const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const output = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.resolve(__dirname, '../../desktop/media-helper.ps1')], { input: '', encoding: 'utf8', timeout: 15000, windowsHide: true });
+  // A fresh hosted Windows runner may need over 15 seconds to start PowerShell
+  // and compile Add-Type. Keep the compilation check bounded without treating
+  // cold CI startup as a native-helper failure; runtime action deadlines stay unchanged.
+  const output = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.resolve(__dirname, '../../desktop/media-helper.ps1')], { input: '', encoding: 'utf8', timeout: 60000, windowsHide: true });
   assert.equal(output.trim(), '');
 });
