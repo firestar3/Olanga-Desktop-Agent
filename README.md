@@ -26,6 +26,8 @@ Olanga brings voice commands, conversation, music control and screen assistance 
 
 ## See it in action
 
+https://github.com/user-attachments/assets/d76c1174-1269-4949-855f-a5e954b14844
+
 > **You:** Open Spotify and raise the volume to 75%.
 >
 > **Olanga:** On it.
@@ -197,6 +199,22 @@ git push origin v1.3.1
 The ignore rules exclude promotional videos/audio/screenshots in `artifacts/`, local diagnostic outputs, the extracted `model/` working copy, `dist/`, `build/` and `node_modules/`. The required app icon and `vosk-model-v2.tar.gz` stay versioned so a fresh checkout can build the complete app. The installer is uploaded as a release asset by the workflow.
 
 Watch [GitHub Actions](https://github.com/firestar3/Olanga-Desktop-Agent/actions/workflows/release.yml), then find the installer under [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases). For a future release, update the version in both `package.json` and `package-lock.json` and use a new matching tag. Manual workflow runs produce an installer artifact without publishing a release. Full instructions are in [RELEASING.md](docs/RELEASING.md).
+
+---
+
+## Screenshots
+
+<details>
+<summary>Explore the app</summary>
+
+<img width="1917" height="1078" alt="Olanga home screen" src="https://github.com/user-attachments/assets/c89b4dfb-f145-4375-a3a0-c6cab62474a3" />
+<img width="1919" height="1079" alt="Olanga listening" src="https://github.com/user-attachments/assets/82cb99a9-a946-40ad-ac86-a40cbdc27f95" />
+<img width="1919" height="1079" alt="Olanga answering" src="https://github.com/user-attachments/assets/ff343bde-0902-4da5-a110-a63a916ec40a" />
+<img width="1919" height="1079" alt="Olanga settings" src="https://github.com/user-attachments/assets/38fcaddf-c2fa-490a-abb4-187dc72f0479" />
+<img width="1917" height="1079" alt="Olanga notepad" src="https://github.com/user-attachments/assets/9fa513d5-59c7-4426-a06b-005bfa4b4687" />
+<img width="1919" height="1079" alt="Olanga news" src="https://github.com/user-attachments/assets/4b65289f-603d-4c9f-ac44-f4be48ffa1bf" />
+
+</details>
 
 ---
 
