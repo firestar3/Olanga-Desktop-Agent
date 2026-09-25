@@ -3456,6 +3456,12 @@ body.state-speaking #orbCanvas {
   opacity: 0.9;
 }
 
+.connection-results { padding-left: 18px; margin: 8px 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.connection-results [data-state="error"], #nvidiaConnectionStatus[data-state="error"] { color: var(--danger); }
+.connection-results [data-state="success"] { color: var(--text-primary); }
+.add-key-row button:disabled { opacity: 0.55; cursor: wait; }
+.add-key-row input { min-width: 0; }
+
 .rotation-toggle-row {
   display: flex;
   align-items: center;
@@ -4127,3 +4133,15 @@ input:checked + .slider:before {
   background: var(--accent-light);
   transform: scale(1.05);
 }
+
+/* Floating launcher preferences */
+.quick-actions-settings { margin-top: 20px; }
+.quick-actions-settings summary { cursor: pointer; font-size: 14px; padding: 10px 0; color: var(--text-primary, #f1efff); }
+.quick-actions-editor { display: grid; gap: 12px; margin: 14px 0; }
+.quick-action-editor { min-width: 0; display: grid; gap: 7px; border: 1px solid var(--border-subtle, #ffffff20); border-radius: 14px; padding: 12px 14px; }
+.quick-action-editor legend { color: #b8a8ff; font-size: 12px; padding: 0 5px; }
+.quick-action-editor label, .agent-settings label { color: #b5b0c8; font-size: 12px; }
+.quick-action-editor input, .quick-action-editor textarea { width: 100%; box-sizing: border-box; background: #ffffff08; border: 1px solid #ffffff1c; border-radius: 8px; color: var(--text-primary, #fff); padding: 9px 10px; font: inherit; font-size: 13px; resize: vertical; }
+.quick-action-editor input:focus-visible, .quick-action-editor textarea:focus-visible { outline: 2px solid #a397ff; outline-offset: 2px; }
+.agent-settings { margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px; }
+.agent-settings label { display: block; margin: 14px 0 6px; }

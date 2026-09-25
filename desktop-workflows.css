@@ -1,0 +1,61 @@
+.desktop-task-launch {
+  margin-top: 9px; padding: 8px 15px; border: 1px solid rgba(167, 139, 250, .28);
+  border-radius: 24px; background: rgba(139, 92, 246, .08); color: #d9ccff;
+  font: 500 12px 'Outfit', sans-serif; cursor: pointer;
+  transition: background .18s, border-color .18s, transform .18s;
+}
+.desktop-task-launch:hover { background: rgba(139, 92, 246, .18); border-color: #a78bfa; transform: translateY(-1px); }
+.desktop-task-dialog {
+  position: fixed; inset: 0; margin: auto; width: min(700px, calc(100vw - 40px));
+  max-height: calc(100vh - 72px); overflow: auto; box-sizing: border-box;
+  padding: 28px; border: 1px solid rgba(188, 167, 255, .25); border-radius: 22px;
+  color: #eeeaf8; background: radial-gradient(ellipse at top left, #272038, #13131c 65%);
+  box-shadow: 0 32px 100px #0009; font-family: 'Outfit', sans-serif;
+}
+.desktop-task-dialog::backdrop { background: #07070bc9; backdrop-filter: blur(8px); }
+.desktop-task-dialog [hidden] { display: none !important; }
+.desktop-task-header { display: flex; justify-content: space-between; gap: 16px; align-items: start; margin-bottom: 15px; }
+.desktop-task-eyebrow { color: #bfa6ff; letter-spacing: .15em; font-size: 10px; font-weight: 600; margin: 0 0 8px; }
+.desktop-task-dialog h2 { margin: 0; font-size: 26px; font-weight: 500; letter-spacing: -.03em; }
+.desktop-task-dialog h3 { margin: 0 0 9px; font-size: 17px; font-weight: 500; }
+.desktop-task-intro { font-size: 14px; color: #b8b4c8; line-height: 1.6; margin: 0 0 20px; }
+.desktop-task-label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+.desktop-task-goal { width: 100%; min-height: 90px; box-sizing: border-box; resize: vertical; padding: 13px; border: 1px solid #51465f; border-radius: 12px; background: #0e0e17; color: #f2eefb; font: inherit; font-size: 14px; line-height: 1.5; }
+.desktop-task-goal::placeholder { color: #8f899e; }
+.desktop-task-examples { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.desktop-task-examples button { color: #c4b6e3; background: #211c2d; border: 1px solid #41384f; border-radius: 18px; padding: 6px 10px; font: inherit; font-size: 11px; cursor: pointer; }
+.desktop-task-privacy, .desktop-task-footer { color: #9c97ac; font-size: 11px; line-height: 1.6; margin: 14px 0; }
+.desktop-task-status { font-size: 13px; line-height: 1.55; padding: 12px 14px; margin: 16px 0; border-radius: 10px; background: #aaa0ef0b; border: 1px solid #aaa0ef24; color: #ddd6ef; white-space: pre-wrap; overflow-wrap: anywhere; }
+.desktop-task-status[data-kind="error"] { color: #ffc0c5; border-color: #fc9aa531; background: #fc9aa50a; }
+.desktop-task-status[data-kind="success"] { color: #bcebd7; border-color: #93dbc631; }
+.desktop-task-status[data-kind="notice"] { color: #ebd4a4; border-color: #dec08931; }
+.desktop-task-review { padding: 18px; margin-bottom: 12px; background: #0e0e1880; border: 1px solid #ffffff12; border-radius: 14px; }
+.desktop-task-observation { color: #b4adbf; font-size: 12px; line-height: 1.65; margin: 0 0 15px; white-space: pre-wrap; }
+.desktop-task-steps { list-style: none; padding: 0; margin: 0; }
+.desktop-task-step { display: flex; align-items: start; gap: 11px; font-size: 13px; line-height: 1.6; padding: 10px 0; border-top: 1px solid #ffffff0d; white-space: pre-wrap; overflow-wrap: anywhere; }
+.desktop-task-step-number { flex: 0 0 22px; height: 22px; display: inline-grid; place-items: center; border: 1px solid #a691da45; border-radius: 7px; color: #cbb4ff; font-size: 11px; }
+.desktop-task-step.completed .desktop-task-step-number { color: #abecd2; background: #3b96702e; border-color: #88dab74a; }
+.desktop-task-outcome { color: #c5b7e7; font-size: 12px; line-height: 1.6; margin: 12px 0 0; white-space: pre-wrap; }
+.desktop-task-evidence { margin: 12px 0 18px; font-size: 12px; color: #b4acbf; }
+.desktop-task-evidence summary { cursor: pointer; padding: 7px 0; }
+.desktop-task-evidence img { display: block; width: 100%; height: auto; margin-top: 8px; border-radius: 9px; }
+.desktop-task-image-frame { position: relative; touch-action: none; user-select: none; }
+.desktop-task-image-frame img { margin-top: 0; }
+.desktop-task-region-selection { position: absolute; pointer-events: none; box-sizing: border-box; border: 2px solid #c6a5ff; background: #bc98ff24; box-shadow: 0 0 0 1px #18111f; }
+.desktop-task-scope { margin: 15px 0; padding: 15px; background: #0d0b1480; border: 1px solid #a791d830; border-radius: 12px; }
+.desktop-task-scope select { display: block; width: 100%; padding: 9px; margin: 0 0 12px; border: 1px solid #51465f; border-radius: 8px; background: #17121f; color: #ddd3ed; font: inherit; font-size: 12px; }
+.desktop-task-region-controls { display: flex; flex-wrap: wrap; gap: 10px; }
+.desktop-task-region-controls p { width: 100%; margin: 0 0 5px; font-size: 11px; color: #bdb0d0; line-height: 1.5; }
+.desktop-task-region-controls label { flex: 1; min-width: 80px; font-size: 11px; color: #c7b8db; }
+.desktop-task-region-controls input { display: block; width: 100%; box-sizing: border-box; padding: 7px; margin-top: 5px; background: #15101e; color: #f0e6ff; border: 1px solid #51465f; border-radius: 6px; }
+.desktop-task-buttons { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+.desktop-task-primary, .desktop-task-secondary { border-radius: 10px; padding: 10px 14px; font: 500 13px 'Outfit', sans-serif; cursor: pointer; transition: background .15s, opacity .15s; }
+.desktop-task-primary { background: #bda0ff; border: 1px solid #c9b2ff; color: #201333; }
+.desktop-task-primary:hover { background: #cdb8ff; }
+.desktop-task-secondary { background: #ffffff06; border: 1px solid #ffffff1e; color: #d0c7dc; }
+.desktop-task-secondary:hover { background: #ffffff10; }
+.desktop-task-dialog button:disabled, .desktop-task-dialog textarea:disabled { opacity: .48; cursor: default; }
+.desktop-task-dialog :focus-visible, .desktop-task-launch:focus-visible { outline: 2px solid #d1b9ff; outline-offset: 3px; }
+.desktop-task-footer { margin-bottom: 0; }
+@media (max-width: 540px) { .desktop-task-dialog { padding: 20px; width: calc(100vw - 24px); } .desktop-task-dialog h2 { font-size: 22px; } .desktop-task-header { gap: 8px; } }
+@media (prefers-reduced-motion: reduce) { .desktop-task-launch, .desktop-task-primary, .desktop-task-secondary { transition: none; } }

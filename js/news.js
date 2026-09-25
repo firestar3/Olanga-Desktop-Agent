@@ -1,5 +1,5 @@
 /* ============================================
-   OLANGA — NEWS BRIEF (RSS bundle via main process + NVIDIA chat)
+   OLANGA — NEWS BRIEF (RSS bundle via main process + Gemini chat)
    ============================================ */
 
 const newsModelSelect = document.getElementById('newsModelSelect');
@@ -30,7 +30,7 @@ let newsLastLocationKey = '';
 const defaultNewsTopics = ['local', 'business', 'world', 'technology'];
 
 function getNewsModelName(selectedModel) {
-  return 'meta/llama-3.1-8b-instruct';
+  return 'gemini-3.5-flash-lite';
 }
 
 function getSavedLocationLabel() {
@@ -274,7 +274,7 @@ Topics of interest: ${selectedTopics.join(', ')}
 Headlines and descriptions:
 ${sourceSummary || 'No headlines were returned.'}`;
 
-    const data = await callNvidiaChat(modelName, [
+    const data = await callGeminiChat(modelName, [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
     ], { temperature: 0.5, max_tokens: 2400 });
@@ -391,7 +391,7 @@ async function sendNewsAiMessage() {
       ...recentHistory,
       { role: 'user', content: message }
     ];
-    const data = await callNvidiaChat('meta/llama-3.1-8b-instruct', messages, { temperature: 0.4, max_tokens: 900 });
+    const data = await callGeminiChat('gemini-3.5-flash-lite', messages, { temperature: 0.4, max_tokens: 900 });
     const aiResponse = data?.choices?.[0]?.message?.content || 'I could not generate a response.';
     addNewsAiMessage(aiResponse, 'ai');
   } catch (error) {

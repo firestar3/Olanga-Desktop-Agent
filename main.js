@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, clipboard, protocol, net, safeStorage, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, clipboard, protocol, net, safeStorage, screen, dialog, desktopCapturer, globalShortcut } = require('electron');
 const fs = require('fs');
 const http2 = require('http2');
 const zlib = require('zlib');
@@ -11,135 +11,48 @@ const os = require('os');
 // across npm start / electron . / diagnostic scripts.
 app.setName('olanga-control');
 
-const statusLight = require('./shared/status-light.js');
+const { createStatusOverlay } = require('./desktop/status-overlay');
+const { registerDesktopAutomation } = require('./desktop/automation');
+const { createMediaController } = require('./desktop/media-controller');
+const mediaController = createMediaController();
+const { isTrustedMainFrame, validateStoreKey } = require('./shared/ipc-policy');
+const { normalizeNvidiaKey } = require('./shared/nvidia-key');
 
 let mainWindow;
 let tray = null;
-let statusIndicatorWindow = null;
-let currentStatusState = 'idle';
-// off = never glow; active = glow only when listening/thinking/speaking; all = include idle purple
-let statusLightMode = statusLight.DEFAULT_MODE;
-let statusLightSize = statusLight.DEFAULT_SIZE;
+let desktopAutomation;
+const statusOverlay = createStatusOverlay({
+  BrowserWindow, ipcMain, screen, basePath: __dirname,
+  onOpenApp: () => showMainWindow(),
+  onQuickAction: (action) => {
+    showMainWindow();
+    mainWindow?.webContents.send('quick-action-run', action);
+  }
+});
+function createStatusIndicatorWindow() { return statusOverlay.create(); }
+function destroyStatusIndicatorWindow() { statusOverlay.destroy(); }
+function sendStatusIndicatorState(state) { statusOverlay.setState(state); }
+function setStatusLightMode(mode) { statusOverlay.setMode(mode); }
+function setStatusLightSize(size) { statusOverlay.setSize(size); }
 
-function normalizeStatusLightMode(mode) {
-  return statusLight.normalizeMode(mode);
-}
-
-function normalizeStatusLightSize(size) {
-  return statusLight.normalizeSize(size);
-}
-
-function getStatusIndicatorSize() {
-  return statusLight.sizeToPixels(statusLightSize);
-}
-
-function resolveStatusVisualState(state, mode = statusLightMode) {
-  return statusLight.resolveVisualState(state, mode);
-}
-
-function positionStatusIndicator() {
-  if (!statusIndicatorWindow || statusIndicatorWindow.isDestroyed()) return;
-  try {
-    const display = screen.getPrimaryDisplay();
-    const { x, y, width, height } = display.workArea;
-    const size = getStatusIndicatorSize();
-    // Flush to the bottom-right so the arc wraps the real screen corner.
-    statusIndicatorWindow.setBounds({
-      x: Math.round(x + width - size),
-      y: Math.round(y + height - size),
-      width: size,
-      height: size
+// Privileged handlers accept only our own main document, never child frames,
+// remote navigation, or the restricted overlay renderer.
+const trustedMainIpc = {
+  on(channel, handler) {
+    ipcMain.on(channel, (event, ...args) => {
+      if (!isTrustedMainFrame(event, mainWindow, path.join(__dirname, 'index.html'))) return;
+      handler(event, ...args);
     });
-  } catch (error) {
-    console.warn('[Main] Failed to position status indicator:', error.message);
+  },
+  handle(channel, handler) {
+    ipcMain.handle(channel, (event, ...args) => {
+      if (!isTrustedMainFrame(event, mainWindow, path.join(__dirname, 'index.html'))) {
+        throw new Error('Untrusted app frame');
+      }
+      return handler(event, ...args);
+    });
   }
-}
-
-function createStatusIndicatorWindow() {
-  if (statusIndicatorWindow && !statusIndicatorWindow.isDestroyed()) {
-    positionStatusIndicator();
-    return statusIndicatorWindow;
-  }
-
-  statusIndicatorWindow = new BrowserWindow({
-    width: getStatusIndicatorSize(),
-    height: getStatusIndicatorSize(),
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: false,
-    maximizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    focusable: false,
-    hasShadow: false,
-    show: false,
-    alwaysOnTop: true,
-    backgroundColor: '#00000000',
-    webPreferences: {
-      preload: path.join(__dirname, 'status-indicator-preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      backgroundThrottling: false
-    }
-  });
-
-  statusIndicatorWindow.setMenuBarVisibility(false);
-  statusIndicatorWindow.setAlwaysOnTop(true, 'screen-saver');
-  // Click-through so the glow never blocks the desktop or other apps.
-  statusIndicatorWindow.setIgnoreMouseEvents(true, { forward: true });
-  positionStatusIndicator();
-
-  statusIndicatorWindow.once('ready-to-show', () => {
-    if (!statusIndicatorWindow || statusIndicatorWindow.isDestroyed()) return;
-    statusIndicatorWindow.showInactive();
-    sendStatusIndicatorState(currentStatusState);
-  });
-
-  statusIndicatorWindow.loadFile('status-indicator.html');
-
-  statusIndicatorWindow.on('closed', () => {
-    statusIndicatorWindow = null;
-  });
-
-  return statusIndicatorWindow;
-}
-
-function sendStatusIndicatorState(state) {
-  const next = statusLight.normalizeState(state);
-  currentStatusState = next;
-  if (!statusIndicatorWindow || statusIndicatorWindow.isDestroyed()) return;
-  try {
-    statusIndicatorWindow.webContents.send(
-      'status-indicator-state',
-      resolveStatusVisualState(next, statusLightMode)
-    );
-  } catch (error) {
-    console.warn('[Main] Failed to update status indicator:', error.message);
-  }
-}
-
-function setStatusLightMode(mode) {
-  statusLightMode = normalizeStatusLightMode(mode);
-  sendStatusIndicatorState(currentStatusState);
-}
-
-function setStatusLightSize(size) {
-  statusLightSize = normalizeStatusLightSize(size);
-  positionStatusIndicator();
-}
-
-function destroyStatusIndicatorWindow() {
-  if (!statusIndicatorWindow || statusIndicatorWindow.isDestroyed()) {
-    statusIndicatorWindow = null;
-    return;
-  }
-  try {
-    statusIndicatorWindow.destroy();
-  } catch (_) {}
-  statusIndicatorWindow = null;
-}
+};
 
 // Transparent + fullscreen at construction is unreliable on Windows and can
 // leave a tiny non-expandable window. Size to the display instead.
@@ -312,7 +225,12 @@ function createWindow() {
     ensureWindowExpanded();
   });
 
-  mainWindow.loadFile('index.html');
+  mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalSafe(url);
+    return { action: 'deny' };
+  });
+  mainWindow.loadFile(path.join(__dirname, 'index.html'));
   if (isDev) {
     // Docked rather than detached: a detached window hides behind the
     // full-screen transparent window and looks like it never opened.
@@ -331,7 +249,7 @@ function createWindow() {
   }
 
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media') {
+    if (webContents === mainWindow?.webContents && webContents.getURL() === pathToFileURL(path.join(__dirname, 'index.html')).href && permission === 'media') {
       callback(true);
     } else {
       callback(false);
@@ -1126,8 +1044,11 @@ if (!gotTheLock) {
     createWindow();
     createTray();
     createStatusIndicatorWindow();
-    screen.on('display-metrics-changed', () => {
-      positionStatusIndicator();
+    desktopAutomation = registerDesktopAutomation({
+      ipcMain, dialog, desktopCapturer, screen, globalShortcut, app,
+      getMainWindow: () => mainWindow,
+      getOverlayWindow: () => statusOverlay.getWindow(),
+      setOverlaySuspended: (value) => statusOverlay.setSuspended(value)
     });
   });
 
@@ -1143,36 +1064,41 @@ if (!gotTheLock) {
 
 app.on('before-quit', () => {
   app.isQuiting = true;
+  mediaController.dispose();
+  for (const cancel of pendingAppLaunches) cancel();
+  desktopAutomation?.dispose();
   destroyStatusIndicatorWindow();
 });
 
-ipcMain.on('window-minimize', () => {
+trustedMainIpc.on('window-minimize', () => {
   if (mainWindow) mainWindow.minimize();
 });
 
-ipcMain.on('window-close', () => {
+trustedMainIpc.on('window-close', () => {
   if (mainWindow) mainWindow.hide();
 });
 
-ipcMain.on('window-expand', () => {
+trustedMainIpc.on('window-expand', () => {
   showMainWindow();
 });
 
-ipcMain.on('status-indicator-set', (_event, state) => {
+trustedMainIpc.on('status-indicator-set', (_event, state) => {
   sendStatusIndicatorState(state);
 });
 
-ipcMain.on('status-indicator-set-mode', (_event, mode) => {
+trustedMainIpc.on('status-indicator-set-mode', (_event, mode) => {
   setStatusLightMode(mode);
 });
 
-ipcMain.on('status-indicator-set-size', (_event, size) => {
+trustedMainIpc.on('status-indicator-set-size', (_event, size) => {
   setStatusLightSize(size);
 });
 
-ipcMain.handle('get-open-at-login', () => getOpenAtLogin());
+trustedMainIpc.on('status-overlay-set-quick-actions', (_event, actions) => statusOverlay.setQuickActions(actions));
 
-ipcMain.handle('set-open-at-login', (_event, enabled) => setOpenAtLogin(enabled));
+trustedMainIpc.handle('get-open-at-login', () => getOpenAtLogin());
+
+trustedMainIpc.handle('set-open-at-login', (_event, enabled) => setOpenAtLogin(enabled));
 
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['https:', 'http:', 'spotify:']);
 
@@ -1189,7 +1115,7 @@ function openExternalSafe(url) {
   }
 }
 
-ipcMain.on('open-external', (event, url) => {
+trustedMainIpc.on('open-external', (event, url) => {
   openExternalSafe(url);
 });
 
@@ -1218,146 +1144,18 @@ function runPowerShell(script) {
   });
 }
 
-// Hardware media keys via user32 keybd_event (Windows media transport).
-// Works regardless of which window is focused — same as keyboard media keys.
-const MEDIA_VIRTUAL_KEYS = {
-  VOLUME_MUTE: 0xAD,
-  VOLUME_DOWN: 0xAE,
-  VOLUME_UP: 0xAF,
-  MEDIA_NEXT: 0xB0,
-  MEDIA_PREV: 0xB1,
-  MEDIA_PLAY_PAUSE: 0xB3
-};
-
-function sendMediaKey(virtualKey, repeat = 1) {
-  const count = Math.max(1, Number(repeat) || 1);
-  const script = `
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public static class OlangaMedia {
-  [DllImport("user32.dll")]
-  public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-}
-"@
-1..${count} | ForEach-Object {
-  [OlangaMedia]::keybd_event(${virtualKey}, 0, 0, [UIntPtr]::Zero)
-  [OlangaMedia]::keybd_event(${virtualKey}, 0, 2, [UIntPtr]::Zero)
-  Start-Sleep -Milliseconds 50
-}
-`;
-  runPowerShell(script);
-}
-
-const SPOTIFY_KIND = {
-  SONG: 'track',
-  ALBUM: 'album',
-  PLAYLIST: 'playlist',
-  ARTIST: 'artist'
-};
-
-async function resolveSpotifyUri(type, term) {
-  const kind = SPOTIFY_KIND[String(type || '').toUpperCase()] || 'track';
-  const cleaned = String(term || '').trim();
-  if (!cleaned) return null;
-
-  const query = encodeURIComponent(`site:open.spotify.com/${kind} ${cleaned}`);
-  const url = `https://html.duckduckgo.com/html/?q=${query}`;
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    }
-  });
-  if (!response.ok) {
-    throw new Error(`Spotify lookup HTTP ${response.status}`);
-  }
-
-  const html = await response.text();
-  const pattern = new RegExp(`open\\.spotify\\.com\\/${kind}\\/([a-zA-Z0-9]+)`, 'i');
-  const match = html.match(pattern);
-  if (!match?.[1]) return null;
-  // Trailing :play tells the Spotify desktop client to start playback, not
-  // just navigate to the page (without it, the current song keeps playing).
-  return `spotify:${kind}:${match[1]}:play`;
-}
-
-function activateSpotifyAndPlay(type, term) {
-  const playKey = (String(type || '').toUpperCase() === 'SONG') ? '+{ENTER}' : '{ENTER}';
-  const previousClipboard = clipboard.readText();
-  clipboard.writeText(String(term || '').trim());
-
-  // Classic Ctrl+K search with focus forced onto Spotify — more reliable than
-  // spotify:search: + Enter, which often just toggles the current track.
-  const script = `
-$wshell = New-Object -ComObject wscript.shell
-Start-Process 'spotify:'
-Start-Sleep -Milliseconds 1200
-1..12 | ForEach-Object {
-  if ($wshell.AppActivate('Spotify')) { break }
-  Start-Sleep -Milliseconds 300
-}
-Start-Sleep -Milliseconds 400
-$wshell.SendKeys('^k')
-Start-Sleep -Milliseconds 700
-$wshell.SendKeys('^a')
-Start-Sleep -Milliseconds 80
-$wshell.SendKeys('^v')
-Start-Sleep -Milliseconds 1600
-$wshell.SendKeys('${playKey}')
-`;
-
-  setTimeout(() => {
-    runPowerShell(script).then(() => {
-      try {
-        clipboard.writeText(previousClipboard);
-      } catch (_) {}
-    });
-  }, 200);
-}
-
-ipcMain.on('play-spotify', async (event, { type, term }) => {
-  const searchTerm = String(term || '').trim();
-  if (!searchTerm) return;
-
-  console.log(`[Main] Spotify play requested (${type}): ${searchTerm}`);
-
-  try {
-    const uri = await resolveSpotifyUri(type, searchTerm);
-    if (uri) {
-      console.log(`[Main] Opening Spotify URI: ${uri}`);
-      shell.openExternal(uri);
-      return;
-    }
-    console.warn('[Main] Spotify URI not found; falling back to in-app search');
-  } catch (error) {
-    console.warn('[Main] Spotify URI lookup failed:', error.message);
-  }
-
-  activateSpotifyAndPlay(type, searchTerm);
+trustedMainIpc.handle('play-spotify', (_event, { type, term }) => mediaController.execute({ action: type, term, spotifyOnly: true }));
+trustedMainIpc.handle('reload-spotify', () => mediaController.execute({ action: 'RELOAD', spotifyOnly: true }));
+trustedMainIpc.handle('media-control', (_event, command, spotifyOnly, level) => mediaController.execute({ action: String(command).replace(/^MEDIA_/, ''), spotifyOnly, level }));
+const pendingAppLaunches = new Set();
+trustedMainIpc.on('media-cancel', () => {
+  mediaController.cancel();
+  for (const cancel of pendingAppLaunches) cancel();
 });
 
-ipcMain.on('reload-spotify', () => {
-  runPowerShell('Stop-Process -Name Spotify -Force -ErrorAction SilentlyContinue');
-
-  setTimeout(() => {
-    shell.openExternal('spotify:');
-  }, 1200);
-
-  setTimeout(() => {
-    sendMediaKey(MEDIA_VIRTUAL_KEYS.MEDIA_PLAY_PAUSE);
-  }, 4500);
-});
-
-ipcMain.on('media-control', (event, command) => {
-  const virtualKey = MEDIA_VIRTUAL_KEYS[command];
-  if (!virtualKey) return;
-
-  // Press volume keys multiple times so the change is noticeable.
-  const repeat = (command === 'VOLUME_UP' || command === 'VOLUME_DOWN') ? 5 : 1;
-  sendMediaKey(virtualKey, repeat);
-});
-
-ipcMain.on('open-app', (event, appName) => {
+trustedMainIpc.handle('open-app', async (event, appName) => {
+  if (typeof appName !== 'string' || !appName.trim() || appName.length > 120) return { ok: false, message: 'Please specify an app name.' };
+  if (/^spotify$/i.test(appName.trim())) return mediaController.execute({ action: 'OPEN', spotifyOnly: true });
   const safeAppName = escapeForSendKeys(appName);
   console.log(`[Main] Opening app via Windows Search: ${appName}`);
   // Use Windows Search to find and open the app
@@ -1370,10 +1168,18 @@ ipcMain.on('open-app', (event, appName) => {
     $wshell.SendKeys('{ENTER}')
   `;
   
-  const ps = spawn('powershell', ['-NoProfile', '-Command', script]);
-  
-  ps.stderr.on('data', (data) => {
-    console.error(`[Main] PowerShell Error: ${data.toString()}`);
+  return new Promise(resolve => {
+    const ps = spawn('powershell', ['-NoProfile', '-Command', script], { windowsHide: true, shell: false });
+    let settled = false;
+    const cancel = () => { ps.kill(); finish({ ok: false, message: 'App launch cancelled.' }); };
+    const finish = result => { if (settled) return; settled = true; clearTimeout(timer); pendingAppLaunches.delete(cancel); resolve(result); };
+    const timer = setTimeout(() => { ps.kill(); finish({ ok: false, message: `Opening ${appName} timed out.` }); }, 10000);
+    pendingAppLaunches.add(cancel);
+    ps.on('error', () => finish({ ok: false, message: `I couldn't open ${appName}.` }));
+    ps.stderr.on('data', () => {});
+    ps.on('close', code => finish(code === 0
+      ? { ok: true, verified: false, message: `I requested ${appName} to open, but couldn't verify its window.` }
+      : { ok: false, message: `I couldn't open ${appName}.` }));
   });
 });
 
@@ -1434,7 +1240,7 @@ function buildCloseAppTargets(appName) {
 
 // Closes visible application windows matching a spoken name. Only processes that
 // own a main window are eligible, which keeps background services out of reach.
-ipcMain.handle('close-app', async (event, appName) => {
+trustedMainIpc.handle('close-app', async (event, appName) => {
   const targets = buildCloseAppTargets(appName);
   if (targets.length === 0) {
     return { ok: false, reason: 'empty-name' };
@@ -1474,8 +1280,7 @@ foreach ($p in $candidates) { $null = $p.CloseMainWindow() }
 Start-Sleep -Milliseconds 2000
 $survivors = Get-Process -Id $ids
 if ($survivors) {
-  $survivors | Stop-Process -Force
-  Write-Output "FORCED:$names"
+  Write-Output "PENDING:$names"
 } else {
   Write-Output "CLOSED:$names"
 }
@@ -1485,44 +1290,60 @@ if ($survivors) {
   const { stdout } = await runPowerShell(script);
   const output = String(stdout || '').trim();
 
-  if (/^FORCED:/.test(output) || /^CLOSED:/.test(output)) {
+  if (/^PENDING:/.test(output) || /^CLOSED:/.test(output)) {
     const [status, closed] = output.split(':');
-    console.log(`[Main] ${status === 'FORCED' ? 'Force-closed' : 'Closed'}: ${closed}`);
-    return { ok: true, closed, forced: status === 'FORCED' };
+    console.log(`[Main] ${status === 'PENDING' ? 'Close requested; waiting for app' : 'Closed'}: ${closed}`);
+    return { ok: true, closed, pending: status === 'PENDING', forced: false };
   }
 
   console.log(`[Main] No open window matched: ${targets.join(' | ')}`);
   return { ok: false, reason: 'not-running' };
 });
 
-ipcMain.handle('request-screenshot', async () => {
-  return new Promise((resolve) => {
-    clipboard.clear();
-    
-    const { exec } = require('child_process');
-    exec(`powershell -Command "start ms-screenclip:"`);
-    
-    let attempts = 0;
-    const interval = setInterval(() => {
-      attempts++;
-      const image = clipboard.readImage();
-      if (!image.isEmpty()) {
-        clearInterval(interval);
-        resolve(image.toDataURL());
-      } else if (attempts > 60) { // 30 seconds timeout
-        clearInterval(interval);
-        resolve(null);
-      }
-    }, 500);
-  });
+let screenshotPending = false;
+trustedMainIpc.handle('request-screenshot', async () => {
+  if (screenshotPending) throw new Error('A screen selection is already open.');
+  screenshotPending = true;
+  const wasVisible = mainWindow.isVisible();
+  try {
+    const choice = await dialog.showMessageBox(mainWindow, {
+      type: 'question', title: 'Share a screen selection?',
+      message: 'Allow Olanga to analyze the area you select?',
+      detail: 'The selected image is sent to Google Gemini to diagnose your request. Hide private content first. This gives no permission to edit. Windows Snipping Tool places the selection on your clipboard.',
+      buttons: ['Cancel', 'Select screen area'], defaultId: 0, cancelId: 0, noLink: true
+    });
+    if (choice.response !== 1) return null;
+    const previousImage = clipboard.readImage().toPNG();
+    statusOverlay.setSuspended(true);
+    mainWindow.hide();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await shell.openExternal('ms-screenclip:');
+    return await new Promise(resolve => {
+      let attempts = 0;
+      const interval = setInterval(() => {
+        const image = clipboard.readImage();
+        if (!image.isEmpty() && !image.toPNG().equals(previousImage)) {
+          clearInterval(interval);
+          resolve(image.toDataURL());
+        } else if (++attempts >= 60) {
+          clearInterval(interval);
+          resolve(null);
+        }
+      }, 500);
+    });
+  } finally {
+    screenshotPending = false;
+    statusOverlay.setSuspended(false);
+    if (wasVisible && mainWindow && !mainWindow.isDestroyed()) showMainWindow();
+  }
 });
 
-ipcMain.handle('fetch-news-bundle', async (event, payload = {}) => {
+trustedMainIpc.handle('fetch-news-bundle', async (event, payload = {}) => {
   return fetchNewsBundle(payload);
 });
 
-ipcMain.handle('nvidia-tts-config', async (event, payload = {}) => {
-  const apiKey = (payload.apiKey || '').trim();
+trustedMainIpc.handle('nvidia-tts-config', async (event, payload = {}) => {
+  const apiKey = normalizeNvidiaKey(payload.apiKey || '');
   const functionId = (payload.functionId || '').trim();
 
   if (!apiKey) {
@@ -1532,15 +1353,15 @@ ipcMain.handle('nvidia-tts-config', async (event, payload = {}) => {
   return fetchNvidiaTtsConfig(apiKey, functionId);
 });
 
-ipcMain.handle('nvidia-tts-synthesize', async (event, payload = {}) => {
-  let apiKey = (payload.apiKey || '').trim();
+trustedMainIpc.handle('nvidia-tts-synthesize', async (event, payload = {}) => {
+  let apiKey = normalizeNvidiaKey(payload.apiKey || '');
   // Prefer the renderer key; fall back to the secure store so Magpie still
   // works if the renderer hasn't finished loading keys yet.
   if (!apiKey) {
     try {
       const store = readSecureStore();
       if (store.nvidia_api_key && safeStorage.isEncryptionAvailable()) {
-        apiKey = safeStorage.decryptString(Buffer.from(store.nvidia_api_key, 'base64')).trim();
+        apiKey = normalizeNvidiaKey(safeStorage.decryptString(Buffer.from(store.nvidia_api_key, 'base64')));
       }
     } catch (error) {
       console.warn('[Main] Failed to load NVIDIA key from secure store:', error.message);
@@ -1572,36 +1393,6 @@ ipcMain.handle('nvidia-tts-synthesize', async (event, payload = {}) => {
   }
 });
 
-// NVIDIA chat completions proxy (renderer can't call it directly now that
-// webSecurity/CORS enforcement is enabled).
-ipcMain.handle('nvidia-chat', async (event, payload = {}) => {
-  const chatApiKey = (payload.apiKey || '').trim();
-  if (!chatApiKey) {
-    throw new Error('Missing NVIDIA API key');
-  }
-
-  const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${chatApiKey}`
-    },
-    body: JSON.stringify({
-      model: payload.model,
-      messages: payload.messages,
-      temperature: payload.temperature ?? 0.7,
-      max_tokens: payload.max_tokens ?? 2048
-    })
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API error: ${response.status} - ${errorText}`);
-  }
-
-  return response.json();
-});
-
 // ============================================
 // SECURE KEY STORE (encrypted at rest via safeStorage)
 // ============================================
@@ -1620,10 +1411,14 @@ function readSecureStore() {
 }
 
 function writeSecureStore(store) {
-  fs.writeFileSync(getSecureStorePath(), JSON.stringify(store), 'utf8');
+  const target = getSecureStorePath();
+  const pending = target + '.tmp';
+  fs.writeFileSync(pending, JSON.stringify(store), { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(pending, target);
 }
 
-ipcMain.handle('secure-store-get', async (event, key) => {
+trustedMainIpc.handle('secure-store-get', async (event, key) => {
+  validateStoreKey(key);
   const storePath = getSecureStorePath();
   const store = readSecureStore();
   const encrypted = store[String(key)];
@@ -1645,9 +1440,11 @@ ipcMain.handle('secure-store-get', async (event, key) => {
   }
 });
 
-ipcMain.handle('secure-store-set', async (event, payload = {}) => {
-  const key = String(payload.key || '');
-  const value = payload.value;
+trustedMainIpc.handle('secure-store-set', async (event, payload = {}) => {
+  const key = validateStoreKey(payload.key);
+  const value = key === 'nvidia_api_key' && typeof payload.value === 'string'
+    ? normalizeNvidiaKey(payload.value) : payload.value;
+  if (value != null && (typeof value !== 'string' || value.length > 100000)) throw new Error('Invalid secure store value');
   if (!key) throw new Error('Missing secure store key');
 
   const store = readSecureStore();
@@ -1770,7 +1567,7 @@ function drainTerminalSession(sessionId) {
   session.process.stdin.write(`Write-Output "__OLANGA_DONE__"\r\n`);
 }
 
-ipcMain.handle('terminal-session-create', async (event, payload = {}) => {
+trustedMainIpc.handle('terminal-session-create', async (event, payload = {}) => {
   const sessionId = String(payload.sessionId ?? '');
   if (!sessionId) {
     throw new Error('Missing terminal session ID');
@@ -1784,7 +1581,7 @@ ipcMain.handle('terminal-session-create', async (event, payload = {}) => {
   return createTerminalSession(sessionId, cwd);
 });
 
-ipcMain.handle('terminal-session-execute', async (event, payload = {}) => {
+trustedMainIpc.handle('terminal-session-execute', async (event, payload = {}) => {
   const sessionId = String(payload.sessionId ?? '');
   const command = String(payload.command ?? '').trim();
 
@@ -1808,7 +1605,7 @@ ipcMain.handle('terminal-session-execute', async (event, payload = {}) => {
   });
 });
 
-ipcMain.handle('terminal-session-close', async (event, payload = {}) => {
+trustedMainIpc.handle('terminal-session-close', async (event, payload = {}) => {
   const sessionId = String(payload.sessionId ?? '');
   const session = terminalSessions.get(sessionId);
 
@@ -1833,7 +1630,7 @@ ipcMain.handle('terminal-session-close', async (event, payload = {}) => {
   return { closed: true };
 });
 
-ipcMain.handle('execute-command', async (event, payload) => {
+trustedMainIpc.handle('execute-command', async (event, payload) => {
   const { exec } = require('child_process');
   
   let commandStr = '';

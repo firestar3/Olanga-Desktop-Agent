@@ -3,7 +3,28 @@ node_modules/
 dist/
 build/
 out/
+.npm-cache/
 *.log
+
+# Generated promotional videos, audio, screenshots and their render sources.
+/artifacts/
+*.mp4
+*.mov
+*.webm
+*.avi
+
+# The installer uses vosk-model-v2.tar.gz, not this extracted working copy.
+/model/
+
+# Local diagnostic recordings/screenshots; keep test source and fixtures tracked.
+tests/*.wav
+tests/*.mp3
+tests/*.png
+tests/*.jpg
+tests/*.jpeg
+
+# Stray PowerShell redirection output.
+/$null
 
 # Local diagnostic scripts and their captured output. These talk to the
 # secure store and vendor APIs, so they stay out of the repo.

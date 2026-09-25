@@ -1,0 +1,80 @@
+:root {
+  color-scheme: dark;
+  font-family: 'Outfit', 'Segoe UI', sans-serif;
+  --bg-secondary: #12121a;
+  --bg-card: #1a1a28;
+  --text-primary: #e8e8f0;
+  --text-secondary: #8888a0;
+  --accent: #6c5ce7;
+  --accent-light: #a29bfe;
+  --accent-deep: #4a3fcf;
+  --border-subtle: rgba(255, 255, 255, .08);
+  --orb-size: 32px;
+  --orb-left: 254px;
+  --orb-top: 368px;
+  --menu-left: 6px;
+  --menu-top: 6px;
+  --menu-width: 280px;
+  --menu-height: 354px;
+}
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; user-select: none; }
+body { color: var(--text-primary); }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; cursor: pointer; -webkit-app-region: no-drag; }
+button:focus-visible { outline: 1px solid var(--accent-light); outline-offset: -1px; }
+body[data-state="listening"] { --accent: #00b894; --accent-light: #55efc4; --accent-deep: #00a386; }
+body[data-state="thinking"] { --accent: #e17055; --accent-light: #fab1a0; --accent-deep: #d35400; }
+body[data-state="speaking"] { --accent: #0984e3; --accent-light: #74b9ff; --accent-deep: #0652dd; }
+
+#light {
+  position: absolute; left: var(--orb-left); top: var(--orb-top); width: var(--orb-size); height: var(--orb-size);
+  border: 0; border-radius: 50%; padding: 0; background: transparent;
+  transform: scale(1); transition: transform 260ms cubic-bezier(.2, 1.35, .35, 1), filter 180ms ease;
+}
+#light.hovered, #light[aria-expanded="true"] { transform: scale(1.12); filter: brightness(1.08); }
+#light:active { transform: scale(1.04); transition-duration: 80ms; }
+.light-surface {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 36% 30%, var(--accent-light), var(--accent) 60%, var(--accent-deep));
+  box-shadow: inset 0 0 8px #ffffff18, 0 1px 4px #0005;
+}
+body[data-state="thinking"] .light-surface { animation: thinking 3s linear infinite; }
+body[data-state="listening"] .light-surface { animation: breathe 1.8s ease-in-out infinite; }
+body[data-state="speaking"] .light-surface { animation: breathe 1s ease-in-out infinite; }
+
+#quickMenu {
+  position: absolute; left: var(--menu-left); top: var(--menu-top); width: var(--menu-width); height: var(--menu-height);
+  padding: 6px; overflow: auto; overscroll-behavior: contain;
+  border: 1px solid var(--border-subtle); border-radius: 12px;
+  background: var(--bg-secondary); box-shadow: 0 2px 6px #0004;
+  animation: menu-enter 160ms cubic-bezier(.2,.8,.2,1); transform-origin: 100% 100%;
+  scrollbar-width: thin; scrollbar-color: #555570 transparent;
+}
+.menu-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 36px; padding: 0 9px 2px; }
+h1 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -.1px; }
+#statusText { margin: 0; color: var(--text-secondary); font-size: 11px; }
+.quick-actions { display: grid; }
+.quick-actions button, .utility-actions button {
+  display: flex; align-items: center; gap: 12px; width: 100%; height: 32px; padding: 0 9px;
+  border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: 12px;
+  transition: background 100ms ease;
+}
+.quick-actions button:hover, .utility-actions button:hover, .quick-actions button:focus-visible, .utility-actions button:focus-visible { background: var(--bg-card); }
+.quick-actions button:active, .utility-actions button:active { background: #242435; }
+.action-label { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.slot-number { font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.utility-actions { border-top: 1px solid var(--border-subtle); margin-top: 5px; padding-top: 5px; }
+.utility-actions button { color: #bcbccc; }
+#openApp { color: var(--text-primary); }
+.menu-hint { display: flex; justify-content: space-between; gap: 6px; margin: 10px 9px 0; font-size: 10px; line-height: 14px; color: var(--text-secondary); }
+.menu-hint span { font-size: 9px; }
+@keyframes thinking { to { transform: rotate(360deg); } }
+@keyframes breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.15); } }
+@keyframes menu-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+@media (forced-colors: active) {
+  #quickMenu, .light-surface { background: Canvas; border: 1px solid ButtonText; }
+  .light-surface { forced-color-adjust: none; background: Highlight; }
+  .quick-actions button, .utility-actions button { color: ButtonText; }
+}

@@ -11,18 +11,20 @@
 (function (root, factory) {
   const isNode = typeof module === 'object' && module.exports;
   const statusLight = isNode ? require('./status-light.js') : root.OlangaStatusLight;
-  const api = factory(statusLight);
+  const quickActions = isNode ? require('./quick-actions.js') : root.OlangaQuickActions;
+  const api = factory(statusLight, quickActions);
   if (isNode) {
     module.exports = api;
   } else {
     root.OlangaPrefs = api;
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (statusLight) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (statusLight, quickActions) {
   const DEFAULT_NVIDIA_VOICE = 'Magpie-Multilingual.EN-US.Sofia';
   const OPTIONAL_FEATURES = ['notepadScreen', 'newsScreen', 'terminalScreen'];
   const DEFAULT_TTS_RATE = 1.05;
 
   const PREF_DEFS = [
+    { key: 'quickActions', storageKey: 'olanga_quick_actions', type: 'quickActions', default: quickActions.DEFAULT_QUICK_ACTIONS },
     { key: 'city', storageKey: 'olanga_city', type: 'string', default: '' },
     { key: 'state', storageKey: 'olanga_state', type: 'string', default: '' },
     { key: 'country', storageKey: 'olanga_country', type: 'string', default: '' },
@@ -86,6 +88,7 @@
   const DEF_BY_KEY = new Map(PREF_DEFS.map((def) => [def.key, def]));
 
   function defaultValue(def) {
+    if (def.type === 'quickActions') return quickActions.normalizeQuickActions(def.default);
     return Array.isArray(def.default) ? [...def.default] : def.default;
   }
 
@@ -93,6 +96,8 @@
   function coerce(def, value) {
     if (value === undefined || value === null) return undefined;
     switch (def.type) {
+      case 'quickActions':
+        return Array.isArray(value) ? quickActions.normalizeQuickActions(value) : undefined;
       case 'string': {
         const text = String(value).trim();
         if (!text && def.emptyIsDefault) return undefined;
@@ -120,7 +125,7 @@
 
   function parseStored(def, raw) {
     if (raw === null || raw === undefined) return undefined;
-    if (def.type === 'stringSet') {
+    if (def.type === 'stringSet' || def.type === 'quickActions') {
       try {
         return coerce(def, JSON.parse(raw));
       } catch {
@@ -131,7 +136,7 @@
   }
 
   function serialize(def, value) {
-    if (def.type === 'stringSet') return JSON.stringify(value);
+    if (def.type === 'stringSet' || def.type === 'quickActions') return JSON.stringify(value);
     if (def.type === 'boolean') return value ? 'true' : 'false';
     return String(value);
   }

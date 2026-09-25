@@ -188,20 +188,24 @@ function armSpeakingWatchdog(ms = 60000, onTimeout) {
   speakingWatchdog = setTimeout(() => {
     speakingWatchdog = null;
     console.warn('[Olanga] Speaking watchdog fired — forcing exit from SPEAKING');
+    if (typeof onTimeout === 'function') {
+      onTimeout();
+      return;
+    }
     try {
       if (currentTTSAudio) currentTTSAudio.pause();
     } catch (_) {}
     currentTTSAudio = null;
     try { synthesis.cancel(); } catch (_) {}
-    if (typeof onTimeout === 'function') onTimeout();
-    else if (currentState === State.SPEAKING) setState(State.IDLE);
+    if (currentState === State.SPEAKING) setState(State.IDLE);
   }, ms);
 }
 
 // Plays one synthesized chunk. Resolves true when it finished on its own and
-// false when it was interrupted, so the queue knows whether to keep going.
+// false when it was interrupted. Playback failures reject, so the queue can
+// recover the unsaid reply instead of treating a broken player as cancellation.
 function playSpeechChunk(blob, { isFinal, onFinal }) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const audioUrl = URL.createObjectURL(blob);
     const audio = new Audio(audioUrl);
     audio.volume = isMuted ? 0 : currentVolume;
@@ -209,42 +213,68 @@ function playSpeechChunk(blob, { isFinal, onFinal }) {
     currentTTSAudio = audio;
 
     let finished = false;
-    const finish = (interrupted) => {
+    let playbackStarted = false;
+    const listeners = [];
+    const listen = (event, handler) => {
+      listeners.push([event, handler]);
+      audio.addEventListener(event, handler);
+    };
+    const finish = (interrupted, error) => {
       if (finished) return;
       finished = true;
+      if (currentTTSAudio === audio) clearSpeakingWatchdog();
+      if (cancelAssistantPlayback === cancel) cancelAssistantPlayback = null;
+      for (const [event, handler] of listeners) audio.removeEventListener(event, handler);
+      if (error) {
+        error.speechStarted = playbackStarted || audio.currentTime > 0;
+        try { audio.pause(); } catch (_) {}
+      }
       URL.revokeObjectURL(audioUrl);
       if (currentTTSAudio === audio) currentTTSAudio = null;
       if (!interrupted && isFinal) {
-        clearSpeakingWatchdog();
         onFinal();
       }
-      resolve(!interrupted);
+      if (error) reject(error);
+      else resolve(!interrupted);
     };
-
-    audio.addEventListener('ended', () => finish(false));
-    audio.addEventListener('error', (error) => {
-      console.error('[Olanga] TTS playback error:', error);
+    const cancel = () => {
       finish(true);
+      try { audio.pause(); } catch (_) {}
+    };
+    cancelAssistantPlayback = cancel;
+
+    listen('playing', () => { playbackStarted = true; });
+    listen('ended', () => finish(false));
+    listen('error', (error) => {
+      console.error('[Olanga] TTS playback error:', error);
+      finish(true, new Error('Speech audio playback failed'));
     });
     // Escape and the wake-word interrupt pause the element rather than calling
     // in here, and a paused element never fires 'ended' — treat it as an
     // interruption so the queue stops instead of waiting forever.
-    audio.addEventListener('pause', () => {
+    listen('pause', () => {
       if (!audio.ended) finish(true);
     });
 
     // Safety: if 'ended' never fires, leave speaking state after estimated duration.
-    audio.addEventListener('loadedmetadata', () => {
+    const onTimeout = () => finish(true, new Error('Speech audio playback timed out'));
+    armSpeakingWatchdog(45000, onTimeout);
+    listen('loadedmetadata', () => {
+      if (finished) return;
       const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
         ? (audio.duration * 1000) / (Number.isFinite(ttsRate) && ttsRate > 0 ? ttsRate : 1) + 2500
         : 45000;
-      armSpeakingWatchdog(Math.min(Math.max(durationMs, 5000), 120000), () => finish(true));
+      armSpeakingWatchdog(Math.min(Math.max(durationMs, 5000), 120000), onTimeout);
     });
 
-    audio.play().catch((error) => {
-      console.error('[Olanga] TTS autoplay error:', error);
-      finish(true);
-    });
+    try {
+      audio.play().catch((error) => {
+        console.error('[Olanga] TTS autoplay error:', error);
+        finish(true, new Error(error.message || 'Speech audio could not start'));
+      });
+    } catch (error) {
+      finish(true, new Error(error.message || 'Speech audio could not start'));
+    }
   });
 }
 
@@ -298,6 +328,108 @@ function splitOnWordBoundaries(text, targetChars) {
 
 // Bumped for every new Magpie reply so a superseded queue stops itself.
 let magpieSpeechSequence = 0;
+let speechRequestSequence = 0;
+let cancelAssistantAcknowledgement = null;
+let cancelAssistantPlayback = null;
+const magpieAudioCache = new Map();
+
+function stopAssistantSpeech() {
+  speechRequestSequence++;
+  magpieSpeechSequence++;
+  if (cancelAssistantAcknowledgement) cancelAssistantAcknowledgement();
+  if (cancelAssistantPlayback) cancelAssistantPlayback();
+  try { synthesis.cancel(); } catch (_) {}
+  if (currentTTSAudio) {
+    try { currentTTSAudio.pause(); } catch (_) {}
+    currentTTSAudio = null;
+  }
+  clearSpeakingWatchdog();
+}
+
+// A receipt should be audible before any remote request starts. Keep this on
+// the local voice even when Magpie is selected, and leave the request's working
+// state alone. The caller awaits it before speaking the completed result.
+function speakAssistantAcknowledgement(text, signal) {
+  const message = String(text || '').trim();
+  if (!message || isTtsMuted || isMuted || currentVolume <= 0 || signal?.aborted) {
+    return Promise.resolve(false);
+  }
+
+  stopAssistantSpeech();
+  const sequence = speechRequestSequence;
+  return new Promise((resolve) => {
+    let utterance;
+    let watchdog;
+    let settled = false;
+    const finish = (completed) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      signal?.removeEventListener('abort', interrupt);
+      if (utterance) {
+        utterance.onend = null;
+        utterance.onerror = null;
+      }
+      if (cancelAssistantAcknowledgement === cancel) cancelAssistantAcknowledgement = null;
+      resolve(completed);
+    };
+    const cancel = () => finish(false);
+    const interrupt = () => {
+      if (settled) return;
+      const ownsSpeech = sequence === speechRequestSequence && cancelAssistantAcknowledgement === cancel;
+      finish(false);
+      if (ownsSpeech) {
+        try { synthesis.cancel(); } catch (_) {}
+      }
+    };
+
+    cancelAssistantAcknowledgement = cancel;
+    signal?.addEventListener('abort', interrupt, { once: true });
+    try {
+      utterance = new SpeechSynthesisUtterance(message);
+      const voice = pickWindowsVoice();
+      if (voice) utterance.voice = voice;
+      utterance.rate = Number.isFinite(ttsRate) ? ttsRate : 1;
+      utterance.volume = currentVolume;
+      utterance.onend = () => finish(true);
+      utterance.onerror = () => finish(false);
+      // A short acknowledgement must never hold the completed reply hostage
+      // if the platform drops its end/error event.
+      watchdog = setTimeout(interrupt, 5000);
+      if (signal?.aborted) { interrupt(); return; }
+      // The platform default voice can speak while getVoices() is still empty.
+      synthesis.speak(utterance);
+    } catch (error) {
+      console.warn('[Olanga] Acknowledgement speech unavailable:', error.message);
+      interrupt();
+    }
+  });
+}
+
+function getMagpieAudio(text, voiceConfig) {
+  const cacheKey = JSON.stringify([voiceConfig.voiceName, voiceConfig.languageCode, text]);
+  if (magpieAudioCache.has(cacheKey)) return magpieAudioCache.get(cacheKey);
+  let timeout;
+  const audio = Promise.race([
+    window.electronAPI.nvidiaTtsSynthesize({ apiKey: nvidiaApiKey, text, voiceName: voiceConfig.voiceName || defaultNvidiaVoiceName, languageCode: voiceConfig.languageCode || 'en-US' }),
+    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Magpie TTS timed out')), text.length <= 180 ? 8000 : 20000); })
+  ]).then(result => {
+    const audioBytes = decodeBase64ToUint8Array(result.audioBase64 || '');
+    if (!audioBytes.length) throw new Error('Magpie returned empty audio');
+    return pcmToWav(audioBytes, 22050, 1, 16);
+  }).finally(() => clearTimeout(timeout));
+  if (text.length <= 180) {
+    if (magpieAudioCache.size >= 24) magpieAudioCache.delete(magpieAudioCache.keys().next().value);
+    magpieAudioCache.set(cacheKey, audio);
+    audio.catch(() => { if (magpieAudioCache.get(cacheKey) === audio) magpieAudioCache.delete(cacheKey); });
+  }
+  return audio;
+}
+
+function prepareAssistantSpeech(text) {
+  if (isTtsMuted || ttsEngine !== 'magpie' || !nvidiaApiKey || Date.now() < magpieUnavailableUntil) return;
+  getMagpieAudio(text, getSelectedNvidiaVoiceConfig()).catch(() => {});
+}
 
 async function speakWithNvidiaTts(text, callback) {
   if (!nvidiaApiKey) {
@@ -311,30 +443,41 @@ async function speakWithNvidiaTts(text, callback) {
 
   const voiceConfig = getSelectedNvidiaVoiceConfig();
   const token = ++magpieSpeechSequence;
+  const requestSequence = speechRequestSequence;
+  const isCurrent = () => token === magpieSpeechSequence && requestSequence === speechRequestSequence;
 
-  const synthesize = async (chunk) => {
-    const result = await Promise.race([
-      window.electronAPI.nvidiaTtsSynthesize({
-        apiKey: nvidiaApiKey,
-        text: chunk,
-        voiceName: voiceConfig.voiceName || defaultNvidiaVoiceName,
-        languageCode: voiceConfig.languageCode || 'en-US'
-      }),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Magpie TTS timed out')), 45000);
-      })
-    ]);
-    const audioBytes = decodeBase64ToUint8Array(result.audioBase64 || '');
-    if (!audioBytes.length) {
-      throw new Error('Magpie returned empty audio');
-    }
-    return pcmToWav(audioBytes, 22050, 1, 16);
+  const synthesize = chunk => {
+    const audio = getMagpieAudio(chunk, voiceConfig);
+    // Prefetch can fail while the previous chunk is still playing. Handle its
+    // rejection now and let the ordered loop recover when it reaches the chunk.
+    audio.catch(() => {});
+    return audio;
   };
 
+  let finished = false;
   const finishSpeaking = () => {
+    if (!isCurrent() || finished) return;
+    finished = true;
+    clearSpeakingWatchdog();
     console.log('[Olanga] Done speaking (Magpie TTS)');
     if (callback) callback();
     else setState(State.IDLE);
+  };
+
+  const resumeWithWindows = async (index, error) => {
+    if (!isCurrent()) return false;
+    magpieUnavailableUntil = Date.now() + MAGPIE_COOLDOWN_MS;
+    console.warn('[Olanga] Continuing the remaining reply with Windows TTS:', error.message);
+    // Audio has no word boundary timestamps. If part of this chunk was heard,
+    // announce the repetition and replay that chunk so no result is omitted.
+    const notice = error.speechStarted ? 'The audio was interrupted. Repeating that part. ' : '';
+    armSpeakingWatchdog(60000, () => {
+      if (!isCurrent()) return;
+      try { synthesis.cancel(); } catch (_) {}
+      finishSpeaking();
+    });
+    await speakWithWindowsTts(notice + chunks.slice(index).join(' '), finishSpeaking);
+    return false; // Preserve the Magpie cooldown after recovery.
   };
 
   const abandon = (promise) => {
@@ -350,22 +493,27 @@ async function speakWithNvidiaTts(text, callback) {
     try {
       blob = await pending;
     } catch (error) {
+      if (!isCurrent()) return true;
       if (index === 0) throw error; // let the Windows fallback take the whole reply
-      console.warn('[Olanga] Magpie stopped mid-reply:', error.message);
-      finishSpeaking();
-      return true;
+      return resumeWithWindows(index, error);
     }
 
-    if (token !== magpieSpeechSequence) return true; // a newer reply took over
+    if (!isCurrent()) return true; // a newer reply took over
 
     pending = index + 1 < chunks.length ? synthesize(chunks[index + 1]) : null;
 
-    const completed = await playSpeechChunk(blob, {
-      isFinal: index === chunks.length - 1,
-      onFinal: finishSpeaking
-    });
+    let completed;
+    try {
+      completed = await playSpeechChunk(blob, {
+        isFinal: index === chunks.length - 1,
+        onFinal: finishSpeaking
+      });
+    } catch (error) {
+      abandon(pending);
+      return resumeWithWindows(index, error);
+    }
 
-    if (!completed || token !== magpieSpeechSequence) {
+    if (!completed || !isCurrent()) {
       abandon(pending);
       return true;
     }
@@ -398,10 +546,20 @@ function pickWindowsVoice() {
 }
 
 function speakWithWindowsTts(text, callback) {
+  const sequence = speechRequestSequence;
   return new Promise((resolve) => {
+    let voiceTimer;
+    let voiceListener;
+    const cleanup = () => {
+      clearTimeout(voiceTimer);
+      if (voiceListener) synthesis.removeEventListener('voiceschanged', voiceListener);
+    };
     const finish = () => {
-      if (callback) callback();
-      else setState(State.IDLE);
+      cleanup();
+      if (sequence === speechRequestSequence) {
+        if (callback) callback();
+        else setState(State.IDLE);
+      }
       resolve(true);
     };
 
@@ -423,17 +581,19 @@ function speakWithWindowsTts(text, callback) {
 
       // Voices can load asynchronously on Windows; wait briefly if needed.
       if ((synthesis.getVoices() || []).length === 0) {
+        let started = false;
         const retry = () => {
+          if (started) return;
+          started = true;
+          cleanup();
+          if (sequence !== speechRequestSequence) { finish(); return; }
           const delayedVoice = pickWindowsVoice();
           if (delayedVoice) utterance.voice = delayedVoice;
           synthesis.speak(utterance);
         };
+        voiceListener = retry;
         synthesis.addEventListener('voiceschanged', retry, { once: true });
-        setTimeout(() => {
-          if (!synthesis.speaking && !synthesis.pending) {
-            synthesis.speak(utterance);
-          }
-        }, 250);
+        voiceTimer = setTimeout(retry, 250);
       } else {
         synthesis.speak(utterance);
       }
@@ -451,21 +611,24 @@ const MAGPIE_COOLDOWN_MS = 5 * 60 * 1000;
 let magpieUnavailableUntil = 0;
 
 async function speakWithSelectedEngine(text, callback) {
+  const sequence = speechRequestSequence;
+  const finish = () => { if (sequence === speechRequestSequence && callback) callback(); };
   if (ttsEngine === 'magpie') {
     if (!nvidiaApiKey) {
       throw new Error('Add an NVIDIA API key in Settings to use Magpie TTS, or switch to Windows voice.');
     }
 
     if (Date.now() < magpieUnavailableUntil) {
-      await speakWithWindowsTts(text, callback);
+      await speakWithWindowsTts(text, finish);
       return;
     }
 
     try {
-      await speakWithNvidiaTts(text, callback);
-      magpieUnavailableUntil = 0;
+      const completedWithMagpie = await speakWithNvidiaTts(text, finish);
+      if (sequence === speechRequestSequence && completedWithMagpie) magpieUnavailableUntil = 0;
       return;
     } catch (err) {
+      if (sequence !== speechRequestSequence) return;
       magpieUnavailableUntil = Date.now() + MAGPIE_COOLDOWN_MS;
       console.warn(
         `[Olanga] Magpie TTS failed, using the Windows voice for ${MAGPIE_COOLDOWN_MS / 60000} min:`,
@@ -474,16 +637,17 @@ async function speakWithSelectedEngine(text, callback) {
       if (typeof showError === 'function') {
         showError('Magpie voice unavailable — using the Windows voice for now');
       }
-      await speakWithWindowsTts(text, callback);
+      await speakWithWindowsTts(text, finish);
       return;
     }
   }
 
-  await speakWithWindowsTts(text, callback);
+  await speakWithWindowsTts(text, finish);
 }
 
 // Speaks a response then fires a callback once done
 async function speakResponseAndThen(text, callback) {
+  stopAssistantSpeech();
   if (isTtsMuted) {
     clearSpeakingWatchdog();
     if (callback) callback();
@@ -515,6 +679,7 @@ async function speakResponseAndThen(text, callback) {
 }
 
 async function speakResponse(text) {
+  stopAssistantSpeech();
   if (isTtsMuted) {
     clearSpeakingWatchdog();
     setState(State.IDLE);

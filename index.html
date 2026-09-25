@@ -24,6 +24,7 @@
   ">
   <title>Olanga</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="desktop-workflows.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -118,8 +119,8 @@
           <label class="setup-label" for="apiKeyInput">Gemini API Key</label>
           <input type="password" id="apiKeyInput" name="apiKey" class="setup-input" placeholder="Enter your Gemini key..." autocomplete="off" spellcheck="false">
           <p class="setup-hint">Get a free key at <span class="setup-link" id="getKeyLink">aistudio.google.com</span></p>
-          <label class="setup-label" for="nvidiaKeyInput" style="margin-top:10px;">NVIDIA API Key <span class="setup-optional">(optional — Magpie TTS, Notes & News AI)</span></label>
-          <input type="password" id="nvidiaKeyInput" name="nvidiaKey" class="setup-input" placeholder="Optional NVIDIA key for Magpie voice..." autocomplete="off" spellcheck="false">
+          <label class="setup-label" for="nvidiaKeyInput" style="margin-top:10px;">NVIDIA API Key <span class="setup-optional">(optional — Magpie voice only)</span></label>
+          <input type="password" id="nvidiaKeyInput" name="nvidiaKey" class="setup-input" placeholder="NVIDIA key for Magpie voice only..." autocomplete="off" spellcheck="false">
           <button type="submit" class="setup-btn" id="saveKeyBtn">Activate Olanga</button>
         </form>
       </div>
@@ -441,10 +442,12 @@
           <button id="addKeyBtn">Add</button>
         </div>
         <div class="add-key-row" style="margin-top:10px;">
-          <input type="password" id="nvidiaSettingsKeyInput" placeholder="Set NVIDIA API Key..." autocomplete="off" spellcheck="false">
-          <button id="addNvidiaKeyBtn">Save</button>
+          <input type="password" id="nvidiaSettingsKeyInput" aria-label="NVIDIA API key" placeholder="NVIDIA hosted API key (nvapi-...)" autocomplete="off" spellcheck="false">
+          <button id="addNvidiaKeyBtn">Save &amp; Test</button>
         </div>
-        <p class="settings-hint">An NVIDIA API key is also needed for AI text generation in the Notes and News apps.</p>
+        <p id="nvidiaConnectionStatus" class="settings-hint" role="status" aria-live="polite">Optional. NVIDIA is used only to synthesize the Magpie voice.</p>
+        <button type="button" id="getNvidiaKeyBtn" class="key-btn">Get a NVIDIA key for Magpie ↗</button>
+        <p class="settings-hint">Gemini handles speech understanding, reasoning, screen tasks, Notes and News. Save &amp; Test checks Magpie with a short sample; it does not change your voice engine.</p>
         <div class="rotation-toggle-row">
           <label class="toggle-switch">
             <input type="checkbox" id="rotationToggle">
@@ -504,13 +507,26 @@
         </div>
       </div>
 
+      <div class="settings-section agent-settings">
+        <h3>Intelligence &amp; desktop tasks</h3>
+        <p class="settings-hint">Gemini handles listening, conversation, screen diagnosis, action planning and final responses. NVIDIA is only needed if you select the Magpie voice.</p>
+        <p class="settings-hint">For “fix the bug on my screen”, Olanga diagnoses the issue, asks for approval, edits only the selected window or editor, and captures the result to verify. A spoken yes opens the native edit review; changing scope requires fresh permission.</p>
+      </div>
+
       <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
         <h3>Corner Status Light</h3>
-        <p class="settings-hint">Click to cycle how the bottom-right glow behaves while Olanga runs in the background.</p>
+        <p class="settings-hint">A floating light above your windows. Hover to expand, then click for shortcuts. Choose All Lights to keep it available while idle.</p>
         <div class="status-light-controls">
           <button type="button" class="status-light-mode-btn" id="statusLightModeBtn" aria-live="polite">No Constant Light</button>
           <button type="button" class="status-light-mode-btn" id="statusLightSizeBtn" aria-live="polite">Small</button>
         </div>
+        <details class="quick-actions-settings">
+          <summary>Customize your five shortcuts</summary>
+          <p class="settings-hint">Give each shortcut a name and a request. Try “Desktop task: rewrite the selected paragraph” or “Set a timer for 25 minutes”. Screen edits still require both confirmations.</p>
+          <div id="quickActionsEditor" class="quick-actions-editor"></div>
+          <button type="button" class="status-light-mode-btn" id="resetQuickActionsBtn">Restore default shortcuts</button>
+          <span id="quickActionsSaveStatus" class="settings-hint" role="status"></span>
+        </details>
       </div>
 
       <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
@@ -595,6 +611,10 @@
 
   <script src="./node_modules/vosk-browser/dist/vosk.js"></script>
   <script src="./shared/status-light.js"></script>
+  <script src="./shared/quick-actions.js"></script>
+  <script src="./shared/gemini-request.js"></script>
+  <script src="./shared/fast-intents.js"></script>
+  <script src="./shared/nvidia-key.js"></script>
   <script src="./shared/prefs-schema.js"></script>
   <script src="./js/core.js"></script>
   <script src="./js/audio-controls.js"></script>
@@ -602,6 +622,8 @@
   <script src="./js/tts.js"></script>
   <script src="./js/timers-tasks.js"></script>
   <script src="./js/assistant.js"></script>
+  <script src="./shared/action-plan.js"></script>
+  <script src="./js/desktop-workflows.js"></script>
   <script src="./js/notepad.js"></script>
   <script src="./js/news.js"></script>
   <script src="./js/terminal.js"></script>

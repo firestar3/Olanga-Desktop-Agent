@@ -7,13 +7,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setStatusState: (state) => ipcRenderer.send('status-indicator-set', state),
   setStatusLightMode: (mode) => ipcRenderer.send('status-indicator-set-mode', mode),
   setStatusLightSize: (size) => ipcRenderer.send('status-indicator-set-size', size),
+  setQuickActions: (actions) => ipcRenderer.send('status-overlay-set-quick-actions', actions),
+  onQuickAction: (callback) => {
+    const handler = (_event, action) => callback(action);
+    ipcRenderer.on('quick-action-run', handler);
+    return () => ipcRenderer.removeListener('quick-action-run', handler);
+  },
+  desktopCapture: () => ipcRenderer.invoke('desktop-capture'),
+  desktopPrepare: (plan) => ipcRenderer.invoke('desktop-prepare', plan),
+  desktopRun: (planId) => ipcRenderer.invoke('desktop-run', planId),
+  desktopCancel: () => ipcRenderer.invoke('desktop-cancel'),
+  onDesktopProgress: (callback) => {
+    const handler = (_event, progress) => callback(progress);
+    ipcRenderer.on('desktop-progress', handler);
+    return () => ipcRenderer.removeListener('desktop-progress', handler);
+  },
   getOpenAtLogin: () => ipcRenderer.invoke('get-open-at-login'),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke('set-open-at-login', enabled),
   openExternal: (url) => ipcRenderer.send('open-external', url),
-  playSpotify: (type, term) => ipcRenderer.send('play-spotify', { type, term }),
-  reloadSpotify: () => ipcRenderer.send('reload-spotify'),
-  mediaControl: (cmd) => ipcRenderer.send('media-control', cmd),
-  openApp: (appName) => ipcRenderer.send('open-app', appName),
+  playSpotify: (type, term) => ipcRenderer.invoke('play-spotify', { type, term }),
+  reloadSpotify: () => ipcRenderer.invoke('reload-spotify'),
+  mediaControl: (cmd, spotifyOnly, level) => ipcRenderer.invoke('media-control', cmd, spotifyOnly, level),
+  cancelMedia: () => ipcRenderer.send('media-cancel'),
+  openApp: (appName) => ipcRenderer.invoke('open-app', appName),
   closeApp: (appName) => ipcRenderer.invoke('close-app', appName),
   requestScreenshot: () => ipcRenderer.invoke('request-screenshot'),
   executeCommand: (payload) => ipcRenderer.invoke('execute-command', payload),
@@ -23,7 +39,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchNewsBundle: (payload) => ipcRenderer.invoke('fetch-news-bundle', payload),
   nvidiaTtsConfig: (payload) => ipcRenderer.invoke('nvidia-tts-config', payload),
   nvidiaTtsSynthesize: (payload) => ipcRenderer.invoke('nvidia-tts-synthesize', payload),
-  nvidiaChat: (payload) => ipcRenderer.invoke('nvidia-chat', payload),
   secureStoreGet: (key) => ipcRenderer.invoke('secure-store-get', key),
   secureStoreSet: (key, value) => ipcRenderer.invoke('secure-store-set', { key, value })
 });
