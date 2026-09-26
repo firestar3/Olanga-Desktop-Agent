@@ -317,6 +317,9 @@ body {
 }
 
 .notepad-textarea {
+  white-space: pre-wrap;
+  tab-size: 4;
+  overflow-wrap: anywhere;
   flex: 1;
   transition: flex 0.3s ease;
   overflow-y: auto;
@@ -3457,7 +3460,8 @@ body.state-speaking #orbCanvas {
 }
 
 .connection-results { padding-left: 18px; margin: 8px 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
-.connection-results [data-state="error"], #nvidiaConnectionStatus[data-state="error"] { color: var(--danger); }
+.connection-results [data-state="error"], #nvidiaConnectionStatus[data-state="error"], #pushToTalkStatus[data-state="error"] { color: var(--danger); }
+#pushToTalkStatus[data-state="success"] { color: var(--text-primary); }
 .connection-results [data-state="success"] { color: var(--text-primary); }
 .add-key-row button:disabled { opacity: 0.55; cursor: wait; }
 .add-key-row input { min-width: 0; }
@@ -4145,3 +4149,44 @@ input:checked + .slider:before {
 .quick-action-editor input:focus-visible, .quick-action-editor textarea:focus-visible { outline: 2px solid #a397ff; outline-offset: 2px; }
 .agent-settings { margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px; }
 .agent-settings label { display: block; margin: 14px 0 6px; }
+/* Workspace uses native dialogs so keyboard focus stays inside the active review. */
+.workspace-launch { margin-left: auto; padding: 8px 14px; border: 1px solid var(--border-subtle, #444); border-radius: 10px; background: rgba(140, 110, 235, .12); color: inherit; cursor: pointer; }
+.activity-peek { margin-top: 10px; color: #b8abc9; font-size: 12px; text-transform: capitalize; }
+.workspace-dialog { position: fixed; inset: 0; margin: auto; box-sizing: border-box; width: min(720px, calc(100vw - 36px)); max-height: calc(100vh - 54px); padding: 26px; border: 1px solid #494051; border-radius: 20px; background: #17131f; color: #eee9f4; box-shadow: 0 24px 80px #0009; overflow-y: auto; }
+.workspace-dialog::backdrop { background: #05020bbb; backdrop-filter: blur(5px); }
+.workspace-dialog header, .workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.workspace-dialog h2, .workspace-dialog h3 { margin: 0 0 12px; }
+.workspace-dialog h3 { margin-top: 20px; }
+.workspace-dialog p { line-height: 1.5; }
+.workspace-eyebrow { color: #b9a0e2; font-size: 11px; letter-spacing: .13em; margin: 0 0 5px; }
+.workspace-dialog nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0; }
+.workspace-dialog button { border: 1px solid #4c405b; border-radius: 9px; background: #2a2135; color: #f1e9fa; padding: 8px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+.workspace-dialog button:hover { background: #3b2b4e; }
+.workspace-dialog button[aria-pressed="true"] { background: #734db1; border-color: #a17adf; }
+.workspace-dialog button:disabled { opacity: .5; cursor: default; }
+.workspace-dialog :focus-visible { outline: 2px solid #c2a0fa; outline-offset: 3px; }
+.workspace-dialog input:not([type="checkbox"]), .workspace-dialog select, .workspace-dialog textarea { display: block; width: 100%; box-sizing: border-box; margin: 6px 0 14px; padding: 10px; border: 1px solid #50435e; border-radius: 8px; background: #100c17; color: #eee9f4; font: inherit; font-size: 13px; }
+.workspace-dialog textarea { resize: vertical; min-height: 90px; }
+.workspace-dialog form > label { font-size: 12px; color: #cfbfdf; }
+.workspace-help { margin: 5px 0 12px; color: #b9adca; font-size: 12px; }
+.workspace-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.workspace-check { display: flex; align-items: flex-start; gap: 9px; margin: 12px 0; font-size: 13px; overflow-wrap: anywhere; }
+.workspace-check input { accent-color: #b08bed; margin-top: 3px; flex-shrink: 0; }
+.workspace-item { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid #352b40; }
+.workspace-item > div:first-child { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
+.workspace-item strong { font-size: 13px; }
+.workspace-item ol { font-size: 12px; color: #c5b6d7; padding-left: 20px; }
+.workspace-item li { margin: 6px 0; }
+#workspaceStatus { min-height: 0; color: #c5e2bf; font-size: 12px; }
+#workspaceStatus:empty { display: none; }
+#workspaceStatus.workspace-error { color: #ffb5b5; }
+.health-summary { font-size: 13px; color: #e2d6f1; }
+.health-summary:empty { display: none; }
+#healthList .workspace-item strong { white-space: pre; }
+#healthList .workspace-item[data-health="ok"] strong { color: #a6e3b0; }
+#healthList .workspace-item[data-health="info"] strong { color: #b9c5ff; }
+#healthList .workspace-item[data-health="warn"] strong { color: #f3d27f; }
+#healthList .workspace-item[data-health="fail"] strong { color: #ffa3a3; }
+.health-fix { color: #dccfee; }
+.timer-when { font-size: 11px; color: var(--text-secondary); letter-spacing: .5px; }
+.setup-local-btn { margin-top: 10px; background: transparent; border: 1px solid #736082; }

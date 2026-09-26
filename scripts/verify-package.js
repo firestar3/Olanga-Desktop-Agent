@@ -18,7 +18,9 @@ for (const file of files) {
   const packaged = asar.extractFile(archive, file);
   assert.equal(hash(packaged), hash(source), 'Missing or stale packaged file: ' + file);
 }
-assert.ok(fs.existsSync(path.join(resources, 'app.asar.unpacked/desktop/input-helper.ps1')), 'Native helper is not unpacked');
+for (const helper of fs.readdirSync(path.join(root, 'desktop')).filter(file => file.endsWith('.ps1'))) {
+  assert.ok(fs.existsSync(path.join(resources, 'app.asar.unpacked/desktop', helper)), 'Native helper is not unpacked: ' + helper);
+}
 assert.equal(hash(fs.readFileSync(path.join(resources, 'vosk-model-v2.tar.gz'))), hash(fs.readFileSync(path.join(root, 'vosk-model-v2.tar.gz'))), 'Offline model is missing or stale');
 const installedPackage = JSON.parse(asar.extractFile(archive, 'package.json').toString());
 assert.equal(installedPackage.version, require('../package.json').version);

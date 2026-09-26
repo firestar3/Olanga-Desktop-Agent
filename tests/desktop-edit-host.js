@@ -25,6 +25,14 @@ app.whenReady().then(async () => {
 process.on('message', async message => {
   try {
     if (message.kind === 'close') return app.exit(0);
+    if (message.kind === 'set-value') {
+      await win.webContents.executeJavaScript(`document.querySelector('textarea').value = ${JSON.stringify(String(message.text))}`);
+      return process.send({ id: message.id, value: true });
+    }
+    if (message.kind === 'replace-control') {
+      await win.webContents.executeJavaScript("(() => { const old = document.querySelector('textarea'); const replacement = old.cloneNode(); replacement.value = old.value; old.replaceWith(replacement); replacement.focus(); })()");
+      return process.send({ id: message.id, value: true });
+    }
     const value = message.kind === 'capture' ? (await win.webContents.capturePage()).toDataURL()
       : message.kind === 'value' ? await win.webContents.executeJavaScript("document.querySelector('textarea').value") : null;
     process.send({ id: message.id, value });

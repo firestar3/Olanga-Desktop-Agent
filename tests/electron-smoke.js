@@ -35,6 +35,23 @@ app.whenReady().then(async () => {
     await pause(700);
     const boot = await main.webContents.executeJavaScript(`({ desktop: typeof window.OlangaDesktop?.open, slots: document.querySelectorAll('#quickActionsEditor fieldset').length, model: typeof callGeminiSpecialist, nimRemoved: typeof window.electronAPI.nvidiaChat === 'undefined' })`);
     if (boot.desktop !== 'function' || boot.slots !== 5 || boot.model !== 'function' || !boot.nimRemoved) throw new Error('New controls did not initialize: ' + JSON.stringify(boot));
+    const deadline = await main.webContents.executeJavaScript(`createTimer(600, 'Reload check'); addTask('Reload check'); activeTimers[0].endTime;`);
+    const reload = async () => {
+      await new Promise(resolve => { main.webContents.once('did-finish-load', resolve); main.webContents.reload(); });
+      // init() also awaits preferences from the main process.
+      for (let attempt = 0; attempt < 50; attempt++) {
+        if (await main.webContents.executeJavaScript(`document.querySelectorAll('#timersList > *').length > 0`)) return;
+        await pause(100);
+      }
+      throw new Error('Widgets did not initialize after reload');
+    };
+    await reload();
+    const restored = await main.webContents.executeJavaScript(`({ timers: activeTimers.length, deadline: activeTimers[0]?.endTime, tasks: activeTasks.length, timer: document.querySelector('#timersList .timer-label')?.textContent, task: document.querySelector('#tasksList .task-text')?.textContent })`);
+    if (restored.timers !== 1 || restored.deadline !== deadline || restored.tasks !== 1 || restored.timer !== 'Reload check' || restored.task !== 'Reload check') throw new Error('Timer/checklist restoration failed: ' + JSON.stringify(restored));
+    await main.webContents.executeJavaScript(`document.querySelector('#tasksList .task-checkbox').click(); document.querySelector('#timersList .timer-btn-close').click();`);
+    await reload();
+    const retained = await main.webContents.executeJavaScript(`({ timers: activeTimers.length, completed: activeTasks[0]?.completed, checked: document.querySelector('#tasksList .task-checkbox')?.checked })`);
+    if (retained.timers !== 0 || !retained.completed || !retained.checked) throw new Error('Widget changes did not survive reload: ' + JSON.stringify(retained));
     await main.webContents.executeJavaScript(`document.getElementById('setupScreen').classList.add('hidden'); document.getElementById('mainScreen').classList.remove('hidden'); window.OlangaDesktop.open('Explain and fix the selected code in IntelliJ, inside its editor only.');`);
     await pause(650);
     fs.writeFileSync(path.join(output, 'desktop-task.png'), (await main.webContents.capturePage()).toPNG());
@@ -60,7 +77,7 @@ app.whenReady().then(async () => {
     await pause(250);
     fs.writeFileSync(path.join(output, 'nvidia-settings.png'), (await main.webContents.capturePage()).toPNG());
     if (errors.length) throw new Error(errors.join('\n'));
-    console.log('Electron smoke passed: isolated app boot, five shortcuts, model settings, wrong-provider key rejection, desktop dialog and screenshots.');
+    console.log('Electron smoke passed: isolated app boot, timer/checklist restoration and dismissal, five shortcuts, model settings, wrong-provider key rejection, desktop dialog and screenshots.');
     app.exit(0);
   } catch (error) {
     console.error('Electron smoke failed:', error.message);

@@ -142,22 +142,27 @@ function Invoke-VolumeRequest($Request) {
             'VOLUME_UP' { $target = [Math]::Min(100, $before.Level + 10) }
             'VOLUME_DOWN' { $target = [Math]::Max(0, $before.Level - 10) }
             'VOLUME_MUTE' { $muted = -not $before.Muted }
+            'VOLUME_MUTE_ON' { $muted = $true }
+            'VOLUME_MUTE_OFF' { $muted = $false }
             default { throw 'Unsupported volume command.' }
         }
-        if ($Request.action -eq 'VOLUME_MUTE') { $audio.SetMuted($muted) }
+        $muteAction = $Request.action -in @('VOLUME_MUTE', 'VOLUME_MUTE_ON', 'VOLUME_MUTE_OFF')
+        if ($muteAction) { $audio.SetMuted($muted) }
         else { $audio.SetLevel($target); if ($target -gt 0) { $muted = $false } }
         $deadline = [DateTime]::UtcNow.AddSeconds(2)
         do {
             $after = $audio.Read()
             if ([Math]::Abs($after.Level - $target) -le 0.5 -and $after.Muted -eq $muted) {
                 $message = 'System volume is ' + $after.Level + '%.'
-                if ($Request.action -eq 'VOLUME_MUTE') { if ($after.Muted) { $message = 'System audio is muted.' } else { $message = 'System audio is unmuted.' } }
+                if ($muteAction) { if ($after.Muted) { $message = 'System audio is muted.' } else { $message = 'System audio is unmuted.' } }
                 elseif ($after.Muted) { $message += ' Muted.' }
                 return @{ ok = $true; verified = $true; message = $message; volume = $after.Level; muted = $after.Muted; source = 'system' }
             }
             Start-Sleep -Milliseconds 80
         } while ([DateTime]::UtcNow -lt $deadline)
-        return @{ ok = $false; verified = $false; message = 'Windows did not confirm the requested volume. It reports ' + $after.Level + '%.'; volume = $after.Level; muted = $after.Muted; source = 'system' }
+        $message = 'Windows did not confirm the requested volume. It reports ' + $after.Level + '%.'
+        if ($muteAction) { $message = 'Windows did not confirm the requested mute state.' }
+        return @{ ok = $false; verified = $false; message = $message; volume = $after.Level; muted = $after.Muted; source = 'system' }
     } finally { $audio.Dispose() }
 }
 
@@ -174,11 +179,16 @@ function Invoke-SpotifyControl($Control) {
     throw 'Spotify did not expose an accessible action for that item.'
 }
 
-function Wait-Playback([bool]$SpotifyOnly, [string]$Expected, [string]$PreviousTitle = '') {
-    $deadline = [DateTime]::UtcNow.AddSeconds(4)
+function Wait-Playback([bool]$SpotifyOnly, [string]$Expected, [string]$PreviousTitle = '', $Session = $null, [string]$PreviousArtist = '', [int]$TimeoutMs = 4000) {
+    $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(1, [Math]::Min(4000, $TimeoutMs)))
     do {
-        $state = Get-MediaState (Get-MediaSession $SpotifyOnly)
-        if ($state.status -eq $Expected -and (-not $PreviousTitle -or $state.title -ne $PreviousTitle)) { return $state }
+        # A transport action belongs to the session it was sent to. A different
+        # player becoming current cannot verify that action's result.
+        $observed = if ($null -ne $Session) { $Session } else { Get-MediaSession $SpotifyOnly }
+        $state = Get-MediaState $observed
+        if ($Expected -eq 'TrackChanged') {
+            if ($state.title -and $state.status -in @('Playing', 'Paused') -and ($state.title -ne $PreviousTitle -or $state.artist -ne $PreviousArtist)) { return $state }
+        } elseif ($state.status -eq $Expected -and (-not $PreviousTitle -or $state.title -ne $PreviousTitle)) { return $state }
         Start-Sleep -Milliseconds 120
     } while ([DateTime]::UtcNow -lt $deadline)
     return $null
@@ -231,7 +241,7 @@ function Play-SpotifyCollection($Request) {
 function Invoke-MediaRequest($Request) {
     if ($Request.action -eq 'OPEN') { return Open-Spotify }
     if ($Request.action -in @('LIKED', 'SONG', 'ALBUM', 'PLAYLIST', 'ARTIST', 'LIBRARY')) { return Play-SpotifyCollection $Request }
-    if ($Request.action -in @('VOLUME_SET', 'VOLUME_STATUS', 'VOLUME_UP', 'VOLUME_DOWN', 'VOLUME_MUTE')) { return Invoke-VolumeRequest $Request }
+    if ($Request.action -in @('VOLUME_SET', 'VOLUME_STATUS', 'VOLUME_UP', 'VOLUME_DOWN', 'VOLUME_MUTE', 'VOLUME_MUTE_ON', 'VOLUME_MUTE_OFF')) { return Invoke-VolumeRequest $Request }
     if ($Request.action -eq 'RELOAD') {
         $oldProcesses = @(Get-Process -Name Spotify -ErrorAction SilentlyContinue)
         $oldProcesses | Stop-Process -Force
@@ -255,6 +265,7 @@ function Invoke-MediaRequest($Request) {
     }
     $expected = 'Playing'
     $previousTitle = ''
+    $previousArtist = ''
     if (($Request.action -eq 'PAUSE' -and $state.status -eq 'Paused') -or ($Request.action -eq 'PLAY' -and $state.status -eq 'Playing')) {
         $message = 'Playback is already paused.'
         if ($state.status -eq 'Playing') { $message = 'Music is already playing.' }
@@ -265,15 +276,16 @@ function Invoke-MediaRequest($Request) {
         'PLAY' { $operation = $session.TryPlayAsync() }
         'RELOAD' { $operation = $session.TryPlayAsync() }
         'PLAY_PAUSE' { if ($state.status -eq 'Playing') { $operation = $session.TryPauseAsync(); $expected = 'Paused' } else { $operation = $session.TryPlayAsync() } }
-        'NEXT' { $operation = $session.TrySkipNextAsync(); $previousTitle = $state.title }
-        'PREV' { $operation = $session.TrySkipPreviousAsync(); $previousTitle = $state.title }
+        'NEXT' { $operation = $session.TrySkipNextAsync(); $previousTitle = $state.title; $previousArtist = $state.artist; $expected = 'TrackChanged' }
+        'PREV' { $operation = $session.TrySkipPreviousAsync(); $previousTitle = $state.title; $previousArtist = $state.artist; $expected = 'TrackChanged' }
         default { throw 'Unsupported media command.' }
     }
     $accepted = Await-Media $operation ([bool])
-    $confirmed = Wait-Playback ([bool]$Request.spotifyOnly) $expected $previousTitle
+    $confirmed = Wait-Playback ([bool]$Request.spotifyOnly) $expected $previousTitle $session $previousArtist
     if (-not $accepted -or -not $confirmed) { return @{ ok = $false; message = 'The player did not confirm that change. Check Spotify for a sign-in prompt or playback restriction.' } }
     $message = 'Playback resumed.'
     if ($expected -eq 'Paused') { $message = 'Playback paused.' }
+    elseif ($confirmed.status -eq 'Paused') { $message = 'Selected ' + $confirmed.title + '. Playback is paused.' }
     elseif ($confirmed.title) { $message = 'Playing ' + $confirmed.title + '.' }
     return @{ ok = $true; verified = $true; message = $message; title = $confirmed.title; artist = $confirmed.artist }
 }

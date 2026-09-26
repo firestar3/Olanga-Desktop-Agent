@@ -11,6 +11,7 @@ function settingsHarness(fail = false) {
   const context = vm.createContext({
     OlangaPrefs: require('../../shared/prefs-schema'),
     OlangaNvidiaKey: require('../../shared/nvidia-key'),
+    OlangaGeminiKeys: require('../../shared/gemini-keys'),
     document: { getElementById: () => null, querySelectorAll: () => [], addEventListener() {} },
     window: { electronAPI: { async secureStoreSet(key, value) { if (fail) throw new Error('Locked'); saved.set(key, value); } } },
     mainScreen: null, apiKeys: ['new-secret'], nvidiaApiKey: 'new-nim',
@@ -38,7 +39,7 @@ test('failed encrypted save reports failure without writing a new plaintext key 
   assert.equal(errors.length, 1);
 });
 
-test('clearing the NVIDIA key deletes its encrypted entry instead of resurrecting it on restart', async () => {
+test('clearing the NVIDIA key saves an explicit empty credential instead of resurrecting it on restart', async () => {
   const { context, values, saved } = settingsHarness();
   context.nvidiaApiKey = '';
   await context.persistNvidiaKey();

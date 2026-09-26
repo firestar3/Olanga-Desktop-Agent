@@ -170,6 +170,103 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
   let pendingQuestion = '';
   let awaitingApproval = false;
   let clarifications = [];
+  let undoReceipt = null;
+  let undoing = false, undoExpiry = null;
+  let activity = null;
+
+  // Activity gets operation names and bounded, session-only receipts. Never pass
+  // a capture, proposal, goal, editor identity, or undo checkpoint into it.
+  function activityCall(method, ...args) {
+    try { return activity?.store?.[method]?.(...args); } catch (_) { return undefined; }
+  }
+  function activityStep(operation) {
+    if (!activity) {
+      const store = window.OlangaActivity;
+      if (!store) return;
+      activity = { store, id: null, state: 'working', index: null, operation: '', completedSteps: 0 };
+      activity.id = activityCall('begin');
+      if (!activity.id) { activity = null; return; }
+    }
+    if (activity.state === 'awaiting-input') activityCall('finish', activity.id, 'working');
+    activity.state = 'working';
+    activity.operation = operation;
+    activity.index = activityCall('step', activity.id, operation);
+  }
+  function activityReceipt(outcome, details) {
+    if (!activity || activity.index == null) return;
+    activityCall('receipt', activity.id, activity.index, outcome, details);
+    activity.index = null;
+  }
+  function activityFinish(state) {
+    if (!activity) return;
+    activityCall('finish', activity.id, state);
+    activity.state = state;
+    if (state !== 'awaiting-input') activity = null;
+  }
+  function activityStop(state, details) {
+    activityReceipt(state === 'cancelled' ? 'cancelled' : 'failed', details);
+    activityFinish(state);
+  }
+  function activityInputStarted() {
+    if (activity?.operation !== 'DESKTOP_APPROVAL') return;
+    activityReceipt('completed', 'Both native confirmations accepted. Input delivery started.');
+    activityStep('DESKTOP_INPUT');
+  }
+  function wasCancelled(error) { return error?.name === 'AbortError' || /\bcancelled\b|\bcanceled\b/i.test(error?.message || ''); }
+
+  function textDiff(before, after) {
+    let start = 0, end = 0;
+    while (start < before.length && start < after.length && before[start] === after[start]) start++;
+    while (end < before.length - start && end < after.length - start && before[before.length - end - 1] === after[after.length - end - 1]) end++;
+    const parts = text => ({ prefix: text.slice(0, start), changed: text.slice(start, end ? -end : undefined), suffix: end ? text.slice(-end) : '' });
+    return { before: parts(before), after: parts(after) };
+  }
+
+  function showUndo(receipt) {
+    if (undoExpiry !== null) clearTimeout(undoExpiry);
+    undoExpiry = null;
+    undoReceipt = receipt?.available && typeof receipt.undoId === 'string' ? receipt : null;
+    ui.undoPanel.hidden = !receipt;
+    ui.undoMessage.textContent = receipt?.message || '';
+    ui.undoButton.hidden = !undoReceipt;
+    ui.undoButton.disabled = busy || !undoReceipt;
+    ui.undoDiff.hidden = !undoReceipt;
+    ui.undoBefore.replaceChildren(); ui.undoAfter.replaceChildren();
+    if (undoReceipt) {
+      const diff = textDiff(receipt.before, receipt.after);
+      for (const [name, node] of [['before', ui.undoBefore], ['after', ui.undoAfter]]) {
+        const part = diff[name];
+        node.append(element('span', '', part.prefix), element('span', name === 'before' ? 'desktop-task-removed' : 'desktop-task-added', part.changed), element('span', '', part.suffix));
+      }
+      if (typeof setTimeout === 'function') {
+        undoExpiry = setTimeout(() => showUndo({ available: false, message: 'This undo checkpoint expired. Its local text copy was cleared.' }), Math.max(0, receipt.expiresAt - Date.now()));
+        undoExpiry.unref?.();
+      }
+    }
+  }
+
+  async function undoEdit() {
+    if (busy || !undoReceipt) return;
+    if (Date.now() > undoReceipt.expiresAt) { showUndo({ available: false, message: 'This undo checkpoint expired. No text was restored.' }); return; }
+    const undoId = undoReceipt.undoId, token = ++generation;
+    activityStop('cancelled', 'The pending desktop proposal was replaced by an undo request.');
+    activityStep('DESKTOP_UNDO');
+    clearPlan(); undoing = true; setBusy(true);
+    status('Checking the editor and current text before restoring the original…');
+    try {
+      const result = await window.electronAPI.undoDesktopEdit(undoId);
+      if (token !== generation) return;
+      showUndo({ available: false, message: result.message });
+      status(result.message, result.ok && result.verified ? 'success' : 'notice');
+      activityReceipt(result.ok && result.verified ? 'completed' : result.cancelled ? 'cancelled' : result.ok ? 'unverified' : 'failed', result.message);
+      activityFinish(result.ok && result.verified ? 'completed' : result.cancelled ? 'cancelled' : result.ok ? 'unverified' : 'failed');
+    } catch (error) {
+      if (token !== generation) return;
+      showUndo({ available: false, message: error.message || 'Undo could not be verified. Inspect the editor.' });
+      status(ui.undoMessage.textContent, 'error');
+      activityStop(wasCancelled(error) ? 'cancelled' : 'failed', 'Undo stopped without verified restoration. Inspect the editor.');
+    } finally { if (token === generation) { undoing = false; setBusy(false); } }
+  }
 
   function element(tag, className, text) {
     const el = document.createElement(tag);
@@ -194,6 +291,7 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
     ui.answer.disabled = value;
     ui.submitAnswer.disabled = value;
     ui.run.disabled = value || !prepared;
+    ui.undoButton.disabled = value || !undoReceipt || Date.now() > undoReceipt.expiresAt;
     ui.close.textContent = value ? 'Stop & close' : 'Close';
     ui.stop.disabled = !value && !prepared && !captured;
     ui.dialog.setAttribute('aria-busy', String(value));
@@ -223,7 +321,9 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
     const wasAwaiting = awaitingApproval;
     awaitingApproval = false;
     if (!ui || (!busy && !prepared && !captured && !pendingQuestion)) return;
-    const wasRunning = running;
+    const wasRunning = running, wasUndoing = undoing;
+    activityStop('cancelled', wasUndoing ? 'Undo stopped. Restoration may already have occurred; inspect the editor.' : wasRunning ? `Desktop execution stopped after ${activity?.completedSteps || 0} reported input steps. Additional input may already have been delivered; inspect the app.` : 'Desktop planning cancelled. No desktop input ran.');
+    undoing = false;
     if ((pendingQuestion || wasAwaiting) && typeof cancelFollowUpWindow === 'function') cancelFollowUpWindow();
     if ((pendingQuestion || wasAwaiting) && typeof isRecording !== 'undefined' && isRecording && typeof cancelRecording === 'function') cancelRecording();
     generation++;
@@ -233,10 +333,11 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
     if (cancellation?.catch) cancellation.catch(() => {});
     running = false;
     clearPlan();
+    if (wasUndoing) showUndo({ available: false, message: 'Undo stopped. Inspect the editor to see whether restoration completed.' });
     pendingQuestion = '';
     ui.questionPanel.hidden = true;
     setBusy(false);
-    status(wasRunning ? 'Stopped. Some steps may have already changed the screen. Inspect it before continuing.' : 'Cancelled. The pending plan cannot run.', 'notice');
+    status(wasUndoing ? 'Undo stopped. Inspect the editor to see whether restoration completed.' : wasRunning ? 'Stopped. Some steps may have already changed the screen. Inspect it before continuing.' : 'Cancelled. The pending plan cannot run.', 'notice');
     ui.capture.textContent = wasRunning ? 'Observe result & continue' : 'Capture screen & plan';
   }
 
@@ -246,7 +347,7 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
     if (typeof cancelAssistantRequest === 'function') cancelAssistantRequest({ cancelDesktop: false });
     if (typeof cancelRecording === 'function' && typeof isRecording !== 'undefined' && isRecording) cancelRecording();
     if (goal && !busy) {
-      if (prepared) cancel();
+      if (prepared || captured || pendingQuestion) cancel();
       ui.goal.value = String(goal).slice(0, MAX_GOAL);
       previous = [];
       clarifications = [];
@@ -279,6 +380,8 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
     if (typeof isRecording !== 'undefined' && isRecording && typeof cancelRecording === 'function') cancelRecording();
     if (typeof cancelAssistantRequest === 'function') cancelAssistantRequest({ cancelDesktop: false });
     const hadPrepared = !!prepared;
+    activityReceipt('cancelled', 'A fresh screen capture replaced the previous stage.');
+    activityStep('DESKTOP_CAPTURE');
     awaitingApproval = false;
     clearPlan();
     const token = ++generation;
@@ -311,8 +414,12 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
       ui.screenInfo.textContent = `Primary screen · ${capture.display.width} × ${capture.display.height} · ${new Date(capture.capturedAt || Date.now()).toLocaleTimeString()}`;
       status(selectedRegion ? 'The focused editor is highlighted. Gemini will propose changes limited to this area.' : 'Choose the allowed window. For code, mark the entire editing field before planning an edit.');
       ui.capture.textContent = 'Capture screen again';
+      activityReceipt('completed', 'Primary screen captured with permission. No desktop input ran.');
+      if (!options.autoPlan) activityFinish('awaiting-input');
     } catch (error) {
-      if (token !== generation || error.name === 'AbortError') return;
+      if (token !== generation) return;
+      activityStop(wasCancelled(error) ? 'cancelled' : 'failed', wasCancelled(error) ? 'Screen capture cancelled. No desktop input ran.' : 'Screen capture failed. No desktop input ran.');
+      if (error.name === 'AbortError') return;
       status(error.message || 'The screen could not be captured.', 'error');
     } finally {
       if (token === generation) { controller = null; setBusy(false); }
@@ -325,6 +432,7 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
 
   async function diagnoseBeforeScope() {
     const token = ++generation;
+    activityStep('DESKTOP_DIAGNOSE');
     controller = new AbortController(); setBusy(true);
     let spoken = '';
     try {
@@ -338,7 +446,14 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
       ui.review.hidden = false; ui.summary.textContent = 'Diagnosis'; ui.observation.textContent = spoken;
       status('Mark the editor area on the screenshot, then choose Plan within this scope. No edit is approved yet.', 'notice');
       spoken += ' Please mark the editor area so I can prepare the exact edit for your approval.';
-    } catch (error) { if (token === generation && error.name !== 'AbortError') status(error.message, 'error'); }
+      activityReceipt('completed', 'Read-only diagnosis finished. Waiting for an editor scope; no desktop input ran.');
+      activityFinish('awaiting-input');
+    } catch (error) {
+      if (token === generation) {
+        activityStop(wasCancelled(error) ? 'cancelled' : 'failed', 'Screen diagnosis stopped. No desktop input ran.');
+        if (error.name !== 'AbortError') status(error.message, 'error');
+      }
+    }
     finally { if (token === generation) { controller = null; setBusy(false); if (spoken && typeof speakResponse === 'function') speakResponse(spoken); } }
   }
 
@@ -362,6 +477,7 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
     ui.review.hidden = true;
     ui.run.hidden = true;
     const token = ++generation;
+    activityStep('DESKTOP_PLAN');
     controller = new AbortController();
     const goal = ui.goal.value.trim();
     const capture = captured;
@@ -390,12 +506,16 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
         status('Answer below or speak your reply. The next plan uses a fresh capture and needs your approval.', 'notice');
         questionToSpeak = pendingQuestion;
         if (typeof rememberConversationMessage === 'function') rememberConversationMessage('model', pendingQuestion);
+        activityReceipt('completed', 'Planning needs clarification. Waiting for an answer; no desktop input ran.');
+        activityFinish('awaiting-input');
       } else if (proposed.status === 'done') {
         pendingQuestion = '';
         ui.questionPanel.hidden = true;
         questionToSpeak = `${proposed.observation} ${proposed.summary}`;
         if (typeof rememberConversationMessage === 'function') rememberConversationMessage('model', questionToSpeak);
         status('Screen review suggests the goal is complete. Check the observation below.', 'success');
+        activityReceipt('completed', 'Read-only screen review reports the requested result is already visible. No desktop input ran.');
+        activityFinish('completed');
       } else {
         pendingQuestion = '';
         ui.questionPanel.hidden = true;
@@ -413,10 +533,14 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
         awaitingApproval = true;
         questionToSpeak = `${proposed.observation} ${proposed.summary}. May I make this change within the highlighted scope? Say yes to open the exact-plan review, or no to cancel.`;
         status('Review the diagnosis and proposed edit. Say yes or choose Review & run to open the two native confirmations.');
+        activityReceipt('completed', `${prepared.steps.length} input steps proposed and validated. Waiting for approval; no desktop input ran.`);
+        activityFinish('awaiting-input');
       }
       ui.capture.textContent = 'Capture again & replan';
     } catch (error) {
-      if (token !== generation || error.name === 'AbortError') return;
+      if (token !== generation) return;
+      activityStop(wasCancelled(error) ? 'cancelled' : 'failed', 'Desktop planning stopped. No desktop input ran.');
+      if (error.name === 'AbortError') return;
       prepared = null;
       ui.run.hidden = true;
       status(error.message || 'The desktop task could not be planned. No steps ran.', 'error');
@@ -473,14 +597,19 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
     if (typeof cancelFollowUpWindow === 'function') cancelFollowUpWindow();
     if (typeof isRecording !== 'undefined' && isRecording && typeof cancelRecording === 'function') cancelRecording();
     const token = ++generation;
+    activityStep('DESKTOP_APPROVAL');
     let speech = '';
     controller = new AbortController();
     running = true;
+    showUndo(null);
     setBusy(true);
     status('Waiting for confirmation 1 of 2: review the exact plan.');
     try {
       const result = await window.electronAPI.desktopRun(plan.planId);
       if (token !== generation) return;
+      if (result.ok || result.completedSteps > 0) activityInputStarted();
+      if (activity) activity.completedSteps = Math.max(activity.completedSteps, Number.isInteger(result.completedSteps) ? result.completedSteps : 0);
+      showUndo(result.undo || { available: false, message: 'Undo is unavailable for this edit.' });
       previous.push({ goal: ui.goal.value.trim(), summary: proposed.summary, steps: plan.steps, completedSteps: result.completedSteps, ok: result.ok, cancelled: result.cancelled });
       prepared = null;
       captured = null;
@@ -488,20 +617,31 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
       ui.run.hidden = true;
       let verification = { status: 'uncertain', observation: result.error || 'The result has not been verified.', remaining: 'Inspect the screen before continuing.' };
       if (result.ok && !result.cancelled) {
+        activityReceipt('completed', `${result.completedSteps || 0} of ${result.totalSteps || plan.steps.length} input steps delivered. The requested result still needs verification.`);
+        activityStep('DESKTOP_VERIFY');
         status('Gemini is checking the post-edit screen against your request…');
         try { verification = await verifyResult(ui.goal.value.trim(), proposed, result, controller.signal); }
         catch (error) { verification = { status: 'uncertain', observation: 'The edit was sent, but verification failed.', remaining: error.message }; }
         assertCurrent(token);
+        activityReceipt(verification.status === 'verified' ? 'completed' : 'unverified', `${verification.status === 'verified' ? 'Post-edit screen verified' : verification.status === 'incomplete' ? 'More work is needed' : 'Result not fully verified'}: ${verification.observation}${verification.remaining ? ' ' + verification.remaining : ''}`);
+        activityFinish(verification.status === 'verified' ? 'completed' : 'unverified');
         status(`${verification.status === 'verified' ? 'Verified' : verification.status === 'incomplete' ? 'More work is needed' : 'Not fully verified'}: ${verification.observation}${verification.remaining ? ' ' + verification.remaining : ''}`, verification.status === 'verified' ? 'success' : 'notice');
         if (result.verificationCapture) { ui.image.src = result.verificationCapture.imageDataUrl; ui.image.alt = 'Post-edit screen used for result verification'; ui.evidence.hidden = false; ui.screenInfo.textContent = 'Post-edit verification'; ui.regionSelection.hidden = true; }
       }
-      else if (result.cancelled) status(`Cancelled after ${result.completedSteps || 0} steps. Any changes already made remain in the app.`, 'notice');
-      else status(`Stopped after ${result.completedSteps || 0} steps: ${result.error || 'The screen changed or the action could not be completed.'}`, 'error');
+      else if (result.cancelled) {
+        activityStop('cancelled', `Cancelled after ${result.completedSteps || 0} reported input steps. Any changes already made remain in the app.`);
+        status(`Cancelled after ${result.completedSteps || 0} steps. Any changes already made remain in the app.`, 'notice');
+      } else {
+        activityStop('failed', `Stopped after ${result.completedSteps || 0} reported input steps. ${result.error || 'The screen changed or the action could not be completed.'}`);
+        status(`Stopped after ${result.completedSteps || 0} steps: ${result.error || 'The screen changed or the action could not be completed.'}`, 'error');
+      }
       ui.capture.textContent = 'Observe result & continue';
       // A separate response agent turns the execution evidence into speech. It
       // receives no callable tools, and its output never enters command routing.
       try {
-        const { verificationCapture, ...receipt } = result;
+        // The full original text and editor checkpoint are local-only. Never
+        // include them in provider requests, conversation history, or telemetry.
+        const { verificationCapture, undo, ...receipt } = result;
         const spoken = await composeSpecialistResponse(ui.goal.value.trim(), { result: receipt, expectedOutcome: proposed.expectedOutcome, verification, verified: verification.status === 'verified' }, controller.signal);
         assertCurrent(token);
         if (spoken) {
@@ -519,6 +659,7 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
       }
     } catch (error) {
       if (token !== generation) return;
+      activityStop(wasCancelled(error) ? 'cancelled' : 'failed', `Desktop execution stopped after ${activity?.completedSteps || 0} reported input steps. The result was not verified; inspect the app.`);
       prepared = null;
       ui.run.hidden = true;
       status(`${error.message || 'Desktop execution stopped.'} Inspect the screen before retrying.`, 'error');
@@ -613,10 +754,19 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
     const stop = element('button', 'desktop-task-secondary', 'Cancel task'); stop.type = 'button'; stop.disabled = true;
     buttons.append(capture, plan, runButton, stop);
     const spokenResult = element('p', 'desktop-task-outcome'); spokenResult.hidden = true;
-    const footer = element('p', 'desktop-task-footer', 'Emergency stop: Escape while a desktop task runs. Changes already made are not automatically undone. A new window or editing field requires another scoped plan and confirmation.');
-    dialog.append(label, goal, examples, privacy, taskStatus, questionPanel, scope, evidence, review, spokenResult, buttons, footer);
+    const undoPanel = element('section', 'desktop-task-undo'); undoPanel.hidden = true; undoPanel.setAttribute('aria-label', 'Local text change and undo');
+    const undoMessage = element('p', 'desktop-task-outcome');
+    const undoDiff = element('div', 'desktop-task-diff'); undoDiff.hidden = true;
+    const beforeColumn = element('div'), afterColumn = element('div');
+    const undoBefore = element('pre'), undoAfter = element('pre');
+    beforeColumn.append(element('h3', '', 'Before'), undoBefore); afterColumn.append(element('h3', '', 'After'), undoAfter);
+    undoDiff.append(beforeColumn, afterColumn);
+    const undoButton = element('button', 'desktop-task-secondary', 'Undo text edit'); undoButton.type = 'button'; undoButton.hidden = true;
+    undoPanel.append(undoMessage, undoDiff, undoButton);
+    const footer = element('p', 'desktop-task-footer', 'Emergency stop: Escape while a desktop task runs. Supported full-field text edits offer Undo for five minutes. Undo refuses changed text or a changed editor. Other changes need manual recovery.');
+    dialog.append(label, goal, examples, privacy, taskStatus, questionPanel, scope, evidence, review, spokenResult, undoPanel, buttons, footer);
     document.body.append(dialog);
-    ui = { dialog, launch, close, goal, capture, plan, scope, scopeWindow, scopeMode, regionControls, regionInputs, regionSelection, run: runButton, stop, status: taskStatus, review, summary, observation, steps, outcome, evidence, image: img, screenInfo, spokenResult, questionPanel, question, answer, submitAnswer };
+    ui = { dialog, launch, close, goal, capture, plan, scope, scopeWindow, scopeMode, regionControls, regionInputs, regionSelection, run: runButton, stop, status: taskStatus, review, summary, observation, steps, outcome, evidence, image: img, screenInfo, spokenResult, questionPanel, question, answer, submitAnswer, undoPanel, undoMessage, undoDiff, undoBefore, undoAfter, undoButton };
     status('Describe the result you want, then let Olanga inspect your primary screen.');
     launch.addEventListener('click', () => open());
     capture.addEventListener('click', captureAndPlan);
@@ -626,10 +776,11 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
       answerQuestion(answer.value);
     });
     runButton.addEventListener('click', run);
+    undoButton.addEventListener('click', undoEdit);
     stop.addEventListener('click', cancel);
     close.addEventListener('click', () => { cancel(); clearPlan(); dialog.close(); launch.focus(); });
     dialog.addEventListener('cancel', event => { event.preventDefault(); cancel(); });
-    goal.addEventListener('input', () => { if (prepared) cancel(); previous = []; clarifications = []; pendingQuestion = ''; questionPanel.hidden = true; clearPlan(); ui.capture.textContent = 'Capture screen & plan'; });
+    goal.addEventListener('input', () => { if (prepared || captured || pendingQuestion) cancel(); previous = []; clarifications = []; pendingQuestion = ''; questionPanel.hidden = true; clearPlan(); ui.capture.textContent = 'Capture screen & plan'; });
     scopeMode.addEventListener('change', () => { regionControls.hidden = scopeMode.value !== 'region'; updateRegion(null); });
     scopeWindow.addEventListener('change', () => updateRegion(null));
     regionInputs.forEach(input => input.addEventListener('input', () => {
@@ -656,10 +807,12 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
     imageFrame.addEventListener('pointercancel', endSelection);
     window.electronAPI?.onDesktopProgress?.(event => {
       if (!running || !prepared || event.planId !== prepared.planId) return;
+      if (['running', 'verifying', 'completed'].includes(event.status)) activityInputStarted();
+      if (activity && Number.isInteger(event.completedSteps)) activity.completedSteps = Math.max(activity.completedSteps, event.completedSteps);
       status(event.message || `${event.completedSteps} of ${event.totalSteps} steps sent.`);
       Array.from(ui.steps.children).forEach((li, index) => li.classList.toggle('completed', index < event.completedSteps));
     });
   }
 
-  return { init, open, start, cancel, answerQuestion, hasPendingQuestion: () => !!pendingQuestion || awaitingApproval, isBusy: () => busy || !!prepared || !!captured, parsePlan, requestPlan, parseVerification, inferEditorRegion, verifyResult, describeStep, makePlanningInstruction, PLAN_SCHEMA };
+  return { init, open, start, cancel, answerQuestion, hasPendingQuestion: () => !!pendingQuestion || awaitingApproval, isBusy: () => busy || !!prepared || !!captured, parsePlan, requestPlan, parseVerification, inferEditorRegion, verifyResult, describeStep, makePlanningInstruction, textDiff, PLAN_SCHEMA };
 });

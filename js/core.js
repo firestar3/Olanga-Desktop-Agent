@@ -23,7 +23,7 @@ const defaultNvidiaVoiceName = OlangaPrefs.DEFAULT_NVIDIA_VOICE;
 // Boot values come from the shared schema, which also runs any one-time
 // migrations before the rest of the app reads these globals.
 const bootPrefs = OlangaPrefs.load(localStorage);
-OlangaPrefs.writeToStorage(localStorage, bootPrefs, ['statusLightSize']);
+try { OlangaPrefs.writeToStorage(localStorage, bootPrefs, ['statusLightSize']); } catch (_) {}
 
 let nvidiaVoiceName = bootPrefs.nvidiaVoice;
 let ttsRate = bootPrefs.ttsRate;
@@ -73,6 +73,12 @@ const SILENCE_THRESHOLD = 4;     // RMS below this = silence
 const SILENCE_DURATION = 1500;   // ms of silence to finalize recording
 const MIN_SPEECH_DURATION = 500; // minimum ms of speech to bother processing
 const FOLLOW_UP_WINDOW = 4000;   // ms to wait for follow-up after speaking
+// Settings can shorten the end-of-speech pause and allow the wake word to
+// interrupt a reply; both start from the saved preference.
+let endOfSpeechMs = OlangaPrefs.END_OF_SPEECH_MS[bootPrefs.endOfSpeech] || SILENCE_DURATION;
+let bargeInEnabled = bootPrefs.bargeIn;
+// Streamed replies start speaking before the full answer is ready.
+let streamRepliesEnabled = bootPrefs.streamReplies;
 
 const PRESET_WAKE_WORDS = Object.freeze([
   'hey',
@@ -183,10 +189,10 @@ function addCustomWakeWordGroup(phrases, labelOverride) {
 }
 
 function removeCustomWakeWordGroup(groupId) {
-  const before = customWakeWordGroups.length;
+  const before = customWakeWordGroups;
   customWakeWordGroups = customWakeWordGroups.filter((group) => group.id !== groupId);
-  if (customWakeWordGroups.length !== before) {
-    persistCustomWakeWordGroups();
+  if (customWakeWordGroups.length !== before.length) {
+    try { persistCustomWakeWordGroups(); } catch (error) { customWakeWordGroups = before; throw error; }
     return true;
   }
   return false;
@@ -255,9 +261,10 @@ function setState(newState, preserveHistory = false) {
       lastIdleTime = Date.now();
       // Idle is a microphone/UI state, not the end of a conversation. TTS,
       // silence and desktop review return here before the user's reply.
-      hint.textContent = 'Listening for "Hey Olanga"...';
       hint.classList.remove('hidden');
-      hint.innerHTML = 'Say <strong>"Hey Olanga"</strong> (or your custom wake word) to start';
+      if (isMicMuted) hint.textContent = 'Microphone muted. Type a command or unmute to use your voice.';
+      else if (!micStream || micStream.active === false) hint.textContent = 'Type a local command, or choose on-device speech in Settings.';
+      else hint.innerHTML = 'Say <strong>"Hey Olanga"</strong> (or your custom wake word) to start';
       // Reset Vosk recognizer to clear old state
       if (voskRecognizer && !isWakeWordCapturing) {
           try {
@@ -279,7 +286,7 @@ function setState(newState, preserveHistory = false) {
   } catch (_) {}
 }
 
-async function showMainScreen() {
+async function showMainScreen(options = {}) {
   setupScreen.classList.add('hidden');
   mainScreen.classList.remove('hidden');
   // Show floating icons after setup is complete
@@ -287,6 +294,7 @@ async function showMainScreen() {
   if (floatingIconsWrapper) {
     floatingIconsWrapper.classList.add('visible');
   }
+  if (options.voice === false) { hint.textContent = 'Type a local command, or choose on-device speech in Settings.'; return; }
   hint.textContent = "Loading offline wake word model...";
   try {
     await initVosk();
@@ -400,11 +408,11 @@ function escapeHTML(str) {
 // ============================================
 
 window.addEventListener('beforeunload', () => {
-  if (micStream) micStream.getTracks().forEach(t => t.stop());
-  if (audioContext) audioContext.close();
-  synthesis.cancel();
-  if (animationFrameId) cancelAnimationFrame(animationFrameId);
-  if (voskModel) voskModel.terminate();
+  try { if (micStream) micStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} }); } catch (_) {}
+  try { audioContext?.close()?.catch(() => {}); } catch (_) {}
+  try { synthesis.cancel(); } catch (_) {}
+  try { if (animationFrameId) cancelAnimationFrame(animationFrameId); } catch (_) {}
+  try { voskModel?.terminate(); } catch (_) {}
 });
 
 // Ensure voices are loaded

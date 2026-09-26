@@ -27,6 +27,235 @@ function harness() {
   return { context, calls };
 }
 
+function loadLocalActions(context) {
+  const storage = new Map();
+  context.activeTimers = [];
+  context.alarmIntervalId = null;
+  context.timersContainer = null;
+  context.document = { getElementById() { return null; } };
+  context.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
+  context.setInterval = () => 1;
+  context.clearInterval = () => {};
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/timers-tasks.js'), 'utf8'), context);
+  return storage;
+}
+
+test('late provider key rotation cannot overwrite a changed key list or user selection', async () => {
+  for (const change of ['select', 'remove', 'none']) {
+    const { context } = harness(); let finish;
+    Object.assign(context, { apiKeys: ['one', 'two', 'three'], apiKey: 'one', currentKeyIndex: 0 });
+    context.window.electronAPI.providerGenerate = () => new Promise(resolve => { finish = resolve; });
+    const pending = context.callGeminiGenerate('gemini-3.5-flash', {});
+    if (change === 'select') { context.apiKey = 'three'; context.currentKeyIndex = 2; }
+    if (change === 'remove') { context.apiKeys = ['one', 'three']; }
+    finish({ ok: true, text: 'answer', keyIndex: 1 });
+    assert.equal(await pending, 'answer');
+    assert.equal(context.currentKeyIndex, change === 'select' ? 2 : change === 'remove' ? 0 : 1);
+    assert.equal(context.apiKey, change === 'select' ? 'three' : change === 'remove' ? 'one' : 'two');
+  }
+});
+
+test('close failures retain native details and cannot become verified success', async () => {
+  const { context } = harness();
+  context.window.electronAPI.closeApp = async () => ({ ok: false, verified: false, pending: true, dispatched: true, message: 'Close timed out. Check the app before retrying.' });
+  const result = await context.applyAssistantCommands('[CLOSE_APP: Notepad]');
+  assert.equal(result.results[0].ok, false); assert.equal(result.results[0].dispatched, true);
+  assert.match(result.results[0].message, /timed out/);
+});
+
+function loadWorkspace(context) {
+  const storage = new Map();
+  const store = require('../../shared/productivity').createStore({ getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) });
+  context.window.OlangaWorkspace = context.window.OlangaActivity = store;
+  context.OlangaIntents = require('../../shared/fast-intents');
+  return store;
+}
+
+test('on-device transcription waits for review and executes only the approved text without a provider', async () => {
+  const { context, calls } = harness();
+  const store = loadWorkspace(context); store.preference('speechInput', 'offline');
+  context.apiKey = '';
+  context.window.OlangaOfflineSpeech = { transcribe: async (_blob, options) => { assert.equal(options.mode, 'commands'); return 'open calculator'; } };
+  context.blobToBase64 = context.sendTextToGemini = () => { throw new Error('Provider path must not run'); };
+  let approve;
+  context.window.reviewOfflineTranscript = () => new Promise(resolve => { approve = resolve; });
+  context.window.electronAPI.openApp = async name => { calls.opened.push(name); return { ok: true, verified: true, message: 'Notepad is open.' }; };
+  const pending = context.processAudioBlobWithGemini({});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.opened, []);
+  approve('open notepad'); await pending;
+  assert.deepEqual(calls.opened, ['notepad']);
+  assert.equal(store.snapshot().activity.at(-1).state, 'completed');
+});
+
+test('cancelling a local transcript dispatches nothing and records cancellation', async () => {
+  const { context, calls } = harness();
+  const store = loadWorkspace(context); store.preference('speechInput', 'offline-general');
+  context.window.OlangaOfflineSpeech = { transcribe: async (_blob, options) => { assert.equal(options.mode, 'general'); return 'open notepad'; } };
+  context.window.reviewOfflineTranscript = async () => null;
+  await context.processAudioBlobWithGemini({});
+  assert.deepEqual(calls.opened, []);
+  assert.equal(store.snapshot().activity.at(-1).state, 'cancelled');
+  assert.deepEqual(calls.spoken, ['Transcript cancelled. No commands ran.']);
+});
+
+test('superseding a transcript review prevents delayed approval from dispatching', async () => {
+  const { context, calls } = harness();
+  const store = loadWorkspace(context); store.preference('speechInput', 'offline');
+  context.window.OlangaOfflineSpeech = { transcribe: async () => 'open notepad' };
+  let approve;
+  context.window.reviewOfflineTranscript = () => new Promise(resolve => { approve = resolve; });
+  const pending = context.processAudioBlobWithGemini({});
+  await new Promise(resolve => setImmediate(resolve)); context.cancelAssistantRequest();
+  approve('open notepad'); await pending;
+  assert.deepEqual(calls.opened, []); assert.deepEqual(calls.spoken, []);
+  assert.equal(store.snapshot().activity.at(-1).state, 'cancelled');
+});
+
+test('local status commands, mixed duration and checklist follow-up work without a key', async () => {
+  const { context, calls } = harness();
+  loadLocalActions(context); loadWorkspace(context); context.apiKey = '';
+  context.sendTextToGemini = context.callGeminiSpecialist = () => { throw new Error('No model needed'); };
+  await context.processTextCommandWithGemini('set a timer for one minute and thirty seconds called Tea');
+  await context.processTextCommandWithGemini('list timers');
+  assert.ok(Math.abs(context.activeTimers[0].endTime - Date.now() - 90000) < 1000);
+  assert.match(calls.spoken.at(-1), /Tea:.*remaining/);
+  context.addTask('Annual report'); context.addTask('Monthly report');
+  await context.processTextCommandWithGemini('complete task report');
+  assert.match(calls.spoken.at(-1), /More than one task/);
+  await context.processTextCommandWithGemini('Annual report');
+  assert.equal(context.activeTasks[0].completed, true); assert.equal(context.activeTasks[1].completed, false);
+  assert.deepEqual(calls.errors, []);
+});
+
+test('a failed compound action leaves a failed receipt and skips the remaining planned work', async () => {
+  const { context, calls } = harness(); const store = loadWorkspace(context);
+  context.window.electronAPI.openApp = async () => ({ ok: false, message: 'Spotify is not installed.' });
+  await context.processTextCommandWithGemini('Open Spotify and set volume to 75%');
+  const entry = store.snapshot().activity.at(-1);
+  assert.equal(entry.state, 'failed');
+  assert.deepEqual(entry.steps.map(step => step.state), ['failed', 'skipped']);
+  assert.deepEqual(calls.media, []);
+});
+
+test('an unverified native launch cannot appear completed in Activity', async () => {
+  const { context } = harness(); const store = loadWorkspace(context);
+  context.window.electronAPI.openApp = async () => ({ ok: true, verified: false, message: 'Windows Search received the request; opening could not be verified.' });
+  await context.processTextCommandWithGemini('open notepad');
+  assert.equal(store.snapshot().activity.at(-1).state, 'unverified');
+});
+
+test('missing native receipts stay unverified and desktop handoffs await user input', async () => {
+  const { context } = harness(); const store = loadWorkspace(context);
+  context.window.electronAPI.mediaControl = async () => undefined;
+  await context.processTextCommandWithGemini('pause music');
+  assert.equal(store.snapshot().activity.at(-1).state, 'unverified');
+  await context.processTextCommandWithGemini('desktop: rewrite selected text');
+  assert.equal(store.snapshot().activity.at(-1).state, 'awaiting-input');
+});
+
+test('a provider outage explains local availability and does not disable the next local command', async () => {
+  const { context, calls } = harness(); const store = loadWorkspace(context);
+  context.sendTextToGemini = async () => { throw Object.assign(new Error('Gemini could not connect.'), { code: 'network' }); };
+  await context.processTextCommandWithGemini('Explain gravity');
+  assert.match(calls.spoken.at(-1), /still type local app, music, volume, timer, and checklist commands/);
+  assert.equal(store.snapshot().activity.at(-1).state, 'failed');
+  context.window.electronAPI.openApp = async () => ({ ok: true, verified: true, message: 'Notepad is open.' });
+  await context.processTextCommandWithGemini('open notepad');
+  assert.equal(calls.spoken.at(-1), 'Notepad is open.');
+  assert.equal(store.snapshot().activity.at(-1).state, 'completed');
+});
+
+test('local timers return persisted results without a model call, including missing cancellations', async () => {
+  const { context, calls } = harness();
+  const storage = loadLocalActions(context);
+  context.OlangaIntents = require('../../shared/fast-intents');
+  context.apiKey = '';
+  context.sendTextToGemini = context.callGeminiSpecialist = () => { throw new Error('No model needed'); };
+  await context.processTextCommandWithGemini('set a timer for five minutes called Tea');
+  assert.deepEqual(calls.spoken, ['Tea set for 5 minutes.']);
+  assert.equal(JSON.parse(storage.get('olanga_timers'))[0].label, 'Tea');
+  const missing = await context.applyAssistantCommands('[CANCEL_TIMER: Laundry]');
+  assert.equal(missing.results[0].ok, false);
+  assert.match(missing.spokenResponse, /No active timer/);
+});
+
+test('repeated explicit mute and unmute requests dispatch desired states without model calls', async () => {
+  const { context, calls } = harness();
+  context.OlangaIntents = require('../../shared/fast-intents');
+  context.apiKey = '';
+  context.sendTextToGemini = context.callGeminiSpecialist = () => { throw new Error('No model needed'); };
+  context.window.electronAPI.mediaControl = async command => {
+    calls.media.push(command);
+    return { ok: true, verified: true, message: command === 'VOLUME_MUTE_ON' ? 'System audio is muted.' : 'System audio is unmuted.' };
+  };
+  for (const phrase of ['mute the volume', 'mute the volume', 'unmute the volume', 'unmute the volume']) await context.processTextCommandWithGemini(phrase);
+  assert.deepEqual(calls.media, ['VOLUME_MUTE_ON', 'VOLUME_MUTE_ON', 'VOLUME_MUTE_OFF', 'VOLUME_MUTE_OFF']);
+  assert.equal(calls.spoken.length, 4);
+  assert.deepEqual(calls.errors, []);
+  assert.throws(() => context.parseSimpleActionProposal('{"kind":"commands","commands":["[VOLUME_MUTE_ON: 1]"]}', ['VOLUME_MUTE_ON']), /unexpected arguments/);
+});
+
+test('checklist operations speak actual saved results without a response writer', async () => {
+  const { context, calls } = harness();
+  const storage = loadLocalActions(context);
+  context.sendTextToGemini = async () => 'RESPONSE: [ADD_TASK: Read] [COMPLETE_TASK: Read]';
+  let plans = 0;
+  context.callGeminiSpecialist = async purpose => {
+    assert.equal(purpose, 'reasoning', 'Successful local operations need no extra response model');
+    plans++;
+    return JSON.stringify({ kind: 'commands', commands: ['[ADD_TASK: Read]', '[COMPLETE_TASK: Read]'] });
+  };
+  await context.processTextCommandWithGemini('Add Read to my checklist and mark it complete');
+  assert.equal(plans, 1);
+  assert.equal(JSON.parse(storage.get('olanga_tasks'))[0].completed, true);
+  assert.deepEqual(calls.spoken, ['Added "Read" to your checklist. Marked "Read" complete.']);
+});
+
+test('ambiguous checklist target asks a follow-up and resumes only that step without replaying a compound request', async () => {
+  const { context, calls } = harness();
+  loadLocalActions(context);
+  context.addTask('Annual report');
+  context.addTask('Monthly report');
+  let turn = 0, plans = 0;
+  context.sendTextToGemini = async () => ++turn === 1 ? 'RESPONSE: [ADD_TASK: Read] [COMPLETE_TASK: report] [SET_TIMER: 60, Tea]' : turn === 2 ? 'RESPONSE: [CONTINUE_ACTION]' : 'RESPONSE: You are welcome.';
+  context.callGeminiSpecialist = async (purpose, messages) => {
+    assert.equal(purpose, 'reasoning');
+    if (++plans === 1) return JSON.stringify({ kind: 'commands', commands: ['[ADD_TASK: Read]', '[COMPLETE_TASK: report]', '[SET_TIMER: 60, Tea]'] });
+    const input = JSON.parse(messages[1].content);
+    assert.deepEqual(input.allowedNames, ['COMPLETE_TASK']);
+    assert.match(input.pendingClarification.goal, /COMPLETE_TASK: report/);
+    assert.doesNotMatch(input.pendingClarification.goal, /ADD_TASK|SET_TIMER/);
+    return JSON.stringify({ kind: 'commands', commands: ['[COMPLETE_TASK: Annual report]'] });
+  };
+  await context.processTextCommandWithGemini('Add Read, complete report, and set a one minute Tea timer');
+  assert.match(calls.spoken[0], /More than one task.*remaining steps did not run/);
+  assert.equal(context.activeTasks.filter(task => task.completed).length, 0);
+  assert.match(context.buildHistoryContext(), /Action awaiting clarification/);
+  await context.processTextCommandWithGemini('Annual report');
+  await context.processTextCommandWithGemini('Thanks');
+  assert.equal(context.activeTasks.length, 3);
+  assert.equal(context.activeTasks[0].completed, true);
+  assert.equal(context.activeTasks[1].completed, false);
+  assert.equal(context.activeTimers.length, 0);
+  assert.equal(plans, 2);
+  assert.equal(calls.spoken[1], 'Marked "Annual report" complete.');
+  assert.doesNotMatch(context.buildHistoryContext(), /Action awaiting clarification/);
+});
+
+test('missing checklist targets stop later actions and report the failed result', async () => {
+  const { context, calls } = harness();
+  loadLocalActions(context);
+  context.sendTextToGemini = async () => 'RESPONSE: [REMOVE_TASK: Missing] [VOLUME_SET: 75]';
+  context.callGeminiSpecialist = async purpose => {
+    assert.equal(purpose, 'reasoning');
+    return JSON.stringify({ kind: 'commands', commands: ['[REMOVE_TASK: Missing]', '[VOLUME_SET: 75]'] });
+  };
+  await context.processTextCommandWithGemini('Remove Missing then set the volume to 75 percent');
+  assert.deepEqual(calls.media, []);
+  assert.deepEqual(calls.spoken, ['No task matching "Missing" was found. The remaining steps did not run.']);
+});
+
 test('Spotify and exact volume run in order without a model and finish after acknowledgment', async () => {
   const { context, calls } = harness();
   context.OlangaIntents = require('../../shared/fast-intents');
@@ -327,18 +556,26 @@ test('specialists use Gemini without any NVIDIA credential or IPC', async () => 
 
 test('Gemini fetch omits credentials from URL and combines final text parts only', async () => {
   const { context } = harness();
-  context.fetch = async (url, options) => {
+  const { createProviderService } = require('../../desktop/provider-service');
+  const service = createProviderService({ getCredentials: async () => ({ keys: ['test-key'] }), fetchImpl: async (url, options) => {
     assert.equal(url.includes('test-key'), false);
     assert.equal(options.headers['x-goog-api-key'], 'test-key');
-    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: 'private reasoning', thought: true }, { text: 'Hello ' }, { text: 'world' }] } }] }) };
-  };
-  assert.equal(await context.callGeminiGenerate('gemini-3.5-flash', {}), 'Hello world');
+    return { ok: true, status: 200, text: async () => JSON.stringify({ candidates: [{ content: { parts: [{ text: 'private reasoning', thought: true }, { text: 'Hello ' }, { text: 'world' }] } }] }) };
+  } });
+  context.window.electronAPI.providerGenerate = payload => { assert.equal(JSON.stringify(payload).includes('test-key'), false); return service.generate(JSON.parse(JSON.stringify(payload))); };
+  context.window.electronAPI.providerCancel = id => service.cancel(id);
+  assert.equal(await context.callGeminiGenerate('gemini-3.5-flash', { contents: [{ parts: [{ text: 'Hello' }] }] }), 'Hello world');
+  service.dispose();
 });
 
 test('Gemini times out and aborts stalled fetches', async () => {
   const { context } = harness();
-  context.fetch = (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
-  await assert.rejects(context.callGeminiGenerate('gemini-3.5-flash', {}, { timeoutMs: 5 }), /took too long/);
+  const { createProviderService } = require('../../desktop/provider-service');
+  const service = createProviderService({ getCredentials: async () => ({ keys: ['test-key'] }), fetchImpl: (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })) });
+  context.window.electronAPI.providerGenerate = payload => service.generate(JSON.parse(JSON.stringify(payload)));
+  context.window.electronAPI.providerCancel = id => service.cancel(id);
+  await assert.rejects(context.callGeminiGenerate('gemini-3.5-flash', { contents: [{ parts: [{ text: 'Hello' }] }] }, { timeoutMs: 5 }), /took too long/);
+  service.dispose();
 });
 
 test('spoken follow-up starts a real recording and sends the answer with the question as context', async () => {
@@ -597,6 +834,144 @@ test('reasoning availability fallback stays in Gemini and preserves the bounded 
   assert.equal(await context.callGeminiSpecialist('reasoning', [{ role: 'user', content: 'Plan' }]), 'Ready');
   assert.deepEqual(models, ['gemini-3.5-flash', 'gemini-3.5-flash-lite']);
   assert.equal(bodies[0], bodies[1]);
+});
+
+// Script-level let/const bindings are not properties of the vm context object.
+const binding = (context, name) => vm.runInContext(name, context);
+
+function keylessLocal() {
+  const fixture = harness();
+  loadLocalActions(fixture.context);
+  const store = loadWorkspace(fixture.context);
+  fixture.context.apiKey = '';
+  fixture.context.OlangaBriefing = require('../../shared/briefing');
+  fixture.context.sendTextToGemini = fixture.context.callGeminiSpecialist = fixture.context.callGeminiGenerate = () => { throw new Error('No model needed'); };
+  return { ...fixture, store };
+}
+
+test('time, date, help and dismissal answer locally without a key or model call', async () => {
+  const { context, calls } = keylessLocal();
+  for (const phrase of ['What time is it?', "What's today's date?", 'What can you do?', 'Never mind']) await context.processTextCommandWithGemini(phrase);
+  assert.match(calls.spoken[0], /^It's \d{1,2}:\d{2} [AP]M\.$/);
+  assert.match(calls.spoken[1], /^Today is \w+day, \w+ \d{1,2}, \d{4}\.$/);
+  assert.match(calls.spoken[2], /reminders and alarms.*Add a Gemini key/);
+  assert.equal(calls.spoken[3], 'Okay.');
+  assert.deepEqual(calls.errors, []);
+});
+
+test('reminders and alarms are set locally and a bare stop dismisses only a ringing alarm', async () => {
+  const { context, calls, store } = keylessLocal();
+  context.window.electronAPI.mediaControl = async command => { calls.media.push(command); return { ok: true, verified: true, message: 'Playback paused.' }; };
+  await context.processTextCommandWithGemini('remind me to stretch in 20 minutes');
+  await context.processTextCommandWithGemini('set an alarm for 7 am tomorrow');
+  assert.match(calls.spoken[0], /remind you in 20 minutes: stretch/);
+  assert.match(calls.spoken[1], /Alarm set for 7:00 AM tomorrow/);
+  assert.deepEqual(context.activeTimers.map(timer => timer.kind).join(), 'reminder,alarm');
+  await context.processTextCommandWithGemini('stop');
+  assert.deepEqual(calls.media, ['MEDIA_PAUSE'], 'Nothing is ringing, so stop still pauses playback');
+  context.activeTimers[0].ringing = true;
+  await context.processTextCommandWithGemini('stop');
+  assert.deepEqual(calls.media, ['MEDIA_PAUSE']);
+  assert.equal(calls.spoken.at(-1), 'Reminder dismissed.');
+  assert.deepEqual(context.activeTimers.map(timer => timer.kind).join(), 'alarm');
+  assert.equal(store.snapshot().activity.at(-1).steps[0].operation, 'STOP_TIMER');
+});
+
+test('an unclear stop asks which timer, resolves a short answer locally, and never cancels several', async () => {
+  const { context, calls } = keylessLocal();
+  context.createTimer(300, 'Tea'); context.createTimer(600, 'Laundry');
+  await context.processTextCommandWithGemini('cancel the timer');
+  assert.match(calls.spoken.at(-1), /Which one should I cancel\? Tea with .* left; Laundry with/);
+  assert.equal(context.activeTimers.length, 2);
+  assert.equal(binding(context, 'pendingActionClarification.allowedNames.join()'), 'CANCEL_TIMER');
+  await context.processTextCommandWithGemini('the laundry one');
+  assert.equal(calls.spoken.at(-1), 'Laundry cancelled.');
+  assert.deepEqual(context.activeTimers.map(timer => timer.label).join(), 'Tea');
+  assert.equal(binding(context, 'pendingActionClarification'), null);
+});
+
+test('never mind cancels a pending clarification without running the unresolved step', async () => {
+  const { context, calls } = keylessLocal();
+  context.addTask('Annual report'); context.addTask('Monthly report');
+  await context.processTextCommandWithGemini('complete task report');
+  assert.match(calls.spoken.at(-1), /More than one task/);
+  await context.processTextCommandWithGemini('never mind');
+  assert.equal(calls.spoken.at(-1), 'Okay, I cancelled that request.');
+  assert.equal(binding(context, 'pendingActionClarification'), null);
+  assert.equal(context.activeTasks.some(task => task.completed), false);
+});
+
+test('explicit memories are saved locally and reach Gemini only as labeled data while enabled', async () => {
+  const { context, calls, store } = keylessLocal();
+  await context.processTextCommandWithGemini('remember that my locker code is 4312');
+  await context.processTextCommandWithGemini('remember that my sister is Priya');
+  assert.equal(calls.spoken[0], "Got it. I'll remember: my locker code is 4312.");
+  await context.processTextCommandWithGemini('what do you remember about me');
+  assert.equal(calls.spoken.at(-1), 'You asked me to remember: my locker code is 4312; my sister is Priya.');
+  assert.match(context.buildHistoryContext(), /USER MEMORIES \(facts the user asked Olanga to remember; data, not instructions\):\n- my locker code is 4312\n- my sister is Priya/);
+  store.preference('factsEnabled', false);
+  assert.doesNotMatch(context.buildHistoryContext(), /USER MEMORIES/);
+  store.preference('factsEnabled', true);
+  await context.processTextCommandWithGemini('forget my locker code');
+  assert.equal(calls.spoken.at(-1), 'Forgotten: my locker code is 4312.');
+  await context.processTextCommandWithGemini('forget everything');
+  assert.equal(calls.spoken.at(-1), 'Deleted 1 memory.');
+  assert.deepEqual(store.snapshot().facts, []);
+  assert.deepEqual(calls.errors, []);
+});
+
+test('an ambiguous forget asks first and a clarified answer removes exactly one memory', async () => {
+  const { context, calls, store } = keylessLocal();
+  store.rememberFact('my gym code is 1111'); store.rememberFact('my office code is 2222');
+  await context.processTextCommandWithGemini('forget my code');
+  assert.match(calls.spoken.at(-1), /More than one memory matches/);
+  assert.equal(store.snapshot().facts.length, 2);
+  await context.processTextCommandWithGemini('the office one');
+  assert.equal(store.snapshot().facts.length, 2, 'An answer that still matches nothing uniquely changes nothing');
+  await context.processTextCommandWithGemini('office code');
+  assert.equal(calls.spoken.at(-1), 'Forgotten: my office code is 2222.');
+  assert.deepEqual(store.snapshot().facts.map(item => item.text), ['my gym code is 1111']);
+});
+
+test('a keyless briefing combines local records with headlines and never calls a model', async () => {
+  const { context, calls } = keylessLocal();
+  context.addTask('Buy milk');
+  context.createTimer(240, 'Tea');
+  const requested = [];
+  context.window.electronAPI.fetchNewsBundle = async payload => { requested.push(payload.topics.length); return { articles: [{ title: 'Rates hold steady - Reuters' }, { title: 'Storm heads north' }] }; };
+  await context.processTextCommandWithGemini('brief me');
+  assert.match(calls.spoken[0], /^Good (morning|afternoon|evening), Boss\.|^Hello, Boss\./);
+  assert.match(calls.spoken[0], /You have 1 open task: Buy milk\. Coming up: the Tea timer with 4 minutes left\. In the news: Rates hold steady\. Storm heads north\.$/);
+  assert.deepEqual(requested, [0]);
+  context.window.electronAPI.fetchNewsBundle = async () => { throw new Error('Offline'); };
+  await context.processTextCommandWithGemini('daily briefing');
+  assert.doesNotMatch(calls.spoken[1], /In the news/);
+  assert.deepEqual(calls.errors, []);
+});
+
+test('model-proposed reminders, alarms and memories are validated before dispatch', () => {
+  const { context } = harness();
+  const all = binding(context, '[...SIMPLE_ACTION_NAMES]');
+  const propose = command => context.parseSimpleActionProposal(JSON.stringify({ kind: 'commands', commands: [command] }), all);
+  assert.equal(propose('[SET_ALARM: 7:30 am tomorrow, Alarm]').commands.join(), '[SET_ALARM: 7:30 am tomorrow, Alarm]');
+  assert.equal(propose('[SET_REMINDER: 600, call mom]').commands.join(), '[SET_REMINDER: 600, call mom]');
+  for (const command of ['[SET_ALARM: 19:30, Alarm]', '[SET_ALARM: 7:30 AM next week, Alarm]', '[SET_ALARM: 7:30 AM]', '[SET_REMINDER: 90000, too late]', '[SET_REMINDER: 0, now]', '[REMEMBER]', `[REMEMBER: ${'x'.repeat(301)}]`, '[DAILY_BRIEFING: now]']) {
+    assert.throws(() => propose(command), /./, command);
+  }
+});
+
+test('the action specialist sees memories only when they exist and are enabled', async () => {
+  const { context } = harness();
+  const store = loadWorkspace(context);
+  const payloads = [];
+  context.sendTextToGemini = async () => 'RESPONSE: [SPOTIFY_ARTIST: Radiohead]';
+  context.window.electronAPI.playSpotify = async () => ({ ok: true, verified: true, message: 'Playing Radiohead.' });
+  context.callGeminiSpecialist = async (_purpose, messages) => { payloads.push(JSON.parse(messages[1].content)); return JSON.stringify({ kind: 'commands', commands: ['[SPOTIFY_ARTIST: Radiohead]'] }); };
+  await context.processTextCommandWithGemini('play my favorite band');
+  store.rememberFact('my favorite band is Radiohead');
+  await context.processTextCommandWithGemini('play my favorite band');
+  assert.equal('memories' in payloads[0], false);
+  assert.deepEqual(payloads[1].memories, ['my favorite band is Radiohead']);
 });
 
 test('authentication and quota failures do not rotate reasoning models', async () => {

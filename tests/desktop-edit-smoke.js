@@ -4,12 +4,13 @@ const { app, screen, nativeImage, globalShortcut } = require('electron');
 const { spawn } = require('node:child_process');
 const { EventEmitter } = require('node:events');
 const { pathToFileURL } = require('node:url');
-const path = require('node:path'), assert = require('node:assert/strict');
+const path = require('node:path'), fs = require('node:fs'), assert = require('node:assert/strict');
 const { registerDesktopAutomation, createWindowsDriver } = require('../desktop/automation');
 const { inferEditorRegion } = require('../js/desktop-workflows');
 app.disableHardwareAcceleration();
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 app.whenReady().then(async () => {
+  const startedAt = new Date().toISOString();
   let host, api, info, sequence = 0;
   const pending = new Map();
   try {
@@ -22,7 +23,7 @@ app.whenReady().then(async () => {
         else { const handler = pending.get(message.id); if (handler) { pending.delete(message.id); clearTimeout(handler.timer); message.error ? handler.reject(new Error(message.error)) : handler.resolve(message.value); } }
       });
     });
-    const request = kind => new Promise((resolve, reject) => { const id = ++sequence; const timer = setTimeout(() => { pending.delete(id); reject(new Error('Fixture request timed out.')); }, 10000); pending.set(id, { resolve, reject, timer }); host.send({ id, kind }); });
+    const request = (kind, text) => new Promise((resolve, reject) => { const id = ++sequence; const timer = setTimeout(() => { pending.delete(id); reject(new Error('Fixture request timed out.')); }, 10000); pending.set(id, { resolve, reject, timer }); host.send({ id, kind, text }); });
     await ready; await delay(500);
     // A real fixture-only click establishes foreground permission on Windows.
     // The existing test helper checks native hit testing and restores the pointer.
@@ -63,6 +64,7 @@ app.whenReady().then(async () => {
     if (!region) console.log(JSON.stringify({ focusedControl: capture.focusedControl, targetProcessId: capture.foreground.processId, targetBounds: capture.foreground.bounds, displayBounds: capture.display.physicalBounds }));
     assert.ok(region, 'Native accessibility must expose the disposable editor region');
     const expected = 'function add(a, b) {\n  return a + b;\n}';
+    const original = await request('value');
     const plan = { captureId: capture.captureId, summary: 'Correct subtraction to addition in the disposable code editor', scope: { mode: 'region', handle: info.handle, region }, steps: [{ type: 'hotkey', keys: ['CTRL', 'A'] }, { type: 'type', text: expected }] };
     // Optional local-only provider harness; CI and normal smoke use no credentials.
     const provider = process.env.OLANGA_TEST_PROVIDER ? require(path.resolve(process.env.OLANGA_TEST_PROVIDER)) : null;
@@ -80,7 +82,34 @@ app.whenReady().then(async () => {
     assert.notEqual(result.verificationCapture.imageDataUrl, capture.imageDataUrl, 'Fresh evidence must show the changed text');
     assert.equal(prompts.length, 3);
     const verification = provider ? await provider.verify(plan, result) : null;
-    console.log(JSON.stringify({ passed: true, nativeInput: 'Ctrl+A and Unicode typing within UIA editor bounds', completedSteps: result.completedSteps, exactTextReadback: true, freshVerificationImage: true, approvals: 'injected in fixture only', provider: verification || 'none' }));
+    let undoChecks = 'not exercised for alternate provider plans';
+    if (!provider) {
+      assert.equal(result.undo?.available, true, result.undo?.message);
+      assert.equal(result.undo.before, original);
+      assert.equal(result.undo.after, expected);
+      const restored = await handlers['desktop-undo'](event, result.undo.undoId);
+      assert.equal(restored.ok, true, restored.message);
+      assert.equal(restored.verified, true);
+      assert.equal(await request('value'), original, 'Native undo must restore the complete original text');
+      for (const conflict of ['text', 'control']) {
+        const nextCapture = await handlers['desktop-capture'](event);
+        const nextPlan = { ...plan, captureId: nextCapture.captureId, scope: { mode: 'region', handle: info.handle, region: inferEditorRegion(nextCapture) } };
+        const nextPrepared = handlers['desktop-prepare'](event, nextPlan);
+        const nextResult = await handlers['desktop-run'](event, nextPrepared.planId);
+        assert.equal(nextResult.undo?.available, true, nextResult.error || nextResult.undo?.message);
+        const currentText = conflict === 'text' ? 'User changed this disposable fixture after the edit.' : expected;
+        if (conflict === 'text') await request('set-value', currentText);
+        else await request('replace-control');
+        const rejected = await handlers['desktop-undo'](event, nextResult.undo.undoId);
+        assert.equal(rejected.ok, false, 'Undo must refuse an intervening change');
+        assert.match(rejected.message, /conflict|changed/i);
+        assert.equal(await request('value'), currentText, 'A rejected undo must leave the current text untouched');
+      }
+      undoChecks = 'complete original restored; intervening text and replaced-control conflicts rejected';
+    }
+    const report = { passed: true, startedAt, finishedAt: new Date().toISOString(), nativeInput: 'Verified UIA full-field replacement within approved editor bounds', completedSteps: result.completedSteps, exactTextReadback: true, freshVerificationImage: true, undo: undoChecks, approvals: 'injected in fixture only', provider: verification || 'none' };
+    fs.writeFileSync(path.resolve(__dirname, '../build/qa/desktop-edit-smoke.json'), JSON.stringify(report, null, 2));
+    console.log(JSON.stringify(report));
     api.dispose(); host.send({ kind: 'close' }); await delay(250); app.exit(0);
   } catch (error) { console.error('Desktop edit smoke failed:', error.message); api?.dispose(); host?.kill(); app.exit(1); }
 });

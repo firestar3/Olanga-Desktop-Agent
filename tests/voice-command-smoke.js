@@ -6,6 +6,7 @@ const { app, BrowserWindow, session, safeStorage } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { observeMediaControllerFactory } = require('./helpers/media-smoke-observer');
 
 const command = 'Open Spotify and raise the volume to 75%';
 const liveAudio = process.argv.includes('--live-audio');
@@ -30,7 +31,7 @@ const report = {
     realGeminiTranscription: liveAudio, physicalMicrophone: false, wakeWord: false,
     speechEvidence: 'Native speech start/end/error events; no acoustic loopback recording.',
   },
-  checks: [], rendererErrors: [], network: [], restoration: { attempted: false },
+  checks: [], rendererErrors: [], network: [], nativeMediaCommands: [], restoration: { attempted: false },
 };
 const redact = value => String(value).replace(/AIza[A-Za-z0-9_-]{20,}/g, '[redacted]');
 const saveReport = () => fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
@@ -40,8 +41,124 @@ let originalVolume;
 let cleanupFinished = false;
 let verificationAborted = false;
 let credentialSetupError;
+let volumeSampler;
+let volumePhase = 'startup';
 function assertVerificationActive() {
   if (verificationAborted) throw new Error('Verification stopped before cleanup.');
+}
+
+// Observe the default render endpoint from a separate process. This helper has
+// no volume setters and never calls production IPC; each sample acquires and
+// releases its own Core Audio COM objects so an endpoint switch is visible.
+async function startVolumeSampler() {
+  const helperSource = fs.readFileSync(path.join(__dirname, '../desktop/media-helper.ps1'), 'utf8');
+  const nativeBlock = helperSource.match(/Add-Type -TypeDefinition @'\r?\n([\s\S]*?)\r?\n'@/);
+  if (!nativeBlock) throw new Error('Could not locate the production Core Audio interop for independent sampling.');
+  const nativeReader = nativeBlock[1].replace(/  public void SetLevel\([\s\S]*?(?=  public void Dispose\()/, '');
+  if (/public void Set(?:Level|Muted)\(/.test(nativeReader) || !nativeReader.includes('public OlangaVolumeState Read()')) throw new Error('Independent sampler must expose only native volume reads.');
+  const quote = value => "'" + String(value).replace(/'/g, "''") + "'";
+  const stopPath = path.join(isolatedProfile, 'volume-sampler.stop');
+  const scriptPath = path.join(isolatedProfile, 'volume-sampler.ps1');
+  const script = `$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+Add-Type -TypeDefinition @'
+${nativeReader}
+'@
+$volumeSamplerWatch = [Diagnostics.Stopwatch]::StartNew()
+$volumeSamplerParent = [Diagnostics.Process]::GetProcessById(${process.pid})
+$volumeSamplerReads = 0
+$volumeSamplerReleased = 0
+$volumeSamplerReason = 'deadline'
+try {
+  while ($volumeSamplerWatch.ElapsedMilliseconds -lt 55000) {
+    if ([IO.File]::Exists(${quote(stopPath)})) { $volumeSamplerReason = 'requested'; break }
+    $volumeSamplerParent.Refresh()
+    if ($volumeSamplerParent.HasExited) { $volumeSamplerReason = 'parent-exited'; break }
+    $volumeSamplerAudio = $null
+    try {
+      $volumeSamplerAudio = [OlangaSystemAudio]::new()
+      $volumeSamplerReads++
+      $volumeSamplerState = $volumeSamplerAudio.Read()
+      @{ type = 'sample'; epochMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); elapsedMs = $volumeSamplerWatch.ElapsedMilliseconds; volume = $volumeSamplerState.Level; muted = $volumeSamplerState.Muted } | ConvertTo-Json -Compress | ForEach-Object { [Console]::WriteLine($_) }
+    } finally {
+      if ($null -ne $volumeSamplerAudio) { $volumeSamplerAudio.Dispose(); $volumeSamplerReleased++ }
+    }
+    Start-Sleep -Milliseconds 100
+  }
+} catch {
+  @{ type = 'error'; message = $_.Exception.GetBaseException().Message } | ConvertTo-Json -Compress | ForEach-Object { [Console]::WriteLine($_) }
+  $volumeSamplerReason = 'error'
+} finally {
+  $volumeSamplerParent.Dispose()
+  @{ type = 'stopped'; reason = $volumeSamplerReason; reads = $volumeSamplerReads; released = $volumeSamplerReleased } | ConvertTo-Json -Compress | ForEach-Object { [Console]::WriteLine($_) }
+}`;
+  fs.writeFileSync(scriptPath, script, 'utf8');
+  const executable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const child = spawn(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], { windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+  const timeline = report.volumeTimeline = { source: 'Separate hidden PowerShell process, native Core Audio default render endpoint read, no setters', intervalMs: 100, pid: child.pid, samples: [], errors: [], transitions: [] };
+  let resolveReady, rejectReady, pending = '', stderr = '';
+  const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const startupTimeout = setTimeout(() => rejectReady(new Error('Independent volume sampler did not produce a sample within 8 seconds.')), 8000);
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', data => {
+    pending += data;
+    const lines = pending.split(/\r?\n/); pending = lines.pop();
+    for (const line of lines.filter(Boolean)) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type === 'sample' && Number.isFinite(entry.volume) && Number.isFinite(entry.epochMs)) {
+          const sample = { ...entry, phase: volumePhase, receivedAt: Date.now() };
+          delete sample.type;
+          const previous = timeline.samples.at(-1);
+          if (!previous || previous.volume !== sample.volume || previous.muted !== sample.muted) timeline.transitions.push(sample);
+          timeline.samples.push(sample); clearTimeout(startupTimeout); resolveReady();
+        } else if (entry.type === 'stopped') timeline.cleanup = entry;
+        else if (entry.type === 'error') { timeline.errors.push(redact(entry.message)); rejectReady(new Error(entry.message)); }
+        else timeline.errors.push('Unexpected sampler output.');
+      } catch (error) { timeline.errors.push(redact(error.message)); rejectReady(error); }
+    }
+  });
+  child.stderr.on('data', data => { stderr = (stderr + data.toString()).slice(-2000); });
+  const closed = new Promise(resolve => {
+    child.once('error', error => { timeline.errors.push(redact(error.message)); clearTimeout(startupTimeout); rejectReady(error); resolve(); });
+    child.once('close', (code, signal) => {
+      timeline.exit = { code, signal, at: Date.now(), ...(stderr ? { stderr: redact(stderr) } : {}) };
+      clearTimeout(startupTimeout);
+      if (!timeline.samples.length) rejectReady(new Error('Independent volume sampler exited before its first sample. ' + redact(stderr)));
+      resolve();
+    });
+  });
+  let stopping;
+  volumeSampler = {
+    async stop() {
+      if (stopping) return stopping;
+      stopping = (async () => {
+        try { fs.writeFileSync(stopPath, 'stop', 'utf8'); }
+        catch (error) { timeline.errors.push(redact(error.message)); timeline.forcedTermination = true; child.kill(); }
+        let killTimeout;
+        try {
+          await Promise.race([closed, new Promise(resolve => { killTimeout = setTimeout(() => { timeline.forcedTermination = true; child.kill(); resolve(); }, 2500); })]);
+          if (timeline.forcedTermination) await Promise.race([closed, pause(500)]);
+        } finally { clearTimeout(killTimeout); clearTimeout(startupTimeout); }
+      })();
+      return stopping;
+    },
+    kill() { timeline.forcedTermination = true; child.kill(); },
+  };
+  await ready;
+  check('Independent volume sampler started before the request', timeline.samples.length > 0 && timeline.errors.length === 0);
+}
+
+function summarizeVolumeTimeline() {
+  const timeline = report.volumeTimeline;
+  if (!timeline) return;
+  timeline.speechWindows = (report.turn?.speeches || []).map(speech => {
+    const start = report.turn.timeOrigin + speech.startedAt;
+    const end = report.turn.timeOrigin + speech.endedAt;
+    const samples = timeline.samples.filter(sample => sample.epochMs >= start && sample.epochMs <= end);
+    return { role: speech.role, startEpochMs: start, endEpochMs: end, samples: samples.length,
+      levels: [...new Set(samples.map(sample => sample.volume))], muted: [...new Set(samples.map(sample => sample.muted))] };
+  });
 }
 
 // Windows safeStorage ciphertext depends on this profile's DPAPI-wrapped AES
@@ -155,7 +272,7 @@ function installRendererObservers() {
   currentVolume = 0.8;
   document.getElementById('setupScreen').classList.add('hidden');
   document.getElementById('mainScreen').classList.remove('hidden');
-  const data = window.__voiceCommandSmoke = { events: [], actions: [], speeches: [], turnDone: false };
+  const data = window.__voiceCommandSmoke = { events: [], actions: [], speeches: [], turnDone: false, timeOrigin: performance.timeOrigin };
   const event = (type, extra = {}) => {
     const entry = { type, at: performance.now(), ...extra };
     data.events.push(entry);
@@ -259,7 +376,7 @@ async function runVerification() {
     let key = loadExistingGeminiKey();
     wavBase64 = await createSyntheticWav();
     assertVerificationActive();
-    await main.webContents.executeJavaScript(`apiKey = ${JSON.stringify(key)}; apiKeys = [apiKey]; currentKeyIndex = 0; apiKeyRotation = false; void 0;`);
+    await main.webContents.executeJavaScript(`(async () => { apiKey = ${JSON.stringify(key)}; apiKeys = [apiKey]; currentKeyIndex = 0; apiKeyRotation = false; await window.electronAPI.secureStoreSet('gemini_api_keys', JSON.stringify(apiKeys)); })()`);
     key = '';
     assertVerificationActive();
   }
@@ -267,8 +384,14 @@ async function runVerification() {
   assertVerificationActive();
   report.originalVolume = originalVolume;
   check('Original system volume and mute state read', originalVolume.ok && originalVolume.verified && Number.isFinite(originalVolume.volume) && typeof originalVolume.muted === 'boolean', originalVolume);
+  volumePhase = 'baseline';
+  await startVolumeSampler();
+  assertVerificationActive();
+  const independentBaseline = report.volumeTimeline.samples.at(-1);
+  check('Separate process baseline agrees with production readback', Math.abs(independentBaseline.volume - originalVolume.volume) <= 0.5 && independentBaseline.muted === originalVolume.muted, independentBaseline);
   report.voice = await main.webContents.executeJavaScript(`(${installRendererObservers.toString()})()`);
   assertVerificationActive();
+  volumePhase = 'assistant-request';
   await main.webContents.executeJavaScript(`void window.__voiceCommandSmoke.start(${JSON.stringify(command)}, ${JSON.stringify(wavBase64)});`, true);
   assertVerificationActive();
   for (;;) {
@@ -309,18 +432,43 @@ async function runVerification() {
   check('Final audio started after acknowledgement audio ended', finalSpeech?.startedAt >= ackSpeech.endedAt);
   check('Final response includes both concrete outcomes', /spotify/i.test(turn.finalText) && /75\s*%/.test(turn.finalText), turn.finalText);
   check('Final Windows speech actually started and ended without interruption', finalSpeech?.startedAt && finalSpeech?.endedAt && !finalSpeech.error && turn.speeches.length === 2, turn.speeches);
+  const volumeCommands = report.nativeMediaCommands.filter(entry => entry.phase === 'assistant-request' && entry.command.action.startsWith('VOLUME_') && entry.command.action !== 'VOLUME_STATUS');
+  check('Native helper received exactly one volume change during the assistant turn', volumeCommands.length === 1 && volumeCommands[0].command.action === 'VOLUME_SET' && volumeCommands[0].command.level === 75, volumeCommands);
+  volumePhase = 'post-speech-observation';
+  await pause(1000);
+  assertVerificationActive();
   report.volumeReadback = await main.webContents.executeJavaScript(`window.electronAPI.mediaControl('VOLUME_STATUS')`);
   assertVerificationActive();
-  check('Independent Windows readback is 75% and unmuted', report.volumeReadback.ok && report.volumeReadback.verified && Math.abs(report.volumeReadback.volume - 75) <= 0.5 && report.volumeReadback.muted === false, report.volumeReadback);
+  check('Production Windows readback is 75% and unmuted', report.volumeReadback.ok && report.volumeReadback.verified && Math.abs(report.volumeReadback.volume - 75) <= 0.5 && report.volumeReadback.muted === false, report.volumeReadback);
+  const confirmedAt = turn.timeOrigin + turn.actions[1].completedAt;
+  const confirmedSamples = report.volumeTimeline.samples.filter(sample => sample.epochMs >= confirmedAt);
+  check('Separate native sampler stayed at 75% and unmuted from receipt through final speech and one second afterward', confirmedSamples.length >= 8 && confirmedSamples.every(sample => Math.abs(sample.volume - 75) <= 0.5 && sample.muted === false), { samples: confirmedSamples.length, levels: [...new Set(confirmedSamples.map(sample => sample.volume))], muted: [...new Set(confirmedSamples.map(sample => sample.muted))] });
+  check('Separate native sampler reported no errors', report.volumeTimeline.errors.length === 0 && !report.volumeTimeline.exit, report.volumeTimeline.errors);
   check('No renderer errors', report.rendererErrors.length === 0, report.rendererErrors);
-  const modelRequests = report.network.filter(request => request.host === 'generativelanguage.googleapis.com' && /generateContent$/.test(request.path));
-  if (liveAudio) check('Live audio used exactly one Gemini transcription request', modelRequests.length === 1 && modelRequests[0].allowed === true, modelRequests);
-  else check('Typed command made no Gemini model requests', modelRequests.length === 0, modelRequests);
+  report.provider = await main.webContents.executeJavaScript(`window.electronAPI.providerStatus()`);
+  if (liveAudio) check('Live audio used exactly one successful main-process Gemini transcription request', report.provider.totals.requests === 1 && report.provider.totals.attempts === 1 && report.provider.totals.succeeded === 1, report.provider.totals);
+  else check('Typed command made no Gemini model requests', report.provider.totals.requests === 0, report.provider.totals);
+
+  // Exercise desired-state mute twice in each direction through production IPC,
+  // then read the endpoint separately. Finally always restores the baseline.
+  report.muteChecks = [];
+  volumePhase = 'mute-repetition-checks';
+  for (const action of ['VOLUME_MUTE_ON', 'VOLUME_MUTE_ON', 'VOLUME_MUTE_OFF', 'VOLUME_MUTE_OFF']) {
+    assertVerificationActive();
+    const result = await main.webContents.executeJavaScript(`window.electronAPI.mediaControl(${JSON.stringify(action)})`);
+    assertVerificationActive();
+    const readback = await main.webContents.executeJavaScript(`window.electronAPI.mediaControl('VOLUME_STATUS')`);
+    assertVerificationActive();
+    report.muteChecks.push({ action, result, readback });
+    check(`${action} preserves its requested state and volume on every repetition`, result.ok && result.verified && readback.ok && readback.verified && readback.muted === (action === 'VOLUME_MUTE_ON') && Math.abs(readback.volume - 75) <= 0.5, readback);
+  }
 }
 
 async function restoreVolume() {
+  volumePhase = 'restoration';
   if (!main || main.isDestroyed()) return;
   await main.webContents.executeJavaScript(`cancelAssistantRequest(); apiKey = ''; apiKeys = []; void 0;`);
+  if (liveAudio) await main.webContents.executeJavaScript(`window.electronAPI.secureStoreSet('gemini_api_keys', null)`);
   if (!originalVolume?.ok || !originalVolume.verified) return;
   report.restoration.attempted = true;
   report.restoration.set = await main.webContents.executeJavaScript(`window.electronAPI.mediaControl('VOLUME_SET', false, ${JSON.stringify(originalVolume.volume)})`);
@@ -339,18 +487,23 @@ const hardTimeout = setTimeout(() => {
   report.passed = false;
   report.cleanupFinished = cleanupFinished;
   report.finishedAt = new Date().toISOString();
+  volumeSampler?.kill();
+  summarizeVolumeTimeline();
   saveReport();
   console.error(`Voice command smoke timed out. Report: ${reportPath}`);
   app.exit(1);
 }, 60000);
 hardTimeout.unref();
 
+const stopObservingFactory = observeMediaControllerFactory(require('../desktop/media-controller'), spawn, command => {
+  report.nativeMediaCommands.push({ epochMs: Date.now(), phase: volumePhase, command });
+});
 try { require('../main'); } catch (error) {
   report.error = redact(error.message);
   saveReport();
   console.error('Voice command smoke failed at startup:', report.error);
   app.exit(1);
-}
+} finally { stopObservingFactory(); }
 
 app.whenReady().then(async () => {
   let workTimeout;
@@ -371,6 +524,20 @@ app.whenReady().then(async () => {
       report.restoration.error = redact(error.message);
       report.passed = false;
     }
+    try {
+      if (volumeSampler) {
+        await pause(250);
+        report.restoration.independentReadback = report.volumeTimeline.samples.at(-1);
+        await volumeSampler.stop();
+        summarizeVolumeTimeline();
+        const cleanup = report.volumeTimeline.cleanup;
+        check('Independent sampler stopped and released every Core Audio handle', !report.volumeTimeline.forcedTermination && report.volumeTimeline.exit?.code === 0 && cleanup?.reason === 'requested' && cleanup.reads === cleanup.released, cleanup);
+        if (report.restoration.attempted) {
+          const observed = report.restoration.independentReadback;
+          check('Separate sampler confirms restored volume and mute state', observed?.phase === 'restoration' && Math.abs(observed.volume - originalVolume.volume) <= 0.5 && observed.muted === originalVolume.muted, observed);
+        }
+      }
+    } catch (error) { report.volumeSamplerCleanupError = redact(error.message); report.passed = false; }
     cleanupFinished = true;
     if (main && !main.isDestroyed()) {
       try {

@@ -5,8 +5,8 @@ name: Release
 # installer as a workflow artifact instead, which is handy for testing.
 #
 # To publish a new version:
-#   git tag -a v1.3.1 -m "Olanga v1.3.1"
-#   git push origin v1.3.1
+#   git tag -a v1.4.0 -m "Olanga v1.4.0"
+#   git push origin v1.4.0
 #
 # Prerequisite: electron-builder must be in devDependencies (npm install
 # --save-dev electron-builder) and that change committed.
@@ -60,20 +60,83 @@ jobs:
       - name: Check scripts, release version and packaged assets
         run: npm run check
 
+      - name: Check renderer races and storage recovery
+        run: npm run smoke:renderer
+
       - name: Build the installer
-        run: npm run dist
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)
+          if ($hasCertificate -ne $hasPassword) { throw 'Configure both WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD, or neither. A partial signing configuration must not silently produce an unsigned release.' }
+          if ($hasCertificate) {
+            'OLANGA_SIGNING_EXPECTED=true' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            npm run dist -- --config.forceCodeSigning=true --config.win.signExecutable=true
+          } else {
+            'OLANGA_SIGNING_EXPECTED=false' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Host '::warning::No Windows signing credentials are configured. This release will be explicitly marked unsigned.'
+            npm run dist -- --config.forceCodeSigning=false --config.win.signExecutable=false
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify the packaged application
         run: npm run verify:package
 
-      - name: Upload installer as a workflow artifact
+      - name: Verify signing status and create release checksums
+        run: |
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          $installerPath = Join-Path (Resolve-Path dist).Path "Olanga-Setup-$version.exe"
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) { throw 'The version-matched installer is missing.' }
+          $installers = @(Get-ChildItem -LiteralPath dist -Filter 'Olanga-Setup-*.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one version-matched installer; refusing to publish stale or ambiguous artifacts.' }
+          $appPath = Join-Path (Resolve-Path 'dist/win-unpacked').Path 'Olanga.exe'
+          $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
+          $appSignature = Get-AuthenticodeSignature -LiteralPath $appPath
+          $signed = $env:OLANGA_SIGNING_EXPECTED -eq 'true'
+          if ($signed) {
+            if ($signature.Status -ne 'Valid' -or $appSignature.Status -ne 'Valid') { throw 'Signing was required, but the installer or packaged executable does not have a valid Authenticode signature.' }
+            $signingStatus = 'signed'
+            $signingText = 'Windows Authenticode signatures were verified as valid for the installer and packaged executable in this build.'
+          } else {
+            if ($signature.Status -ne 'NotSigned' -or $appSignature.Status -ne 'NotSigned') { throw 'The explicitly unsigned build has an unexpected signature status. Inspect the artifacts before publishing.' }
+            $signingStatus = 'unsigned'
+            $signingText = 'This installer is unsigned. No Windows publisher signature is provided.'
+          }
+          $digest = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installerName = [IO.Path]::GetFileName($installerPath)
+          $utf8 = [Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText((Join-Path (Resolve-Path dist).Path 'SHA256SUMS'), "$digest  $installerName`n", $utf8)
+          $metadata = [ordered]@{
+            version = $version
+            commit = $env:GITHUB_SHA
+            generatedAt = [DateTime]::UtcNow.ToString('o')
+            installer = $installerName
+            sha256 = $digest
+            signing = $signingStatus
+            installerAuthenticodeStatus = [string]$signature.Status
+            appAuthenticodeStatus = [string]$appSignature.Status
+            automaticUpdatesEnabled = $false
+            rollbackValidated = $false
+          }
+          [IO.File]::WriteAllText((Join-Path (Resolve-Path dist).Path 'RELEASE-METADATA.json'), ($metadata | ConvertTo-Json -Depth 4), $utf8)
+          $notes = "<!-- olanga-artifact-verification -->`n$signingText`n`nCompare the downloaded installer's SHA-256 with the attached SHA256SUMS file. A matching checksum detects changed bytes; it is not a publisher signature. See RELEASE-METADATA.json for this build's recorded checks.`n`nUpdates are manual. Automatic download, installation, and rollback remain disabled.`n"
+          [IO.File]::WriteAllText((Join-Path (Resolve-Path dist).Path 'RELEASE-NOTES.md'), $notes, $utf8)
+          Write-Host "Release artifact: $installerName ($signingStatus). SHA256SUMS was generated from the completed installer."
+
+      - name: Upload installer and verification files as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: olanga-installer
-          path: dist/Olanga-Setup-*.exe
+          path: |
+            dist/Olanga-Setup-*.exe
+            dist/SHA256SUMS
+            dist/RELEASE-METADATA.json
+            dist/RELEASE-NOTES.md
           if-no-files-found: error
 
-      - name: Attach the installer to the release
+      - name: Attach installer and verification files to the release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -81,10 +144,23 @@ jobs:
           $tag = $env:GITHUB_REF_NAME
           $installer = (Get-ChildItem dist/Olanga-Setup-*.exe | Select-Object -First 1).FullName
           if (-not $installer) { throw 'No installer found in dist/' }
+          $assets = @($installer, (Resolve-Path dist/SHA256SUMS).Path, (Resolve-Path dist/RELEASE-METADATA.json).Path, (Resolve-Path dist/RELEASE-NOTES.md).Path)
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $installer --clobber
+            # Existing bytes are never replaced. A public artifact collision
+            # requires a new version or explicit maintainer investigation.
+            gh release upload $tag @assets
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $existingNotes = gh release view $tag --json body --jq .body
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (($existingNotes -join "`n") -notmatch '<!-- olanga-artifact-verification -->') {
+              $combinedNotes = ($existingNotes -join "`n") + "`n`n" + (Get-Content -LiteralPath dist/RELEASE-NOTES.md -Raw)
+              [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'olanga-release-notes.md'), $combinedNotes, [Text.UTF8Encoding]::new($false))
+              gh release edit $tag --notes-file (Join-Path $env:RUNNER_TEMP 'olanga-release-notes.md')
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
           } else {
-            gh release create $tag $installer --title "Olanga $tag" --generate-notes
+            gh release create $tag @assets --title "Olanga $tag" --generate-notes --notes-file dist/RELEASE-NOTES.md
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

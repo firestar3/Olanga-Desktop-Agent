@@ -9,7 +9,7 @@ function fixture(synthesize) {
     console: { log() {}, warn() {}, error() {} }, setTimeout, clearTimeout, atob, Blob, Uint8Array, ArrayBuffer, DataView,
     window: { electronAPI: { nvidiaTtsSynthesize: synthesize } },
     synthesis: { cancel() {} }, currentTTSAudio: null, nvidiaApiKey: 'test', defaultNvidiaVoiceName: 'Aria',
-    isTtsMuted: false, ttsEngine: 'magpie', State: { IDLE: 'idle' }, setState() {}, speakingWatchdogTimer: null
+    isTtsMuted: false, ttsEngine: 'magpie', State: { IDLE: 'idle', THINKING: 'thinking', LISTENING: 'listening', SPEAKING: 'speaking' }, setState() {}, speakingWatchdogTimer: null
   };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/tts.js'), 'utf8'), context);
@@ -75,6 +75,125 @@ test('Windows voice initialization cannot speak a cancelled confirmation', async
   retry();
   await pending;
   assert.equal(spoken, 0);
+});
+
+test('Windows completion handles duplicate native end and error events only once', async () => {
+  for (const firstEvent of ['end', 'error']) {
+    const { context, calls } = acknowledgementFixture();
+    let finished = 0;
+    const pending = context.speakWithWindowsTts('Done.', () => { finished++; });
+    const { onend, onerror } = calls.spoken[0];
+    if (firstEvent === 'end') onend();
+    else onerror({ error: 'synthesis-failed' });
+    onend();
+    onerror({ error: 'synthesis-failed' });
+    await pending;
+    assert.equal(finished, 1);
+    assert.equal(calls.spoken[0].onend, null);
+    assert.equal(calls.spoken[0].onerror, null);
+  }
+});
+
+test('stopping a Windows reply settles without a native event or stale follow-up', async () => {
+  const { context, calls, timers } = acknowledgementFixture();
+  let finished = 0;
+  let result = 'pending';
+  const pending = context.speakWithWindowsTts('Done.', () => { finished++; }).then(value => { result = value; });
+  const { onend, onerror } = calls.spoken[0];
+  context.stopAssistantSpeech();
+  await Promise.resolve();
+  assert.equal(result, false);
+  await pending;
+  onend();
+  onerror({ error: 'interrupted' });
+  assert.equal(finished, 0);
+  assert.equal(timers.size, 0);
+  assert.equal(calls.spoken[0].onend, null);
+  assert.equal(calls.spoken[0].onerror, null);
+});
+
+test('Windows cancellation removes pending voice initialization immediately', async () => {
+  const { context, calls, timers } = acknowledgementFixture();
+  const listeners = new Map();
+  context.synthesis.getVoices = () => [];
+  context.synthesis.addEventListener = (event, listener) => listeners.set(event, listener);
+  context.synthesis.removeEventListener = event => listeners.delete(event);
+  const pending = context.speakWithWindowsTts('Done.', () => { throw new Error('Cancelled speech started follow-up'); });
+  const staleVoiceEvent = listeners.get('voiceschanged');
+  const staleTimer = [...timers.values()][0].callback;
+  context.stopAssistantSpeech();
+  assert.equal(timers.size, 0);
+  assert.equal(listeners.size, 0);
+  assert.equal(await pending, false);
+  staleVoiceEvent();
+  staleTimer();
+  assert.equal(calls.spoken.length, 0);
+});
+
+test('late Windows events cannot settle or cancel the newer reply', async () => {
+  const { context, calls } = acknowledgementFixture();
+  const first = context.speakWithWindowsTts('Old reply.', () => { throw new Error('Stale follow-up'); });
+  const staleEnd = calls.spoken[0].onend;
+  const staleError = calls.spoken[0].onerror;
+  context.stopAssistantSpeech();
+  let finished = 0;
+  const second = context.speakWithWindowsTts('New reply.', () => { finished++; });
+  staleEnd();
+  staleError({ error: 'interrupted' });
+  assert.equal(await first, false);
+  assert.equal(finished, 0);
+  context.stopAssistantSpeech();
+  assert.equal(await second, false, 'The new reply must still own its cancellation hook');
+  assert.equal(finished, 0);
+});
+
+test('Windows fallback cancellation settles the selected-engine promise without follow-up', async () => {
+  const { context, calls } = acknowledgementFixture();
+  context.window.electronAPI.nvidiaTtsSynthesize = async () => { throw new Error('Unavailable'); };
+  let finished = 0;
+  const pending = context.speakWithSelectedEngine('Done.', () => { finished++; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.spoken.length, 1);
+  context.stopAssistantSpeech();
+  await pending;
+  assert.equal(finished, 0);
+});
+
+test('a Windows watchdog settles the reply even when cancellation emits no native event', async () => {
+  const { context, calls, timers } = acknowledgementFixture();
+  context.ttsEngine = 'windows';
+  context.State.SPEAKING = 'speaking';
+  let finished = 0;
+  const pending = context.speakResponseAndThen('Done.', () => { finished++; });
+  assert.equal(calls.spoken.length, 1);
+  const [timerId, timer] = [...timers.entries()][0];
+  timers.delete(timerId);
+  timer.callback();
+  await pending;
+  assert.equal(finished, 0);
+  assert.equal(context.currentState, 'idle');
+  assert.equal(calls.spoken[0].onend, null);
+});
+
+test('the Magpie recovery watchdog settles Windows fallback with one completion', async () => {
+  const { context, calls, timers } = acknowledgementFixture();
+  context.window.electronAPI.nvidiaTtsSynthesize = async request => {
+    if (request.text === 'Second.') throw new Error('Unavailable');
+    return { audioBase64: 'AAAAAA==' };
+  };
+  context.splitIntoSpeechChunks = () => ['First.', 'Second.'];
+  context.playSpeechChunk = async () => true;
+  let finished = 0;
+  const pending = context.speakWithNvidiaTts('First. Second.', () => { finished++; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.spoken.length, 1);
+  const staleEnd = calls.spoken[0].onend;
+  const [timerId, timer] = [...timers.entries()][0];
+  timers.delete(timerId);
+  timer.callback();
+  await pending;
+  staleEnd();
+  assert.equal(finished, 1);
 });
 
 test('a later synthesis failure speaks all remaining chunks locally without repeating the completed prefix', async () => {
@@ -380,4 +499,85 @@ test('acknowledgement speech failures settle cleanly without changing request st
     assert.equal(timers.size, 0);
     assert.deepEqual(calls.states, []);
   }
+});
+
+function addMuteControls(context) {
+  Object.assign(context, {
+    micToggleBtn: null, ttsToggleBtn: null, micIconOn: null, micIconOff: null, ttsIconOn: null, ttsIconOff: null,
+    isMicMuted: false, micStream: null,
+    localStorage: { getItem: () => null, setItem: () => { throw new Error('Storage full'); } }, showError() {}
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/audio-controls.js'), 'utf8'), context);
+}
+
+test('muting speech cancels native playback immediately without relying on storage or end events', async () => {
+  const { context, calls, timers } = acknowledgementFixture(); addMuteControls(context);
+  context.ttsEngine = 'windows';
+  let followUps = 0;
+  const response = context.speakResponseAndThen('Which playlist?', () => { followUps++; });
+  const lateEnd = calls.spoken[0].onend;
+  context.muteTts(); await response;
+  assert.equal(context.isTtsMuted, true); assert.equal(context.currentState, 'idle');
+  assert.equal(followUps, 0); assert.equal(timers.size, 0);
+  lateEnd(); assert.equal(followUps, 0);
+  context.unmuteTts(); context.currentState = 'thinking';
+  const acknowledgement = context.speakAssistantAcknowledgement('On it.');
+  context.muteTts(); assert.equal(await acknowledgement, false);
+  assert.equal(context.currentState, 'thinking', 'muting an acknowledgement must not stop the working request');
+});
+
+test('muting during pending Magpie synthesis settles immediately and discards its late audio', async () => {
+  const { context, calls } = acknowledgementFixture(); addMuteControls(context);
+  let finishAudio, played = 0;
+  context.window.electronAPI.nvidiaTtsSynthesize = () => new Promise(resolve => { finishAudio = resolve; });
+  context.playSpeechChunk = async () => { played++; return true; };
+  let settled = false, followUps = 0;
+  const response = context.speakResponseAndThen('The result is ready.', () => { followUps++; }).then(() => { settled = true; });
+  context.muteTts();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, true, 'cancellation must not wait for a provider response or timeout');
+  finishAudio({ audioBase64: 'AAAAAA==' }); await response;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(played, 0); assert.equal(calls.spoken.length, 0); assert.equal(followUps, 0);
+});
+
+test('a stale speech wrapper failure cannot change the next request or start its old follow-up', async () => {
+  for (const method of ['speakResponse', 'speakResponseAndThen']) {
+    const { context, calls } = acknowledgementFixture();
+    let fail, followUps = 0; const errors = [];
+    context.showError = message => errors.push(message);
+    context.speakWithSelectedEngine = () => new Promise((_, reject) => { fail = reject; });
+    const pending = context[method]('Old reply', () => { followUps++; });
+    context.stopAssistantSpeech(); context.currentState = 'thinking';
+    fail(new Error('Old engine failure')); await pending;
+    assert.equal(context.currentState, 'thinking'); assert.equal(followUps, 0);
+    assert.equal(errors.length, 0); assert.deepEqual(calls.states, ['speaking']);
+  }
+});
+
+test('failure constructing or configuring an audio element revokes its allocated object URL', async () => {
+  for (const failure of ['constructor', 'volume']) {
+    const { context } = acknowledgementFixture(); let revoked = 0;
+    context.URL = { createObjectURL: () => 'blob:test', revokeObjectURL: () => { revoked++; } };
+    context.Audio = function () {
+      if (failure === 'constructor') throw new Error('Player unavailable');
+      Object.defineProperty(this, 'volume', { set() { throw new Error('Player unavailable'); } });
+    };
+    await assert.rejects(context.playSpeechChunk(new Blob(['audio']), { isFinal: false }), /Player unavailable/);
+    assert.equal(revoked, 1); assert.equal(context.currentTTSAudio, null);
+  }
+});
+
+test('a voice preference write failure preserves the selected engine and full voice catalog', () => {
+  const { context } = acknowledgementFixture();
+  const select = { options: [], value: '', appendChild(option) { this.options.push(option); }, set innerHTML(value) { this.options = []; } };
+  Object.assign(context, {
+    nvidiaVoiceSelect: select, nvidiaVoiceName: 'Magpie-Multilingual.EN-US.Jason', nvidiaVoiceCatalog: [],
+    defaultNvidiaVoiceName: 'Magpie-Multilingual.EN-US.Sofia', ttsEngineSelect: { value: '' }, magpieVoiceSettings: { style: {} },
+    document: { createElement: () => ({}) }, localStorage: { setItem() { throw new Error('Storage full'); } }
+  });
+  assert.doesNotThrow(() => context.refreshVoiceCatalog());
+  assert.equal(select.options.length, 10); assert.equal(context.nvidiaVoiceName, 'Magpie-Multilingual.EN-US.Jason');
+  assert.doesNotThrow(() => context.setTtsEngine('windows'));
+  assert.equal(context.ttsEngine, 'windows'); assert.equal(context.ttsEngineSelect.value, 'windows');
 });

@@ -2,32 +2,49 @@
    OLANGA — AUDIO CONTROLS (mic mute, TTS mute)
    ============================================ */
 
+const boundAudioControls = new WeakSet();
+
+function readAudioPreference(key, fallback) {
+  try { return localStorage.getItem(key) === 'true'; }
+  catch (error) { console.warn('[Olanga] Audio preference unavailable:', error.message); return fallback; }
+}
+
+function saveAudioPreference(key, muted) {
+  try { localStorage.setItem(key, String(muted)); }
+  catch (error) {
+    console.warn('[Olanga] Audio preference could not be saved:', error.message);
+    if (typeof showError === 'function') showError('Audio setting applied for this session, but could not be saved.');
+  }
+}
+
+function applyMicrophoneMuteState() {
+  try { micStream?.getTracks().forEach(track => { track.enabled = !isMicMuted; }); } catch (_) {}
+  if (typeof resetMicrophoneRecognition === 'function') resetMicrophoneRecognition();
+}
+
 function initAudioControls() {
-  const savedMicMute = localStorage.getItem('olanga_mic_muted');
-  if (savedMicMute === 'true') {
-    muteMic();
-  } else {
-    unmuteMic();
-  }
+  if (readAudioPreference('olanga_mic_muted', isMicMuted)) muteMic(false);
+  else unmuteMic(false);
 
-  const savedTtsMute = localStorage.getItem('olanga_tts_muted');
-  if (savedTtsMute === 'true') {
-    muteTts();
-  } else {
-    unmuteTts();
-  }
+  if (readAudioPreference('olanga_tts_muted', isTtsMuted)) muteTts(false);
+  else unmuteTts(false);
 
-  if (micToggleBtn) {
+  if (micToggleBtn && !boundAudioControls.has(micToggleBtn)) {
+    boundAudioControls.add(micToggleBtn);
     micToggleBtn.addEventListener('click', toggleMic);
   }
 
-  if (ttsToggleBtn) {
+  if (ttsToggleBtn && !boundAudioControls.has(ttsToggleBtn)) {
+    boundAudioControls.add(ttsToggleBtn);
     ttsToggleBtn.addEventListener('click', toggleTts);
   }
 }
 
-function muteMic() {
+function muteMic(persist = true) {
   isMicMuted = true;
+  applyMicrophoneMuteState();
+  if (typeof cancelRecording === 'function') cancelRecording();
+  if (typeof cancelFollowUpWindow === 'function') cancelFollowUpWindow();
   if (micToggleBtn) {
     micToggleBtn.classList.add('muted');
     micToggleBtn.title = "Unmute Microphone";
@@ -36,17 +53,17 @@ function muteMic() {
     micIconOn.style.display = 'none';
     micIconOff.style.display = 'block';
   }
-  localStorage.setItem('olanga_mic_muted', 'true');
   console.log('[Olanga] Microphone muted');
 
-  if (currentState === State.LISTENING) {
-    cancelRecording();
+  if (currentState === State.LISTENING || currentState === State.IDLE) {
     setState(State.IDLE);
   }
+  if (persist) saveAudioPreference('olanga_mic_muted', true);
 }
 
-function unmuteMic() {
+function unmuteMic(persist = true) {
   isMicMuted = false;
+  applyMicrophoneMuteState();
   if (micToggleBtn) {
     micToggleBtn.classList.remove('muted');
     micToggleBtn.title = "Mute Microphone";
@@ -55,8 +72,9 @@ function unmuteMic() {
     micIconOn.style.display = 'block';
     micIconOff.style.display = 'none';
   }
-  localStorage.setItem('olanga_mic_muted', 'false');
+  if (persist) saveAudioPreference('olanga_mic_muted', false);
   console.log('[Olanga] Microphone unmuted');
+  if (currentState === State.IDLE) setState(State.IDLE);
 }
 
 function toggleMic() {
@@ -67,8 +85,14 @@ function toggleMic() {
   }
 }
 
-function muteTts() {
+function muteTts(persist = true) {
   isTtsMuted = true;
+  if (typeof stopAssistantSpeech === 'function') stopAssistantSpeech();
+  else {
+    try { currentTTSAudio?.pause(); } catch (_) {}
+    try { synthesis.cancel(); } catch (_) {}
+  }
+  if (currentState === State.SPEAKING) setState(State.IDLE);
   if (ttsToggleBtn) {
     ttsToggleBtn.classList.add('muted');
     ttsToggleBtn.title = "Unmute Olanga (Enable TTS)";
@@ -77,11 +101,11 @@ function muteTts() {
     ttsIconOn.style.display = 'none';
     ttsIconOff.style.display = 'block';
   }
-  localStorage.setItem('olanga_tts_muted', 'true');
+  if (persist) saveAudioPreference('olanga_tts_muted', true);
   console.log('[Olanga] TTS muted');
 }
 
-function unmuteTts() {
+function unmuteTts(persist = true) {
   isTtsMuted = false;
   if (ttsToggleBtn) {
     ttsToggleBtn.classList.remove('muted');
@@ -91,7 +115,7 @@ function unmuteTts() {
     ttsIconOn.style.display = 'block';
     ttsIconOff.style.display = 'none';
   }
-  localStorage.setItem('olanga_tts_muted', 'false');
+  if (persist) saveAudioPreference('olanga_tts_muted', false);
   console.log('[Olanga] TTS unmuted');
 }
 

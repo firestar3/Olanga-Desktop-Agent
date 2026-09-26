@@ -6,7 +6,14 @@ const { randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { LIMITS, validatePlan, describeStep, supportedWindow } = require('../shared/action-plan');
 
-const CHANNELS = ['desktop-capture', 'desktop-prepare', 'desktop-run', 'desktop-cancel'];
+const CHANNELS = ['desktop-capture', 'desktop-prepare', 'desktop-run', 'desktop-cancel', 'desktop-undo'];
+const UNDO_TTL_MS = 5 * 60 * 1000;
+// Only a final full-field replacement can have a complete, reliable checkpoint.
+function replacementIndex(steps) {
+  const index = steps.length - 2;
+  return index >= 0 && steps[index].type === 'hotkey' && steps[index].keys.join('+') === 'CTRL+A' && steps[index + 1].type === 'type' &&
+    steps.slice(0, index).every(step => ['focus', 'wait'].includes(step.type) || (step.type === 'click' && step.button === 'left')) ? index : -1;
+}
 const KEY_CODES = Object.freeze({ CTRL: 17, SHIFT: 16, ALT: 18, ENTER: 13, TAB: 9, BACKSPACE: 8, DELETE: 46, LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, HOME: 36, END: 35, PAGEUP: 33, PAGEDOWN: 34, F2: 113, F5: 116, F6: 117,
   ...Object.fromEntries('ACVXZYSFHLN'.split('').map(k => [k, k.charCodeAt(0)])) });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -14,20 +21,21 @@ const sameBounds = (a, b) => a && b && ['x', 'y', 'width', 'height'].every(k => 
 
 // This launches only a checked-in helper. Plan data travels over stdin as JSON,
 // never through a shell, command string, interpolation, or generated source code.
-function createWindowsDriver() {
+function createWindowsDriver({ spawnProcess = spawn } = {}) {
   let helper = path.join(__dirname, 'input-helper.ps1');
   helper = helper.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
   const executable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const child = spawn(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper], { windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawnProcess(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper], { windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
   let sequence = 0, pending = null, buffer = '', closed = false;
   function stop(error = new Error('Desktop input stopped.')) {
     if (closed) return;
     closed = true;
     if (pending) { clearTimeout(pending.timer); pending.reject(error); pending = null; }
-    child.kill();
+    try { child.kill(); } catch { /* The child may already have exited. */ }
   }
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', chunk => {
+    if (closed) return;
     buffer += chunk;
     if (buffer.length > 300000) return stop(new Error('Invalid desktop helper response.'));
     let newline;
@@ -36,7 +44,7 @@ function createWindowsDriver() {
       if (!line) continue;
       let message;
       try { message = JSON.parse(line); } catch { return stop(new Error('Desktop helper could not initialize.')); }
-      if (!pending || message.id !== pending.id) return stop(new Error('Unexpected desktop helper response.'));
+      if (!message || typeof message !== 'object' || Array.isArray(message) || !pending || message.id !== pending.id || typeof message.ok !== 'boolean') return stop(new Error('Unexpected desktop helper response.'));
       const request = pending; pending = null; clearTimeout(request.timer);
       if (message.ok) request.resolve(message.result);
       else request.reject(new Error(String(message.error || 'Desktop operation failed.').slice(0, 600)));
@@ -55,7 +63,8 @@ function createWindowsDriver() {
         const id = ++sequence;
         const timer = setTimeout(() => stop(new Error('Desktop operation timed out.')), sequence === 1 ? 15000 : 5000);
         pending = { id, resolve, reject, timer };
-        child.stdin.write(JSON.stringify({ ...data, id }) + '\n');
+        try { child.stdin.write(JSON.stringify({ ...data, id }) + '\n'); }
+        catch { stop(new Error('Windows desktop helper disconnected.')); }
       });
     },
     dispose: stop
@@ -66,6 +75,8 @@ function createWindowsDriver() {
 function registerDesktopAutomation({ ipcMain, dialog, desktopCapturer, screen, globalShortcut, getMainWindow, getOverlayWindow = () => null, setOverlaySuspended = () => {}, app,
   platform = process.platform, driverFactory = createWindowsDriver, now = Date.now, sleep = delay }) {
   let capture = null, prepared = null, active = null, driver = null, busy = false, disposed = false, generation = 0;
+  let undoRecord = null, undoTimer = null;
+  function clearUndo() { clearTimeout(undoTimer); undoTimer = null; undoRecord = null; }
   const expectedURL = pathToFileURL(path.join(__dirname, '..', 'index.html')).href;
   function trusted(event) {
     const win = getMainWindow();
@@ -165,15 +176,19 @@ function registerDesktopAutomation({ ipcMain, dialog, desktopCapturer, screen, g
     if (busy || active) throw new Error('A desktop action is already in progress.');
     if (typeof planId !== 'string' || !prepared || prepared.planId !== planId || now() > prepared.expiresAt) throw new Error('This plan expired or was replaced. Observe and prepare again.');
     const record = prepared; prepared = null; capture = null;
+    clearUndo();
     const target = record.capture.windows.find(w => w.handle === record.plan.scope.handle);
     active = { planId, completedSteps: 0, totalSteps: record.plan.steps.length, cancelled: false, deadline: null };
     let restore = () => {}, escapeRegistered = false, timeout;
-    const result = { ok: false, cancelled: false, completedSteps: 0, totalSteps: active.totalSteps };
+    const result = { ok: false, cancelled: false, completedSteps: 0, totalSteps: active.totalSteps,
+      undo: { available: false, message: 'Undo is unavailable for this plan. Only a final full-field text replacement in a supported editor can be restored.' } };
+    const replaceAt = replacementIndex(record.plan.steps);
+    let checkpoint = null;
     try {
       progress('awaiting-confirmation', 'Review the exact actions in the native confirmation.');
       const region = record.plan.scope.region;
       const scopeLabel = region ? `ONLY the approved editor region: x ${Math.round(region.x * 100)}%, y ${Math.round(region.y * 100)}%, width ${Math.round(region.width * 100)}%, height ${Math.round(region.height * 100)}%. Typing requires accessible control bounds inside that region.` : 'This window, including its menus, dialogs and shortcuts. Other windows need a new approved plan.';
-      const detail = `Target: ${target.title} (${target.processName}, window ${target.handle})\nScope: ${scopeLabel}\n\n${record.labels.map((line, i) => `${i + 1}. ${line}`).join('\n')}\n\nPress Escape while running to stop. Input already delivered cannot be undone automatically.`;
+      const detail = `Target: ${target.title} (${target.processName}, window ${target.handle})\nScope: ${scopeLabel}\n\n${record.labels.map((line, i) => `${i + 1}. ${line}`).join('\n')}\n\nPress Escape while running to stop. Supported full-field text replacements retain a local text checkpoint for five minutes. Undo is offered only after complete text verification, and refuses changed text or a changed editor. Other input cannot be undone automatically.`;
       if (!await prompt(win, { title: 'Review desktop action — 1 of 2', message: record.plan.summary, detail, buttons: ['Cancel', 'Approve this exact plan'] })) { active.cancelled = true; throw new Error('Plan review cancelled.'); }
       checkRun(); trusted(event);
       if (now() > record.expiresAt) throw new Error('This plan expired during review. Observe again.');
@@ -203,7 +218,22 @@ function registerDesktopAutomation({ ipcMain, dialog, desktopCapturer, screen, g
       for (let index = 0; index < record.plan.steps.length; index++) {
         checkRun(); trusted(event);
         const step = record.plan.steps[index];
-        if (step.type === 'wait') {
+        if (index === replaceAt) {
+          const edit = await connection().request({ kind: 'capture-edit', ...common }); checkRun();
+          if (edit?.supported && edit.checkpoint && typeof edit.checkpoint.text === 'string') checkpoint = edit.checkpoint;
+          else result.undo.message = `Undo is unavailable: ${edit?.message || 'this editor does not expose complete writable text.'}`;
+        }
+        if (index === replaceAt && checkpoint) {
+          // Replacing the verified ValuePattern field subsumes Select All. Do not
+          // mutate selection before the native compare-and-replace guard.
+        } else if (index === replaceAt + 1 && checkpoint) {
+          const after = await connection().request({ kind: 'replace-edit', ...common, checkpoint, text: step.text });
+          if (!after || typeof after.text !== 'string' || after.text.replace(/\r\n/g, '\n') !== step.text.replace(/\r\n/g, '\n')) throw new Error('The complete replacement text was not verified. Undo is unavailable.');
+          const undoId = randomUUID(), expiresAt = now() + UNDO_TTL_MS;
+          undoRecord = { undoId, expiresAt, before: checkpoint.text, after, common: structuredClone(common) };
+          undoTimer = setTimeout(clearUndo, UNDO_TTL_MS); undoTimer.unref?.();
+          result.undo = { available: true, undoId, expiresAt, before: checkpoint.text, after: after.text, message: 'Undo is available for five minutes while the text and editor remain unchanged. The checkpoint stays on this device.' };
+        } else if (step.type === 'wait') {
           await connection().request({ kind: 'check', ...common });
           for (let remaining = step.ms; remaining > 0; remaining -= 50) { checkRun(); await sleep(Math.min(50, remaining)); }
         } else if (step.type === 'click') {
@@ -253,18 +283,51 @@ function registerDesktopAutomation({ ipcMain, dialog, desktopCapturer, screen, g
     }
     return result;
   }
-  const handlers = [captureScreen, prepare, run, event => { trusted(event); return cancel(); }];
+  async function undo(event, undoId) {
+    trusted(event);
+    if (busy || active) throw new Error('Finish or cancel the current desktop action before undoing.');
+    if (typeof undoId !== 'string' || !undoRecord || undoRecord.undoId !== undoId || now() > undoRecord.expiresAt) {
+      if (undoRecord && now() > undoRecord.expiresAt) clearUndo();
+      return { ok: false, reason: 'expired', message: 'This undo checkpoint expired or was replaced. No text was restored.' };
+    }
+    const record = undoRecord, token = ++generation;
+    busy = true; capture = null; prepared = null;
+    let restore = () => {}, escapeRegistered = false;
+    try {
+      escapeRegistered = globalShortcut.register('Escape', () => cancel('Undo stopped with Escape.'));
+      if (!escapeRegistered) throw new Error('The Escape stop shortcut is unavailable. No text was restored.');
+      restore = hideWindows(); await sleep(350);
+      if (token !== generation) throw new Error('Undo cancelled.');
+      trusted(event);
+      await connection().request({ kind: 'focus', handle: record.common.handle, processId: record.common.processId });
+      if (token !== generation) throw new Error('Undo cancelled.');
+      if (now() > record.expiresAt) throw new Error('This undo checkpoint expired before restoration. No text was restored.');
+      const restored = await connection().request({ kind: 'replace-edit', ...record.common, checkpoint: record.after, text: record.before });
+      if (token !== generation) throw new Error('Undo cancelled. Check the editor to see whether restoration completed.');
+      if (!restored || typeof restored.text !== 'string' || restored.text.replace(/\r\n/g, '\n') !== record.before.replace(/\r\n/g, '\n')) throw new Error('The original text could not be verified after restoration.');
+      clearUndo();
+      return { ok: true, verified: true, message: 'The original text was restored and verified.' };
+    } catch (error) {
+      // A failed or interrupted restoration is single use: never offer a blind retry.
+      clearUndo();
+      return { ok: false, verified: false, reason: token !== generation ? 'cancelled' : 'conflict', message: error.message || 'Undo could not restore this editor.' };
+    } finally {
+      if (escapeRegistered) globalShortcut.unregister('Escape');
+      closeDriver(); restore(); busy = false;
+    }
+  }
+  const handlers = [captureScreen, prepare, run, event => { trusted(event); return cancel(); }, undo];
   CHANNELS.forEach((channel, index) => ipcMain.handle(channel, handlers[index]));
   const displayChanged = () => cancel('Display layout changed. Observe the screen again.');
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, displayChanged);
   const beforeQuit = () => cancel('Olanga is closing.');
   app?.on('before-quit', beforeQuit);
   return { cancel, dispose() {
-    disposed = true; cancel('Desktop control closed.');
+    disposed = true; clearUndo(); cancel('Desktop control closed.');
     CHANNELS.forEach(channel => ipcMain.removeHandler(channel));
     for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.removeListener(event, displayChanged);
     app?.removeListener('before-quit', beforeQuit);
   } };
 }
 
-module.exports = { registerDesktopAutomation, createWindowsDriver };
+module.exports = { registerDesktopAutomation, createWindowsDriver, replacementIndex };

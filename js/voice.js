@@ -6,25 +6,188 @@
 // ============================================
 // VOSK WAKE WORD DETECTION (OFFLINE)
 // ============================================
-async function initVosk() {
-    if (!window.Vosk) {
-        throw new Error("Vosk library not loaded");
-    }
-    console.log("[Olanga] Loading Vosk model from local tar.gz...");
+let voskModelLoadPromise = null;
 
-    // Served by the main process over olanga-asset:// (webSecurity stays on).
-    voskModel = await window.Vosk.createModel('olanga-asset://local/vosk-model-v2.tar.gz');
-    console.log("[Olanga] Vosk model loaded successfully.");
-    isVoskReady = true;
+async function initVosk() {
+    if (voskModel?.ready) return voskModel;
+    if (voskModelLoadPromise) return voskModelLoadPromise;
+    if (!window.Vosk?.Model) throw new Error('Vosk library not loaded');
+    console.log('[Olanga] Loading Vosk model from local tar.gz...');
+    // The bundled 0.0.8 createModel wrapper does not reject model error events.
+    // Observe both events directly, and share one load with the wake-word and
+    // optional offline transcription paths. No API key is needed for this model.
+    voskModelLoadPromise = new Promise((resolve, reject) => {
+      const model = new window.Vosk.Model('olanga-asset://local/vosk-model-v2.tar.gz', -1);
+      let settled = false;
+      const removeFailureListeners = () => {
+        model.removeEventListener('error', failed);
+        model.worker?.removeEventListener?.('error', workerFailed);
+        model.worker?.removeEventListener?.('messageerror', workerFailed);
+      };
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        model.removeEventListener('load', loaded);
+        if (error) {
+          removeFailureListeners();
+          // terminate() in 0.0.8 assumes a successfully constructed native
+          // model; a startup failure must terminate its worker directly.
+          try { model.worker.terminate(); } catch (_) {}
+          isVoskReady = false;
+          reject(error);
+          return;
+        }
+        voskModel = model;
+        isVoskReady = true;
+        console.log('[Olanga] Vosk model loaded successfully.');
+        resolve(model);
+      };
+      const loaded = event => finish(event.detail?.result ? null : new Error('The offline speech model could not load.'));
+      const failed = event => {
+        const error = new Error(event?.detail?.error || event?.message || 'The offline speech worker stopped. Select your speech input again to retry.');
+        if (!settled) { finish(error); return; }
+        removeFailureListeners();
+        try { model.worker.terminate(); } catch (_) {}
+        // A dead worker can still report model.ready in the bundled library.
+        // Evict it so the next explicit initialization can recover.
+        if (voskModel !== model) return;
+        voskModel = null;
+        isVoskReady = false;
+        if (microphoneResources?.model === model) {
+          failMicrophoneRecognition(microphoneResources, 'Offline speech stopped. Select your speech input again to retry.');
+        }
+      };
+      const workerFailed = event => failed(event);
+      const timeout = setTimeout(() => finish(new Error('The offline speech model took too long to load.')), 45000);
+      model.addEventListener('load', loaded);
+      model.addEventListener('error', failed);
+      model.worker?.addEventListener?.('error', workerFailed);
+      model.worker?.addEventListener?.('messageerror', workerFailed);
+    }).finally(() => { voskModelLoadPromise = null; });
+    return voskModelLoadPromise;
 }
 
 // ============================================
 // MICROPHONE + RAW PCM CAPTURE
 // ============================================
 
+let microphoneInitPromise = null;
+let microphoneResources = null;
+let microphoneMonitorFrame = null;
+const MAX_RECORDING_SECONDS = 60;
+let recordingSampleCount = 0;
+
+// While recording, the on-device recognizer keeps a rough transcript. It only
+// shortens the pause after a complete local command and helps choose a reply
+// lane; Gemini's transcript, or the review step, still decides what runs.
+let liveTranscript = { finals: [], partial: '' };
+let liveCommandCache = { text: null, complete: false };
+
+function resetLiveTranscript() {
+  liveTranscript = { finals: [], partial: '' };
+}
+
+function getLiveTranscript() {
+  return [...liveTranscript.finals, liveTranscript.partial].join(' ').replace(/\[unk\]/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// The chosen pause (1.5 s by default) ends a spoken request. A complete local
+// command in the rough transcript needs only 60% of it, never under 600 ms.
+function endOfSpeechDelay() {
+  const base = typeof endOfSpeechMs === 'number' && endOfSpeechMs > 0 ? endOfSpeechMs : SILENCE_DURATION;
+  return liveCommandComplete() ? Math.max(600, Math.round(base * 0.6)) : base;
+}
+
+function liveCommandComplete() {
+  const text = getLiveTranscript();
+  if (text !== liveCommandCache.text) {
+    liveCommandCache = { text, complete: !!text && typeof OlangaIntents !== 'undefined' && !!OlangaIntents.parse(text, window.OlangaWorkspace?.options?.()) };
+  }
+  return liveCommandCache.complete;
+}
+
+function releaseMicrophoneResources(resources) {
+  if (!resources) return;
+  if (microphoneResources === resources) {
+    microphoneResources = null;
+    if (microphoneMonitorFrame !== null) cancelAnimationFrame(microphoneMonitorFrame);
+    microphoneMonitorFrame = null;
+    cancelRecording();
+  }
+  for (const [track, listener] of resources.trackListeners || []) track.removeEventListener?.('ended', listener);
+  if (resources.processor) resources.processor.onaudioprocess = null;
+  for (const node of [resources.source, resources.processor, resources.gain, resources.analyser]) {
+    try { node?.disconnect(); } catch (_) {}
+  }
+  try { resources.recognizer?.remove(); } catch (_) {}
+  try { resources.stream?.getTracks().forEach(track => track.stop()); } catch (_) {}
+  try { if (resources.context?.state !== 'closed') Promise.resolve(resources.context?.close()).catch(() => {}); } catch (_) {}
+  if (micStream === resources.stream) micStream = null;
+  if (audioContext === resources.context) audioContext = null;
+  if (voskRecognizer === resources.recognizer) voskRecognizer = null;
+  if (scriptNode === resources.processor) scriptNode = null;
+  if (analyser === resources.analyser) analyser = null;
+}
+
+function attachMicrophoneRecognizer(resources) {
+  if (isMicMuted || !voskModel?.ready || (resources.recognizer && resources.model === voskModel)) return;
+  try { resources.recognizer?.remove(); } catch (_) {}
+  resources.recognizer = new voskModel.KaldiRecognizer(resources.context.sampleRate);
+  resources.model = voskModel;
+  const recognizer = resources.recognizer;
+  const current = () => microphoneResources === resources && resources.recognizer === recognizer;
+  resources.recognizer.setWords(true);
+  resources.recognizer.on('result', message => {
+    if (current() && !isMicMuted) handleVoskResult(message?.result?.text, true);
+  });
+  resources.recognizer.on('partialresult', message => {
+    if (current() && !isMicMuted) handleVoskResult(message?.result?.partial, false);
+  });
+  resources.recognizer.on('error', () => {
+    if (current()) failMicrophoneRecognition(resources);
+  });
+  voskRecognizer = resources.recognizer;
+}
+
+function failMicrophoneRecognition(resources, message = 'Wake word recognition stopped. Mute and unmute the microphone to retry.') {
+  const recognizer = resources.recognizer;
+  resources.recognizer = null;
+  resources.model = null;
+  if (voskRecognizer === recognizer) voskRecognizer = null;
+  try { recognizer?.remove(); } catch (_) {}
+  showError(message);
+}
+
+function resetMicrophoneRecognition() {
+  const resources = microphoneResources;
+  if (!resources) return;
+  const recognizer = resources.recognizer;
+  resources.recognizer = null;
+  resources.model = null;
+  if (voskRecognizer === recognizer) voskRecognizer = null;
+  try { recognizer?.remove(); } catch (_) {}
+  if (!isMicMuted) {
+    try { attachMicrophoneRecognizer(resources); }
+    catch (_) { failMicrophoneRecognition(resources); }
+  }
+}
+
 async function initMicrophone() {
+  if (microphoneInitPromise) return microphoneInitPromise;
+  if (microphoneResources && microphoneResources.stream.active !== false && microphoneResources.context.state !== 'closed') {
+    attachMicrophoneRecognizer(microphoneResources);
+    return true;
+  }
+  releaseMicrophoneResources(microphoneResources);
+  microphoneInitPromise = initializeMicrophoneResources().finally(() => { microphoneInitPromise = null; });
+  return microphoneInitPromise;
+}
+
+async function initializeMicrophoneResources() {
+  const resources = {};
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({
+    resources.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
@@ -33,67 +196,85 @@ async function initMicrophone() {
         sampleRate: 16000 // Vosk works best at 16k
       }
     });
-
-    audioContext = new AudioContext({ sampleRate: 16000 });
-    const sampleRate = audioContext.sampleRate;
-    console.log(`[Olanga] AudioContext sample rate: ${sampleRate}`);
-
-    // Create Vosk recognizer
-    if (voskModel) {
-        voskRecognizer = new voskModel.KaldiRecognizer(sampleRate);
-        voskRecognizer.setWords(true);
-        voskRecognizer.on("result", (message) => {
-            handleVoskResult(message.result.text, true);
-        });
-        voskRecognizer.on("partialresult", (message) => {
-            handleVoskResult(message.result.partial, false);
-        });
+    resources.trackListeners = [];
+    for (const track of resources.stream.getTracks()) {
+      track.enabled = !isMicMuted;
+      const ended = () => {
+        if (microphoneResources !== resources) return;
+        const wasListening = currentState === State.LISTENING;
+        releaseMicrophoneResources(resources);
+        if (wasListening) setState(State.IDLE);
+        showError('The microphone disconnected. Reconnect it and select your speech input again.');
+      };
+      track.addEventListener?.('ended', ended);
+      resources.trackListeners.push([track, ended]);
     }
 
-    analyser = audioContext.createAnalyser();
-    analyser.fftSize = 512;
+    resources.context = new AudioContext({ sampleRate: 16000 });
+    const sampleRate = resources.context.sampleRate;
+    console.log(`[Olanga] AudioContext sample rate: ${sampleRate}`);
 
-    scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
-    scriptNode.onaudioprocess = (e) => {
-        if (isMicMuted) return;
+    attachMicrophoneRecognizer(resources);
+
+    resources.analyser = resources.context.createAnalyser();
+    resources.analyser.fftSize = 512;
+
+    resources.processor = resources.context.createScriptProcessor(4096, 1, 1);
+    resources.processor.onaudioprocess = (e) => {
+        if (microphoneResources !== resources || isMicMuted) return;
 
         const inputData = e.inputBuffer.getChannelData(0);
 
-        // Idle wake-word listen, or active custom wake-word enrollment.
+        // Idle wake-word listen, custom wake-word enrollment, or listening
+        // for the wake word to interrupt a reply.
         if (
-          ((currentState === State.IDLE && !isWakeWordCapturing) || isWakeWordCapturing)
-          && voskRecognizer
+          ((currentState === State.IDLE && !isWakeWordCapturing) || isWakeWordCapturing || (currentState === State.SPEAKING && isBargeInEnabled()) || (currentState === State.LISTENING && isRecording))
+          && resources.recognizer
           && isVoskReady
         ) {
-            voskRecognizer.acceptWaveformFloat(inputData, sampleRate);
+            try { resources.recognizer.acceptWaveformFloat(inputData, sampleRate); }
+            catch (_) { failMicrophoneRecognition(resources); }
         }
 
         // If recording, collect chunks for Gemini
         if (isRecording) {
-          pcmChunks.push(new Float32Array(inputData));
+          const remaining = Math.max(0, MAX_RECORDING_SECONDS * sampleRate - recordingSampleCount);
+          const chunk = new Float32Array(inputData.subarray(0, remaining));
+          if (chunk.length) { pcmChunks.push(chunk); recordingSampleCount += chunk.length; }
+          if (recordingSampleCount >= MAX_RECORDING_SECONDS * sampleRate) stopRecording();
         }
       };
 
-    const source = audioContext.createMediaStreamSource(micStream);
+    resources.source = resources.context.createMediaStreamSource(resources.stream);
 
     // Connect: source → analyser (for VAD visualization)
-    source.connect(analyser);
+    resources.source.connect(resources.analyser);
 
     // Connect: source → scriptProcessor → silent output (for PCM capture)
     // Must connect to destination for onaudioprocess to fire, but mute it
-    const silentGain = audioContext.createGain();
-    silentGain.gain.value = 0;
-    source.connect(scriptNode);
-    scriptNode.connect(silentGain);
-    silentGain.connect(audioContext.destination);
+    resources.gain = resources.context.createGain();
+    resources.gain.gain.value = 0;
+    resources.source.connect(resources.processor);
+    resources.processor.connect(resources.gain);
+    resources.gain.connect(resources.context.destination);
+
+    microphoneResources = resources;
+    micStream = resources.stream;
+    audioContext = resources.context;
+    analyser = resources.analyser;
+    scriptNode = resources.processor;
 
     console.log('[Olanga] ✅ Microphone initialized');
-    setState(State.IDLE);
+    // Initialization may finish after a typed request started. Never overwrite
+    // its THINKING/SPEAKING/LISTENING state with an unrelated microphone event.
+    if (currentState === State.IDLE) setState(State.IDLE);
     monitorAudio();
-
+    return true;
   } catch (err) {
+    releaseMicrophoneResources(resources);
     console.error('[Olanga] Mic init error:', err);
     showError('Microphone access denied or unavailable.');
+    return false;
   }
 }
 
@@ -101,10 +282,21 @@ async function initMicrophone() {
 // VOSK RESULT HANDLER
 // ============================================
 function handleVoskResult(text, isFinal = false) {
-    if (!text) return;
+    if (isMicMuted || typeof text !== 'string' || !text || (wakeCaptureOpen && !isWakeWordCapturing)) return;
 
     if (isWakeWordCapturing) {
         handleWakeWordCaptureResult(text, isFinal);
+        return;
+    }
+
+    if (currentState === State.LISTENING && isRecording) {
+        if (isFinal) { liveTranscript.finals.push(text.trim()); liveTranscript.partial = ''; }
+        else liveTranscript.partial = text.trim();
+        return;
+    }
+
+    if (currentState === State.SPEAKING) {
+        handleBargeIn(text);
         return;
     }
 
@@ -120,12 +312,78 @@ function handleVoskResult(text, isFinal = false) {
         console.log(`[Olanga] Wake word detected locally! Transcript: "${text}"`);
 
         setState(State.LISTENING);
-        startRecording();
+        if (startRecording() === false) return;
+        if (typeof warmProviderConnection === 'function') warmProviderConnection();
 
         userText.textContent = "Listening...";
         transcriptUser.classList.remove('hidden');
         transcriptAi.classList.add('hidden');
     }
+}
+
+// ============================================
+// WAKE-WORD INTERRUPTION (BARGE-IN)
+// ============================================
+
+function isBargeInEnabled() {
+  return typeof bargeInEnabled !== 'undefined' && bargeInEnabled === true;
+}
+
+// Olanga's own voice can reach the microphone, so only a greeting followed by
+// a name ("hey olanga") or a multi-word custom phrase interrupts a reply.
+// Single words such as "hey" and fuzzy presets such as "a olanga" never do.
+function getBargeInPhrases() {
+  const custom = typeof getCustomWakePhrases === 'function' ? getCustomWakePhrases() : [];
+  return [...PRESET_WAKE_WORDS.filter(phrase => /^(?:hey|hay|hail) \S/.test(phrase)), ...custom.filter(phrase => phrase.split(' ').length >= 2)];
+}
+
+function handleBargeIn(text) {
+  if (!isBargeInEnabled()) return;
+  const heard = normalizeWakePhrase(text);
+  const matched = getBargeInPhrases().some(phrase => new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(heard));
+  if (!matched) return;
+  console.log('[Olanga] Wake word heard during a reply; interrupting.');
+  // Stopping speech alone leaves a streamed Gemini turn running; cancel the
+  // request the same way push-to-talk and Escape do so late chunks cannot
+  // overwrite the next listen.
+  if (typeof cancelAssistantRequest === 'function') cancelAssistantRequest();
+  else if (typeof stopAssistantSpeech === 'function') stopAssistantSpeech();
+  if (followUpTimer) { clearTimeout(followUpTimer); followUpTimer = null; }
+  try { voskRecognizer?.reset(); } catch (_) {}
+  setState(State.LISTENING);
+  if (startRecording() === false) return;
+  if (typeof warmProviderConnection === 'function') warmProviderConnection();
+  userText.textContent = 'Listening...';
+  transcriptUser.classList.remove('hidden');
+  transcriptAi.classList.add('hidden');
+}
+
+// Push-to-talk works like the wake word: it interrupts a reply or a pending
+// request, and a second press while listening sends what was said so far.
+function handlePushToTalk() {
+  if (wakeCaptureOpen || window.OlangaDesktop?.isBusy?.()) return;
+  if (currentState === State.LISTENING && isRecording) {
+    if (hasSpokenDuringRecording) stopRecording();
+    else { cancelRecording(); setState(State.IDLE); }
+    return;
+  }
+  if (isMicMuted || !micStream || micStream.active === false) {
+    window.electronAPI?.expandWindow?.();
+    document.getElementById('textCommandInput')?.focus();
+    showError(isMicMuted ? 'The microphone is muted. Type your request, or unmute to talk.' : 'Voice input is off. Type your request, or choose a speech input in Settings.');
+    return;
+  }
+  if (currentState === State.SPEAKING || currentState === State.THINKING) {
+    if (typeof cancelAssistantRequest === 'function') cancelAssistantRequest();
+    else if (typeof stopAssistantSpeech === 'function') stopAssistantSpeech();
+  }
+  if (followUpTimer) { clearTimeout(followUpTimer); followUpTimer = null; }
+  setState(State.LISTENING);
+  if (startRecording() === false) return;
+  if (typeof warmProviderConnection === 'function') warmProviderConnection();
+  userText.textContent = 'Listening...';
+  transcriptUser.classList.remove('hidden');
+  transcriptAi.classList.add('hidden');
 }
 
 // ============================================
@@ -136,6 +394,7 @@ const WAKE_CAPTURE_TARGET = 5;
 let wakeCaptureSamples = [];
 let wakeCaptureIntended = '';
 let wakeCapturePhase = 'type'; // 'type' | 'record'
+let wakeCaptureOpen = false;
 let wakeCaptureLastAccepted = '';
 let wakeCaptureLastAcceptedAt = 0;
 
@@ -244,6 +503,7 @@ function handleWakeWordCaptureResult(text, isFinal) {
 function beginWakeWordRecording() {
   const els = getWakeCaptureEls();
   const typed = normalizeWakePhrase(els.intendedInput?.value || '');
+  if (isMicMuted) { showError('Unmute the microphone before recording a wake word.'); return; }
   if (typed.length < 2) {
     showError('Type a wake word of at least 2 characters first.');
     els.intendedInput?.focus();
@@ -270,6 +530,9 @@ function beginWakeWordRecording() {
 }
 
 function openWakeWordCaptureScreen() {
+  if (typeof cancelAssistantRequest === 'function') cancelAssistantRequest();
+  else if (typeof stopAssistantSpeech === 'function') stopAssistantSpeech();
+  wakeCaptureOpen = true;
   wakeCaptureSamples = [];
   wakeCaptureIntended = '';
   wakeCapturePhase = 'type';
@@ -310,6 +573,7 @@ function openWakeWordCaptureScreen() {
 function closeWakeWordCaptureScreen(options = {}) {
   const returnToSettings = options.returnToSettings !== false;
   isWakeWordCapturing = false;
+  wakeCaptureOpen = false;
   wakeCaptureSamples = [];
   wakeCaptureIntended = '';
   wakeCapturePhase = 'type';
@@ -352,7 +616,14 @@ function finishWakeWordCapture() {
     return;
   }
 
-  const group = addCustomWakeWordGroup(phrases, intended);
+  const previous = customWakeWordGroups.slice();
+  let group;
+  try { group = addCustomWakeWordGroup(phrases, intended); }
+  catch (error) {
+    customWakeWordGroups = previous;
+    showError('The wake word could not be saved. Free some storage and try again.');
+    return;
+  }
   if (typeof saveAppSettings === 'function') {
     saveAppSettings().catch(() => {});
   } else {
@@ -378,15 +649,17 @@ function cancelWakeWordCapture(options) {
 // ============================================
 
 function monitorAudio() {
+  microphoneMonitorFrame = null;
+  if (!microphoneResources || !analyser) return;
   if (currentState === State.THINKING || currentState === State.SPEAKING) {
-    requestAnimationFrame(monitorAudio);
+    microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
     return;
   }
 
   if (isMicMuted) {
     currentRMS = 0;
     updateWaveBars(0);
-    requestAnimationFrame(monitorAudio);
+    microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
     return;
   }
 
@@ -419,8 +692,8 @@ function monitorAudio() {
           silenceStartTime = Date.now();
         }
 
-        // Wait 4 seconds for them to START speaking. If they're already speaking, wait 1.5s to STOP.
-        const timeout = hasSpokenDuringRecording ? SILENCE_DURATION : (followUpTimer ? 12000 : 4000);
+        // Wait 4 seconds for them to START speaking, then the end-of-speech pause.
+        const timeout = hasSpokenDuringRecording ? endOfSpeechDelay() : (followUpTimer ? 12000 : 4000);
 
         if (Date.now() - silenceStartTime > timeout) {
           if (hasSpokenDuringRecording && (Date.now() - speechStartTime) > MIN_SPEECH_DURATION) {
@@ -434,7 +707,7 @@ function monitorAudio() {
       }
   }
 
-  requestAnimationFrame(monitorAudio);
+  microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
 }
 
 function updateWaveBars(rms) {
@@ -454,18 +727,32 @@ function updateWaveBars(rms) {
 // ============================================
 
 function startRecording() {
-  if (isRecording) return;
+  if (isRecording) return true;
+  if (isMicMuted || !micStream || micStream.active === false || !audioContext || audioContext.state === 'closed') {
+    if (currentState === State.LISTENING) setState(State.IDLE);
+    return false;
+  }
   isRecording = true;
   pcmChunks = [];
+  recordingSampleCount = 0;
   speechStartTime = null;
   silenceStartTime = Date.now(); // Start silence timer immediately for the 5s timeout
   hasSpokenDuringRecording = false;
+  resetLiveTranscript();
+  try { if (typeof voskRecognizer !== 'undefined') voskRecognizer?.reset(); } catch (_) {}
   console.log('[Olanga] 🎙️ Recording user query started');
+  return true;
 }
 
 function stopRecording() {
   if (!isRecording) return;
+  if (isMicMuted || !audioContext || audioContext.state === 'closed' || !micStream || micStream.active === false) {
+    cancelRecording();
+    if (currentState === State.LISTENING) setState(State.IDLE);
+    return;
+  }
   isRecording = false;
+  recordingSampleCount = 0;
 
   console.log(`[Olanga] 🎙️ Recording stopped — processing with Gemini`);
   setState(State.THINKING);
@@ -495,16 +782,19 @@ function stopRecording() {
   const sampleRate = audioContext.sampleRate;
   const wavBlob = encodeWAV(combined, sampleRate);
 
-  processAudioBlobWithGemini(wavBlob);
+  const rough = getLiveTranscript();
+  resetLiveTranscript();
+  processAudioBlobWithGemini(wavBlob, { rough });
 }
 
 function cancelRecording() {
-  if (!isRecording) return;
   isRecording = false;
+  recordingSampleCount = 0;
   pcmChunks = [];
   speechStartTime = null;
   silenceStartTime = null;
   hasSpokenDuringRecording = false;
+  resetLiveTranscript();
 }
 
 // ============================================

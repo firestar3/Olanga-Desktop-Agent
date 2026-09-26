@@ -27,24 +27,29 @@ let newsAiChatHistory = [];
 let newsAiChatSummary = '';
 let newsAiSidebarOpen = false;
 let newsLastLocationKey = '';
+let newsRefreshController = null;
+let newsChatController = null;
 const defaultNewsTopics = ['local', 'business', 'world', 'technology'];
 
 function getNewsModelName(selectedModel) {
   return 'gemini-3.5-flash-lite';
 }
+function readNewsLocation(key) {
+  try { return (localStorage.getItem(key) || '').trim(); } catch (_) { return ''; }
+}
 
 function getSavedLocationLabel() {
-  const city = (localStorage.getItem('olanga_city') || '').trim();
-  const state = (localStorage.getItem('olanga_state') || '').trim();
-  const country = (localStorage.getItem('olanga_country') || '').trim();
+  const city = readNewsLocation('olanga_city');
+  const state = readNewsLocation('olanga_state');
+  const country = readNewsLocation('olanga_country');
   const parts = [city, state, country].filter(Boolean);
   return parts.length > 0 ? parts.join(', ') : 'your area';
 }
 
 function getSavedLocationKey() {
-  const city = (localStorage.getItem('olanga_city') || '').trim();
-  const state = (localStorage.getItem('olanga_state') || '').trim();
-  const country = (localStorage.getItem('olanga_country') || '').trim();
+  const city = readNewsLocation('olanga_city');
+  const state = readNewsLocation('olanga_state');
+  const country = readNewsLocation('olanga_country');
   return [city, state, country].filter(Boolean).join('|').toLowerCase();
 }
 
@@ -142,10 +147,12 @@ function buildNewsArticleHtml(articleData) {
     `;
   }).join('');
 
-  const sourcePills = sourceArticles.slice(0, 8).map((article) => {
+  const sourcePills = sourceArticles.filter(article => article && typeof article === 'object').slice(0, 8).map((article) => {
     const label = article.source || 'Source';
     const title = article.title || 'Story';
-    const link = article.link ? `<a href="${escapeHtml(article.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>` : escapeHtml(title);
+    let href = '';
+    try { const url = new URL(article.link); if (['https:', 'http:'].includes(url.protocol)) href = url.href; } catch (_) {}
+    const link = href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>` : escapeHtml(title);
     return `<span class="news-source-pill">${escapeHtml(label)}: ${link}</span>`;
   }).join('');
 
@@ -208,10 +215,18 @@ function renderNewsBrief(articleData) {
 }
 
 async function loadNewsBrief(forceRefresh = false) {
-  const locationKey = getSavedLocationKey();
-  if (!forceRefresh && newsBriefData && newsLastLocationKey === locationKey && newsBriefData.title) {
+  const locationKey = JSON.stringify([getSavedLocationKey(), getSelectedNewsTopics()]);
+  if (!forceRefresh && !newsRefreshController && newsBriefData && newsLastLocationKey === locationKey && newsBriefData.title) {
     return;
   }
+  newsRefreshController?.abort();
+  const controller = new AbortController();
+  newsRefreshController = controller;
+  newsChatController?.abort();
+  newsChatController = null;
+  newsAiChatHistory = [];
+  if (newsAiChat) newsAiChat.replaceChildren();
+  setNewsAiStatusIdle();
 
   if (newsArticle) {
     newsArticle.classList.add('hidden');
@@ -222,15 +237,16 @@ async function loadNewsBrief(forceRefresh = false) {
   }
 
   const locationPayload = {
-    city: localStorage.getItem('olanga_city') || '',
-    state: localStorage.getItem('olanga_state') || '',
-    country: localStorage.getItem('olanga_country') || '',
+    city: readNewsLocation('olanga_city'),
+    state: readNewsLocation('olanga_state'),
+    country: readNewsLocation('olanga_country'),
     topics: getSelectedNewsTopics()
   };
 
   try {
     const bundle = await window.electronAPI.fetchNewsBundle(locationPayload);
-    newsBundleData = bundle;
+    if (controller.signal.aborted) return;
+    if (!Array.isArray(bundle?.articles) || !bundle.articles.length) throw new Error('No current headlines were returned. Please refresh again later.');
     const modelName = getNewsModelName('fast');
     const locationLabel = bundle.locationLabel || getSavedLocationLabel();
     const selectedTopics = bundle.topics || getSelectedNewsTopics();
@@ -277,7 +293,8 @@ ${sourceSummary || 'No headlines were returned.'}`;
     const data = await callGeminiChat(modelName, [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
-    ], { temperature: 0.5, max_tokens: 2400 });
+    ], { temperature: 0.5, max_tokens: 2400, signal: controller.signal });
+    if (controller.signal.aborted) return;
 
     const content = data?.choices?.[0]?.message?.content || '';
     const parsed = extractJsonPayload(content);
@@ -296,12 +313,16 @@ ${sourceSummary || 'No headlines were returned.'}`;
     articleData.generatedAt = bundle.generatedAt || new Date().toISOString();
     articleData.sourceArticles = bundle.articles;
     articleData.topics = selectedTopics;
+    newsBundleData = bundle;
     renderNewsBrief(articleData);
     newsLastLocationKey = locationKey;
     if (newsUpdatedBadge) {
       newsUpdatedBadge.classList.add('hidden');
     }
   } catch (error) {
+    if (controller.signal.aborted) return;
+    newsLastLocationKey = '';
+    newsBundleData = null;
     console.error('[Olanga] Failed to generate news brief:', error);
     if (newsUpdatedBadge) {
       newsUpdatedBadge.textContent = 'Failed to load';
@@ -322,7 +343,7 @@ ${sourceSummary || 'No headlines were returned.'}`;
     if (newsUpdatedBadge) {
       newsUpdatedBadge.classList.remove('hidden');
     }
-  }
+  } finally { if (newsRefreshController === controller) newsRefreshController = null; }
 }
 
 function getNewsAssistantSystemPrompt() {
@@ -375,7 +396,13 @@ function addNewsAiMessage(text, type) {
 
 async function sendNewsAiMessage() {
   const message = newsAiInput ? newsAiInput.value.trim() : '';
-  if (!message) return;
+  if (!message || newsChatController) return;
+  if (newsRefreshController || !newsBundleData) {
+    addNewsAiMessage('Load a current news brief before asking about its stories.', 'ai');
+    return;
+  }
+  const controller = new AbortController();
+  newsChatController = controller;
 
   if (newsAiStatusDot) newsAiStatusDot.classList.add('working');
   if (newsAiStatusText) newsAiStatusText.textContent = 'Working...';
@@ -388,19 +415,20 @@ async function sendNewsAiMessage() {
     const recentHistory = newsAiChatHistory.slice(-5);
     const messages = [
       { role: 'system', content: getNewsAssistantSystemPrompt() },
-      ...recentHistory,
-      { role: 'user', content: message }
+      ...recentHistory
     ];
-    const data = await callGeminiChat('gemini-3.5-flash-lite', messages, { temperature: 0.4, max_tokens: 900 });
+    const data = await callGeminiChat('gemini-3.5-flash-lite', messages, { temperature: 0.4, max_tokens: 900, signal: controller.signal });
+    if (controller.signal.aborted) return;
     const aiResponse = data?.choices?.[0]?.message?.content || 'I could not generate a response.';
     addNewsAiMessage(aiResponse, 'ai');
   } catch (error) {
+    if (controller.signal.aborted) return;
     console.error('[Olanga] News assistant error:', error);
     addNewsAiMessage(`Sorry, I encountered an error: ${error.message}.`, 'ai');
     if (newsAiStatusDot) newsAiStatusDot.classList.add('error');
     if (newsAiStatusText) newsAiStatusText.textContent = 'Error';
   } finally {
-    setNewsAiStatusIdle();
+    if (newsChatController === controller) { newsChatController = null; setNewsAiStatusIdle(); }
   }
 }
 

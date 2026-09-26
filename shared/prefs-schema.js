@@ -12,16 +12,19 @@
   const isNode = typeof module === 'object' && module.exports;
   const statusLight = isNode ? require('./status-light.js') : root.OlangaStatusLight;
   const quickActions = isNode ? require('./quick-actions.js') : root.OlangaQuickActions;
-  const api = factory(statusLight, quickActions);
+  const shortcuts = isNode ? require('./shortcuts.js') : root.OlangaShortcuts;
+  const api = factory(statusLight, quickActions, shortcuts);
   if (isNode) {
     module.exports = api;
   } else {
     root.OlangaPrefs = api;
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (statusLight, quickActions) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (statusLight, quickActions, shortcuts) {
   const DEFAULT_NVIDIA_VOICE = 'Magpie-Multilingual.EN-US.Sofia';
   const OPTIONAL_FEATURES = ['notepadScreen', 'newsScreen', 'terminalScreen'];
   const DEFAULT_TTS_RATE = 1.05;
+  // Silence that ends a spoken request. Standard keeps the original timing.
+  const END_OF_SPEECH_MS = Object.freeze({ standard: 1500, quick: 1000, fast: 700 });
 
   const PREF_DEFS = [
     { key: 'quickActions', storageKey: 'olanga_quick_actions', type: 'quickActions', default: quickActions.DEFAULT_QUICK_ACTIONS },
@@ -64,7 +67,11 @@
       type: 'enum',
       values: statusLight.SIZES,
       default: statusLight.DEFAULT_SIZE
-    }
+    },
+    { key: 'bargeIn', storageKey: 'olanga_barge_in', type: 'boolean', default: true },
+    { key: 'streamReplies', storageKey: 'olanga_stream_replies', type: 'boolean', default: true },
+    { key: 'endOfSpeech', storageKey: 'olanga_end_of_speech', type: 'enum', values: Object.keys(END_OF_SPEECH_MS), default: 'standard' },
+    { key: 'pushToTalk', storageKey: 'olanga_push_to_talk', type: 'enum', values: shortcuts.VALUES, default: shortcuts.DEFAULT }
   ];
 
   // One-time reshapes of stored values. Each records a flag once applied so
@@ -149,13 +156,14 @@
   }
 
   function readFromStorage(storage) {
+    const read = key => { try { return storage.getItem(key); } catch (_) { return null; } };
     const out = {};
     for (const def of PREF_DEFS) {
-      const parsed = parseStored(def, storage.getItem(def.storageKey));
+      const parsed = parseStored(def, read(def.storageKey));
       out[def.key] = parsed === undefined ? defaultValue(def) : parsed;
     }
     for (const migration of MIGRATIONS) {
-      out[migration.flagKey] = storage.getItem(migration.flagStorageKey) === '1';
+      out[migration.flagKey] = read(migration.flagStorageKey) === '1';
     }
     return out;
   }
@@ -230,6 +238,7 @@
     OPTIONAL_FEATURES,
     DEFAULT_NVIDIA_VOICE,
     DEFAULT_TTS_RATE,
+    END_OF_SPEECH_MS,
     coerce,
     defaults,
     definition,

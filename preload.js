@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   desktopCapture: () => ipcRenderer.invoke('desktop-capture'),
   desktopPrepare: (plan) => ipcRenderer.invoke('desktop-prepare', plan),
   desktopRun: (planId) => ipcRenderer.invoke('desktop-run', planId),
+  undoDesktopEdit: (undoId) => ipcRenderer.invoke('desktop-undo', undoId),
   desktopCancel: () => ipcRenderer.invoke('desktop-cancel'),
   onDesktopProgress: (callback) => {
     const handler = (_event, progress) => callback(progress);
@@ -24,12 +25,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getOpenAtLogin: () => ipcRenderer.invoke('get-open-at-login'),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke('set-open-at-login', enabled),
+  getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  setPushToTalk: (value) => ipcRenderer.invoke('set-push-to-talk', value),
+  onPushToTalk: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('push-to-talk', handler);
+    return () => ipcRenderer.removeListener('push-to-talk', handler);
+  },
+  notify: (payload) => ipcRenderer.send('notify', payload),
   openExternal: (url) => ipcRenderer.send('open-external', url),
   playSpotify: (type, term) => ipcRenderer.invoke('play-spotify', { type, term }),
   reloadSpotify: () => ipcRenderer.invoke('reload-spotify'),
   mediaControl: (cmd, spotifyOnly, level) => ipcRenderer.invoke('media-control', cmd, spotifyOnly, level),
   cancelMedia: () => ipcRenderer.send('media-cancel'),
   openApp: (appName) => ipcRenderer.invoke('open-app', appName),
+  listAppCapabilities: () => ipcRenderer.invoke('list-app-capabilities'),
+  checkRelease: () => ipcRenderer.invoke('check-release'),
+  arrangeApp: (payload) => ipcRenderer.invoke('arrange-app', payload),
   closeApp: (appName) => ipcRenderer.invoke('close-app', appName),
   requestScreenshot: () => ipcRenderer.invoke('request-screenshot'),
   executeCommand: (payload) => ipcRenderer.invoke('execute-command', payload),
@@ -39,6 +51,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchNewsBundle: (payload) => ipcRenderer.invoke('fetch-news-bundle', payload),
   nvidiaTtsConfig: (payload) => ipcRenderer.invoke('nvidia-tts-config', payload),
   nvidiaTtsSynthesize: (payload) => ipcRenderer.invoke('nvidia-tts-synthesize', payload),
+  providerGenerate: (payload) => ipcRenderer.invoke('provider-generate', payload),
+  // Partial text arrives as events; the invoke result is the authoritative full reply.
+  providerStream: (payload, onText) => {
+    const handler = (_event, chunk) => {
+      if (chunk?.requestId === payload?.requestId && typeof chunk.text === 'string') onText(chunk.text);
+    };
+    ipcRenderer.on('provider-stream-chunk', handler);
+    return ipcRenderer.invoke('provider-stream', payload).finally(() => ipcRenderer.removeListener('provider-stream-chunk', handler));
+  },
+  warmProvider: () => ipcRenderer.send('provider-warm'),
+  providerCancel: (requestId) => ipcRenderer.invoke('provider-cancel', requestId),
+  providerStatus: () => ipcRenderer.invoke('provider-status'),
   secureStoreGet: (key) => ipcRenderer.invoke('secure-store-get', key),
   secureStoreSet: (key, value) => ipcRenderer.invoke('secure-store-set', { key, value })
 });

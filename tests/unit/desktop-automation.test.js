@@ -24,7 +24,7 @@ function harness(options = {}) {
     desktopCapturer: { getSources: async () => { screenshotCount++; return [{ display_id: '1', thumbnail: { isEmpty: () => false, getSize: () => ({ width: 1920, height: 1080 }), toDataURL: () => 'data:image/png;base64,AA==' } }]; } },
     screen, globalShortcut: { register: (_, callback) => { registered = options.escapeUnavailable ? false : callback; return !!registered; }, unregister: () => { registered = false; } },
     getMainWindow: () => win, setOverlaySuspended: value => suspended.push(value), app, platform: 'win32', now: () => time, sleep: async () => {},
-    driverFactory: () => ({ request: async data => { requests.push(data); if (options.request) await options.request(data); return data.kind === 'inspect' ? structuredClone(snapshot) : null; }, dispose() {} })
+    driverFactory: () => ({ request: async data => { requests.push(data); if (options.request) { const answer = await options.request(data); if (answer !== undefined) return answer; } return data.kind === 'inspect' ? structuredClone(snapshot) : null; }, dispose() {} })
   });
   const invoke = (name, arg, sender = event) => handlers[`desktop-${name}`](sender, arg);
   return { invoke, api, event, handlers, requests, prompts, sent, suspended, screen, snapshot, target, get visible() { return visible; }, get screenshotCount() { return screenshotCount; }, get registered() { return registered; }, tick: ms => { time += ms; } };
@@ -170,4 +170,124 @@ test('cancelling while capture permission is open cannot create a later capture'
   await assert.rejects(pending, /cancelled/);
   assert.equal(h.screenshotCount, 0);
   h.api.dispose();
+});
+
+const fullReplacement = [{ type: 'hotkey', keys: ['CTRL', 'A'] }, { type: 'type', text: 'The new complete text.' }];
+function undoHarness(options = {}) {
+  let current = { handle: '100', processId: 321, processStart: '123', runtimeId: 'editor-1', automationId: 'text', controlType: 'ControlType.Edit', className: 'Edit', nativeHandle: 200, parentRuntimeId: 'parent-1', windowTitle: 'Notes', text: 'Original complete text.' };
+  const h = harness({ request: async data => {
+    if (options.request) { const result = await options.request(data); if (result !== undefined) return result; }
+    if (data.kind === 'capture-edit') return { supported: true, checkpoint: { ...current } };
+    if (data.kind === 'replace-edit') {
+      if (JSON.stringify(data.checkpoint) !== JSON.stringify(current)) throw new Error('Undo conflict: text or editor changed. No text was restored.');
+      current = { ...current, text: data.text }; return { ...current };
+    }
+  } });
+  return { ...h, current: () => current, change: values => { current = { ...current, ...values }; } };
+}
+
+test('full-field replacement produces a local checkpoint and verified single-use undo', async () => {
+  const h = undoHarness();
+  const { result } = await prepare(h, fullReplacement);
+  const delivered = await h.invoke('run', result.planId);
+  assert.equal(delivered.undo.available, true);
+  assert.equal(delivered.undo.before, 'Original complete text.');
+  assert.equal(delivered.undo.after, fullReplacement[1].text);
+  assert.equal(h.requests.filter(r => ['type', 'hotkey'].includes(r.kind)).length, 0);
+  assert.equal(h.current().text, fullReplacement[1].text);
+  assert.deepEqual(await h.invoke('undo', delivered.undo.undoId), { ok: true, verified: true, message: 'The original text was restored and verified.' });
+  assert.equal(h.current().text, delivered.undo.before);
+  const count = h.requests.length;
+  assert.equal((await h.invoke('undo', delivered.undo.undoId)).reason, 'expired');
+  assert.equal(h.requests.length, count);
+  h.api.dispose();
+});
+
+test('undo refuses intervening text and each native identity change without overwriting', async () => {
+  for (const change of [{ text: 'User typed after the edit.' }, { handle: '101' }, { processId: 322 }, { processStart: '456' }, { runtimeId: 'editor-2' }, { windowTitle: 'Other document' }, { parentRuntimeId: 'other-parent' }]) {
+    const h = undoHarness();
+    const { result } = await prepare(h, fullReplacement);
+    const delivered = await h.invoke('run', result.planId);
+    h.change(change);
+    const text = h.current().text;
+    const outcome = await h.invoke('undo', delivered.undo.undoId);
+    assert.equal(outcome.ok, false); assert.equal(outcome.reason, 'conflict');
+    assert.match(outcome.message, /No text was restored/);
+    assert.equal(h.current().text, text);
+    h.api.dispose();
+  }
+});
+
+test('expired and forged undo IDs cannot focus or modify an editor', async () => {
+  const h = undoHarness();
+  const { result } = await prepare(h, fullReplacement);
+  const delivered = await h.invoke('run', result.planId), count = h.requests.length;
+  assert.equal((await h.invoke('undo', 'forged')).reason, 'expired');
+  h.tick(300001);
+  assert.equal((await h.invoke('undo', delivered.undo.undoId)).reason, 'expired');
+  assert.equal(h.requests.length, count);
+  await assert.rejects(h.invoke('undo', delivered.undo.undoId, { sender: {}, senderFrame: h.event.senderFrame }), /local Olanga/);
+  h.api.dispose();
+});
+
+test('unsupported accessible editors keep normal input and report no undo', async () => {
+  const h = harness({ request: data => data.kind === 'capture-edit' ? { supported: false, message: 'This editor exposes no writable value.' } : undefined });
+  const { result } = await prepare(h, fullReplacement);
+  const delivered = await h.invoke('run', result.planId);
+  assert.equal(delivered.ok, true); assert.equal(delivered.undo.available, false);
+  assert.match(delivered.undo.message, /no writable value/);
+  assert.equal(h.requests.filter(r => r.kind === 'hotkey').length, 1);
+  assert.ok(h.requests.some(r => r.kind === 'type'));
+  assert.ok(!h.requests.some(r => r.kind === 'replace-edit'));
+  h.api.dispose();
+});
+
+test('plans with partial edits or follow-on commands never advertise full-field undo', async () => {
+  const { replacementIndex } = require('../../desktop/automation');
+  assert.equal(replacementIndex(fullReplacement), 0);
+  assert.equal(replacementIndex([{ type: 'focus' }, ...fullReplacement]), 1);
+  assert.equal(replacementIndex([...fullReplacement, { type: 'hotkey', keys: ['CTRL', 'S'] }]), -1);
+  assert.equal(replacementIndex([{ type: 'hotkey', keys: ['DELETE'] }, ...fullReplacement]), -1);
+  assert.equal(replacementIndex([{ type: 'type', text: 'Partial.' }]), -1);
+});
+
+test('a writable provider that rejects replacement never falls back to unguarded typing', async () => {
+  const h = undoHarness({ request: data => { if (data.kind === 'replace-edit') throw new Error('Provider rejected SetValue.'); } });
+  const { result } = await prepare(h, fullReplacement);
+  const delivered = await h.invoke('run', result.planId);
+  assert.equal(delivered.ok, false); assert.equal(delivered.undo.available, false);
+  assert.match(delivered.error, /rejected SetValue/);
+  assert.equal(h.requests.filter(r => ['type', 'hotkey'].includes(r.kind)).length, 0);
+  h.api.dispose();
+});
+
+test('cancellation after checkpoint capture prevents replacement', async () => {
+  let h;
+  h = undoHarness({ request: data => { if (data.kind === 'capture-edit') h.invoke('cancel'); } });
+  const { result } = await prepare(h, fullReplacement);
+  const delivered = await h.invoke('run', result.planId);
+  assert.equal(delivered.cancelled, true);
+  assert.ok(!h.requests.some(r => r.kind === 'replace-edit'));
+  assert.equal(delivered.undo.available, false);
+  h.api.dispose();
+});
+
+test('undo rechecks cancellation and expiry after focus before restoring text', async () => {
+  for (const action of ['cancel', 'expire']) {
+    let interrupt = false, h;
+    h = undoHarness({ request: data => {
+      if (interrupt && data.kind === 'focus') {
+        if (action === 'cancel') h.invoke('cancel');
+        else h.tick(300001);
+      }
+    } });
+    const { result } = await prepare(h, fullReplacement);
+    const delivered = await h.invoke('run', result.planId);
+    interrupt = true;
+    const restored = await h.invoke('undo', delivered.undo.undoId);
+    assert.equal(restored.ok, false);
+    assert.equal(h.requests.filter(r => r.kind === 'replace-edit').length, 1, 'Only the original replacement ran');
+    assert.equal(h.current().text, fullReplacement[1].text);
+    h.api.dispose();
+  }
 });

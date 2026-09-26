@@ -12,6 +12,38 @@ const APP_PREFS_STORE = 'app_preferences';
 const OPTIONAL_FEATURES = OlangaPrefs.OPTIONAL_FEATURES;
 
 let settingsSaveTimer = null;
+let savingSettingsGeminiKey = false;
+let speechInputChangeVersion = 0;
+let runtimeFeatures = null;
+// Read by the Workspace health check. `value` is the last shortcut requested.
+let pushToTalkStatus = { value: 'off', label: 'Off', registered: false };
+let pushToTalkRequest = 0;
+
+function renderPushToTalkStatus() {
+  const status = document.getElementById('pushToTalkStatus');
+  if (!status) return;
+  const { value, label, registered, pending } = pushToTalkStatus;
+  status.dataset.state = value === 'off' || pending ? '' : registered ? 'success' : 'error';
+  status.textContent = value === 'off' ? 'Off. Choose a shortcut to talk without saying the wake word.'
+    : pending ? `Setting up ${label}…`
+      : registered ? `Press ${label} anywhere to talk. Press it again to send right away.`
+        : `${label} is already used by another app. Choose a different shortcut.`;
+}
+
+// Registration happens in the main process; only an actual change (or an
+// explicit selection) asks Windows again.
+async function applyPushToTalk(value, force = false) {
+  const next = OlangaShortcuts.VALUES.includes(value) ? value : 'off';
+  if (!force && next === pushToTalkStatus.value) { renderPushToTalkStatus(); return; }
+  const request = ++pushToTalkRequest;
+  pushToTalkStatus = { value: next, label: OlangaShortcuts.label(next), registered: false, pending: next !== 'off' };
+  renderPushToTalkStatus();
+  let registered = false;
+  try { registered = !!(await window.electronAPI?.setPushToTalk?.(next))?.registered; } catch (error) { console.warn('[Olanga] Push-to-talk shortcut unavailable:', error.message); }
+  if (request !== pushToTalkRequest) return;
+  pushToTalkStatus = { value: next, label: OlangaShortcuts.label(next), registered };
+  renderPushToTalkStatus();
+}
 
 function readPrefsFromLocalStorage() {
   return {
@@ -46,6 +78,10 @@ function collectPrefsFromUI() {
       statusLightMode,
       statusLightSize,
       quickActions,
+      bargeIn: document.getElementById('bargeInToggle')?.checked ?? bargeInEnabled,
+      streamReplies: document.getElementById('streamRepliesToggle')?.checked ?? streamRepliesEnabled,
+      endOfSpeech: document.getElementById('endOfSpeechSelect')?.value || endOfSpeechKey(),
+      pushToTalk: document.getElementById('pushToTalkSelect')?.value || pushToTalkStatus.value,
       statusLightSizeV2: true
     }),
     customWakeWordGroups: Array.isArray(customWakeWordGroups) ? customWakeWordGroups : []
@@ -53,6 +89,7 @@ function collectPrefsFromUI() {
 }
 
 function writePrefsToLocalStorage(prefs) {
+  try {
   const clean = OlangaPrefs.applyMigrations(prefs);
   OlangaPrefs.writeToStorage(localStorage, clean);
   statusLightMode = clean.statusLightMode;
@@ -62,10 +99,21 @@ function writePrefsToLocalStorage(prefs) {
     customWakeWordGroups = prefs.customWakeWordGroups;
     persistCustomWakeWordGroups();
   }
+  return true;
+  } catch (error) { console.warn('[Olanga] Could not update local preferences:', error.message); return false; }
+}
+
+function endOfSpeechKey() {
+  return Object.keys(OlangaPrefs.END_OF_SPEECH_MS).find(key => OlangaPrefs.END_OF_SPEECH_MS[key] === endOfSpeechMs) || 'standard';
 }
 
 function applyPrefsToRuntime(prefs) {
   const clean = OlangaPrefs.applyMigrations(prefs);
+  bargeInEnabled = clean.bargeIn;
+  streamRepliesEnabled = clean.streamReplies;
+  endOfSpeechMs = OlangaPrefs.END_OF_SPEECH_MS[clean.endOfSpeech] || SILENCE_DURATION;
+  applyPushToTalk(clean.pushToTalk);
+  runtimeFeatures = [...clean.features];
   userCity = clean.city;
   userState = clean.state;
   userCountry = clean.country;
@@ -79,7 +127,7 @@ function applyPrefsToRuntime(prefs) {
 
   statusLightMode = clean.statusLightMode;
   statusLightSize = clean.statusLightSize;
-  OlangaPrefs.writeToStorage(localStorage, clean, ['statusLightMode', 'statusLightSize']);
+  try { OlangaPrefs.writeToStorage(localStorage, clean, ['statusLightMode', 'statusLightSize']); } catch (_) {}
   window.electronAPI?.setStatusLightMode?.(statusLightMode);
   window.electronAPI?.setStatusLightSize?.(statusLightSize);
   quickActions = clean.quickActions;
@@ -101,7 +149,7 @@ function applyPrefsToRuntime(prefs) {
         };
       })
       .filter(Boolean);
-    persistCustomWakeWordGroups();
+    try { persistCustomWakeWordGroups(); } catch (_) {}
   }
 }
 
@@ -123,6 +171,15 @@ function applyPrefsToSettingsUI(prefs) {
   document.querySelectorAll('input[data-feature]').forEach((toggle) => {
     toggle.checked = (prefs.features || []).includes(toggle.getAttribute('data-feature'));
   });
+  const bargeInToggle = document.getElementById('bargeInToggle');
+  if (bargeInToggle && typeof prefs.bargeIn === 'boolean') bargeInToggle.checked = prefs.bargeIn;
+  const streamRepliesToggle = document.getElementById('streamRepliesToggle');
+  if (streamRepliesToggle && typeof prefs.streamReplies === 'boolean') streamRepliesToggle.checked = prefs.streamReplies;
+  const endOfSpeechSelect = document.getElementById('endOfSpeechSelect');
+  if (endOfSpeechSelect && prefs.endOfSpeech) endOfSpeechSelect.value = prefs.endOfSpeech;
+  const pushToTalkSelect = document.getElementById('pushToTalkSelect');
+  if (pushToTalkSelect && prefs.pushToTalk) pushToTalkSelect.value = prefs.pushToTalk;
+  renderPushToTalkStatus();
   if (typeof applyFeatureToggles === 'function') applyFeatureToggles();
   if (typeof renderCustomWakeWords === 'function') renderCustomWakeWords();
   if (typeof updateStatusLightModeButton === 'function') updateStatusLightModeButton();
@@ -139,10 +196,12 @@ function scheduleSaveAppSettings() {
 }
 
 async function persistAppPreferences(prefs) {
-  writePrefsToLocalStorage(prefs);
   try {
     if (window.electronAPI?.secureStoreSet) {
       await window.electronAPI.secureStoreSet(APP_PREFS_STORE, JSON.stringify(prefs));
+      writePrefsToLocalStorage(prefs);
+    } else if (!writePrefsToLocalStorage(prefs)) {
+      throw new Error('Preferences could not be saved.');
     }
   } catch (error) {
     console.warn('[Olanga] Secure prefs save failed:', error.message);
@@ -185,21 +244,23 @@ async function saveAppSettings() {
     return true;
   } catch (error) {
     console.warn('[Olanga] Failed to save settings:', error.message);
+    showError('Your settings could not be saved. Keep Olanga open and try again.');
     return false;
   }
 }
 
-async function persistGeminiKeys() {
-  const payload = JSON.stringify(Array.isArray(apiKeys) ? apiKeys.filter(Boolean) : []);
+async function persistGeminiKeys(keys = apiKeys) {
+  let payload;
+  try { payload = JSON.stringify(OlangaGeminiKeys.validateCandidateKeys(keys)); }
+  catch (error) { showError(error.message); return false; }
   try {
     if (!window.electronAPI?.secureStoreSet) throw new Error('Secure storage unavailable');
     await window.electronAPI.secureStoreSet(GEMINI_KEYS_STORE, payload);
-    localStorage.removeItem('olanga_api_keys');
-    localStorage.removeItem('olanga_api_key');
+    removeLegacyKeys(['olanga_api_keys', 'olanga_api_key']);
     return true;
   } catch (error) {
     console.warn('[Olanga] Secure storage unavailable for Gemini keys:', error.message);
-    showError('Could not securely save your Gemini key. It is available for this session; try saving again.');
+    showError('Could not securely save your Gemini key. It cannot be used until securely saved; try saving again.');
     return false;
   }
 }
@@ -210,13 +271,17 @@ async function persistNvidiaKey(candidate = nvidiaApiKey) {
     if (!window.electronAPI?.secureStoreSet) throw new Error('Secure storage unavailable');
     await window.electronAPI.secureStoreSet(NVIDIA_KEY_STORE, value);
     nvidiaApiKey = value;
-    localStorage.removeItem('olanga_nvidia_key');
+    removeLegacyKeys(['olanga_nvidia_key']);
     return true;
   } catch (error) {
     console.warn('[Olanga] Secure storage unavailable for NVIDIA key:', error.message);
     showError('Could not securely save your NVIDIA key. Try saving again.');
     return false;
   }
+}
+function removeLegacyKeys(names) {
+  try { for (const name of names) localStorage.removeItem(name); }
+  catch (error) { console.warn('[Olanga] Secure save succeeded, but old browser storage could not be cleared:', error.message); }
 }
 
 let nvidiaConnectionCheckRunning = false;
@@ -328,77 +393,72 @@ function playSetupIntroReplay() {
 // Loads keys from the secure store, migrating plaintext localStorage
 // values (from earlier versions) if the store is empty.
 async function loadStoredKeys() {
-  let storedKeys = [];
+  const validKeys = OlangaGeminiKeys.normalizeSavedKeys;
+  let storedKeys = [], secureRead = false, secureKeysPresent = false, secureKeysValid = false;
   try {
-    if (!window.electronAPI?.secureStoreGet) {
-      throw new Error('secureStoreGet is not available from preload');
+    const raw = await window.electronAPI.secureStoreGet(GEMINI_KEYS_STORE);
+    secureRead = true;
+    secureKeysPresent = raw != null;
+    if (secureKeysPresent) {
+      const parsed = raw === '' ? [] : JSON.parse(raw);
+      if (!Array.isArray(parsed) && typeof parsed !== 'string') throw new Error('The secure Gemini entry is invalid.');
+      storedKeys = validKeys(parsed);
+      if ((Array.isArray(parsed) ? parsed.length : parsed.trim().length) && !storedKeys.length) throw new Error('The secure Gemini entry contains no readable keys.');
+      secureKeysValid = true;
     }
-    const secureKeys = await window.electronAPI.secureStoreGet(GEMINI_KEYS_STORE);
-    console.log('[Olanga] secure Gemini payload type:', typeof secureKeys, secureKeys ? 'non-empty' : 'empty');
-    if (secureKeys) {
-      const parsed = JSON.parse(secureKeys);
-      if (Array.isArray(parsed)) {
-        storedKeys = parsed.map(k => String(k || '').trim()).filter(Boolean);
-      } else if (typeof parsed === 'string' && parsed.trim()) {
-        storedKeys = [parsed.trim()];
-      }
-    }
-  } catch (error) {
-    console.warn('[Olanga] Failed to read secure Gemini keys:', error.message);
-  }
+  } catch (error) { console.warn('[Olanga] Failed to read secure Gemini keys:', error.message); }
 
-  if (!Array.isArray(storedKeys) || storedKeys.length === 0) {
+  // An explicitly empty secure entry represents a deletion. Do not resurrect
+  // old plaintext credentials, or replace an unreadable secure entry.
+  if (secureRead && !secureKeysPresent) {
     try {
-      const rawKeys = localStorage.getItem('olanga_api_keys');
-      if (rawKeys) storedKeys = JSON.parse(rawKeys);
-      if (!Array.isArray(storedKeys)) storedKeys = [];
-      const legacyKey = localStorage.getItem('olanga_api_key');
-      if (storedKeys.length === 0 && legacyKey) storedKeys = [legacyKey];
-      storedKeys = storedKeys.map(k => String(k || '').trim()).filter(Boolean);
-    } catch (e) {
-      console.error('Failed to parse stored API keys', e);
-      storedKeys = [];
-    }
+      let legacy = [];
+      const raw = localStorage.getItem('olanga_api_keys');
+      if (raw) {
+        try { legacy = validKeys(JSON.parse(raw)); }
+        catch (error) { console.warn('[Olanga] Legacy Gemini list could not be read:', error.message); }
+      }
+      if (!legacy.length) legacy = validKeys(localStorage.getItem('olanga_api_key'));
+      if (legacy.length && await persistGeminiKeys(legacy)) storedKeys = legacy;
+    } catch (error) { console.warn('[Olanga] Failed to migrate Gemini keys:', error.message); }
   }
-
-  if (storedKeys.length > 0) {
-    apiKeys = storedKeys;
-    apiKey = storedKeys[0];
-    await persistGeminiKeys();
-  }
+  apiKeys = storedKeys;
+  apiKey = storedKeys[0] || '';
+  currentKeyIndex = 0;
+  if (secureRead && secureKeysPresent && secureKeysValid) removeLegacyKeys(['olanga_api_keys', 'olanga_api_key']);
 
   let storedNvidiaKey = '';
   try {
-    storedNvidiaKey = (await window.electronAPI.secureStoreGet(NVIDIA_KEY_STORE)) || '';
-  } catch (error) {
-    console.warn('[Olanga] Failed to read secure NVIDIA key:', error.message);
-  }
-  if (!storedNvidiaKey) {
-    storedNvidiaKey = localStorage.getItem('olanga_nvidia_key') || '';
-  }
-  storedNvidiaKey = String(storedNvidiaKey || '').trim();
-  if (storedNvidiaKey) {
-    nvidiaApiKey = storedNvidiaKey;
-    await persistNvidiaKey();
-  }
-
-  console.log(`[Olanga] Loaded keys — Gemini: ${storedKeys.length}, NVIDIA: ${storedNvidiaKey ? 'yes' : 'no'}`);
+    const raw = await window.electronAPI.secureStoreGet(NVIDIA_KEY_STORE);
+    if (typeof raw === 'string') {
+      storedNvidiaKey = raw;
+      removeLegacyKeys(['olanga_nvidia_key']);
+    } else if (raw == null) {
+      const legacy = localStorage.getItem('olanga_nvidia_key') || '';
+      if (legacy && await persistNvidiaKey(legacy)) storedNvidiaKey = nvidiaApiKey;
+    }
+  } catch (error) { console.warn('[Olanga] Failed to load Magpie key:', error.message); }
+  nvidiaApiKey = storedNvidiaKey;
   return { geminiKeys: storedKeys, nvidiaKey: storedNvidiaKey };
 }
 
 // ---- API Key Setup ----
 async function handleSaveKey() {
+  if (savingSettingsGeminiKey) return;
   const key = apiKeyInput.value.trim();
   const nKey = nvidiaKeyInput.value.trim();
   if (!key) {
     showError('Please enter your Gemini API key');
     return;
   }
-  if (!apiKeys.includes(key)) {
-    apiKeys.push(key);
-  }
+  savingSettingsGeminiKey = true;
+  if (saveKeyBtn) saveKeyBtn.disabled = true;
+  try {
+  const keys = apiKeys.includes(key) ? [...apiKeys] : [...apiKeys, key];
+  if (!await persistGeminiKeys(keys)) return;
+  apiKeys = keys;
   apiKey = key;
-  if (!await persistGeminiKeys()) return;
+  currentKeyIndex = keys.indexOf(key);
 
   if (nKey) {
     if (!await persistNvidiaKey(nKey)) return;
@@ -407,17 +467,47 @@ async function handleSaveKey() {
   }
   if (setupScreen) setupScreen.classList.remove('setup-first-launch');
   showMainScreen();
+  } finally { savingSettingsGeminiKey = false; if (saveKeyBtn) saveKeyBtn.disabled = false; }
 }
 
-function handleAddKeyFromSettings() {
+async function handleAddKeyFromSettings() {
   const key = newKeyInput.value.trim();
-  if (!key) return;
-  if (!apiKeys.includes(key)) {
-    apiKeys.push(key);
-    persistGeminiKeys();
+  if (!key || savingSettingsGeminiKey) return;
+  savingSettingsGeminiKey = true;
+  if (addKeyBtn) addKeyBtn.disabled = true;
+  try {
+    const keys = apiKeys.includes(key) ? [...apiKeys] : [...apiKeys, key];
+    if (!await persistGeminiKeys(keys)) return;
+    const firstKey = !apiKey;
+    apiKeys = keys;
+    if (firstKey) { apiKey = key; currentKeyIndex = apiKeys.indexOf(key); }
+    if (newKeyInput.value.trim() === key) newKeyInput.value = '';
+    renderKeyList();
+    // A keyless local setup has never started the wake word or microphone.
+    if (firstKey && !micStream) { await initVosk(); if (apiKey && !micStream) await initMicrophone(); }
+  } catch (error) {
+    showError(error.message || 'Could not initialize voice input.');
+  } finally {
+    savingSettingsGeminiKey = false;
+    if (addKeyBtn) addKeyBtn.disabled = false;
   }
-  newKeyInput.value = '';
-  renderKeyList();
+}
+
+async function changeSpeechInput(select) {
+  const version = ++speechInputChangeVersion;
+  try {
+    window.OlangaWorkspace.preference('speechInput', select.value);
+    if (!micStream && (apiKey || select.value !== 'cloud')) {
+      await initVosk();
+      if (version !== speechInputChangeVersion) return;
+      // Recheck after model loading: keyless cloud input does not need a mic.
+      if (apiKey || window.OlangaWorkspace.snapshot().speechInput !== 'cloud') await initMicrophone();
+    }
+  } catch (error) {
+    if (version !== speechInputChangeVersion) return;
+    select.value = window.OlangaWorkspace.snapshot().speechInput;
+    showError(error.message);
+  }
 }
 
 function renderKeyList() {
@@ -433,8 +523,8 @@ function renderKeyList() {
     div.innerHTML = `
       <span class="key-item-text">Key ${i + 1}: ...${escapeHTML(k.slice(-6))}</span>
       <div class="key-item-actions">
-        <button class="key-btn select" data-key="${escapeHTML(k)}">Select</button>
-        <button class="key-btn delete" data-key="${escapeHTML(k)}">Del</button>
+        <button class="key-btn select" data-key-index="${i}">Select</button>
+        <button class="key-btn delete" data-key-index="${i}">Del</button>
       </div>
     `;
     keyListContainer.appendChild(div);
@@ -443,26 +533,34 @@ function renderKeyList() {
   // Bind actions
   keyListContainer.querySelectorAll('.select').forEach(b => {
     b.addEventListener('click', (e) => {
-      apiKey = e.target.dataset.key;
+      if (savingSettingsGeminiKey) return;
+      apiKey = apiKeys[Number(e.currentTarget.dataset.keyIndex)] || '';
       currentKeyIndex = apiKeys.indexOf(apiKey);
       renderKeyList();
     });
   });
   keyListContainer.querySelectorAll('.delete').forEach(b => {
-    b.addEventListener('click', (e) => {
-      const k = e.target.dataset.key;
-      apiKeys = apiKeys.filter(x => x !== k);
-      if (apiKey === k) {
-        apiKey = apiKeys.length > 0 ? apiKeys[0] : '';
-        currentKeyIndex = 0;
-      }
-      persistGeminiKeys();
-      renderKeyList();
-    });
+    b.addEventListener('click', (e) => removeGeminiKey(Number(e.currentTarget.dataset.keyIndex)));
   });
+}
+async function removeGeminiKey(index) {
+  if (savingSettingsGeminiKey || !Number.isInteger(index) || !apiKeys[index]) return;
+  savingSettingsGeminiKey = true;
+  try {
+    const removed = apiKeys[index];
+    const keys = apiKeys.filter((_, i) => i !== index);
+    if (!await persistGeminiKeys(keys)) return;
+    apiKeys = keys;
+    if (apiKey === removed) apiKey = keys[0] || '';
+    currentKeyIndex = Math.max(0, keys.indexOf(apiKey));
+    renderKeyList();
+  } finally { savingSettingsGeminiKey = false; }
 }
 
 // ---- Initialize ----
+function hasCompletedLocalSetup() {
+  try { return localStorage.getItem('olanga_local_setup') === 'true'; } catch (_) { return false; }
+}
 async function init() {
   // Load keys first — before any optional UI wiring that might throw and
   // leave the setup screen stuck with empty fields.
@@ -480,6 +578,8 @@ async function init() {
       setupScreen.classList.remove('setup-first-launch', 'setup-intro-done');
     }
     showMainScreen();
+  } else if (hasCompletedLocalSetup()) {
+    showMainScreen({ voice: window.OlangaWorkspace?.snapshot().speechInput !== 'cloud' });
   } else if (setupScreen) {
     // HTML already has setup-first-launch for first paint; re-trigger so the
     // staged intro always runs when Gemini is missing.
@@ -528,6 +628,15 @@ async function init() {
   updateClock();
 
   if (saveKeyBtn) saveKeyBtn.addEventListener('click', handleSaveKey);
+  document.getElementById('startLocalBtn')?.addEventListener('click', () => {
+    try { localStorage.setItem('olanga_local_setup', 'true'); } catch (_) {}
+    showMainScreen({ voice: false });
+  });
+  const speechInputSelect = document.getElementById('speechInputSelect');
+  if (speechInputSelect && window.OlangaWorkspace) {
+    speechInputSelect.value = window.OlangaWorkspace.snapshot().speechInput;
+    speechInputSelect.addEventListener('change', () => changeSpeechInput(speechInputSelect));
+  }
   const setupForm = document.getElementById('setupForm');
   if (setupForm) {
     setupForm.addEventListener('submit', (e) => {
@@ -557,7 +666,11 @@ async function init() {
         keyRotation: apiKeyRotation,
         customWakeWordGroups,
         statusLightMode,
-        statusLightSize
+        statusLightSize,
+        bargeIn: bargeInEnabled,
+        streamReplies: streamRepliesEnabled,
+        endOfSpeech: endOfSpeechKey(),
+        pushToTalk: pushToTalkStatus.value
       };
       applyPrefsToSettingsUI(prefs);
     } catch (error) {
@@ -677,6 +790,21 @@ async function init() {
   if (nvidiaVoiceSelect) {
     nvidiaVoiceSelect.addEventListener('change', scheduleSaveAppSettings);
   }
+  document.getElementById('bargeInToggle')?.addEventListener('change', scheduleSaveAppSettings);
+  document.getElementById('streamRepliesToggle')?.addEventListener('change', scheduleSaveAppSettings);
+  // Typing is a strong hint that a request is coming; warm the connection.
+  document.getElementById('textCommandInput')?.addEventListener('focus', () => warmProviderConnection());
+  document.getElementById('endOfSpeechSelect')?.addEventListener('change', scheduleSaveAppSettings);
+  const pushToTalkSelect = document.getElementById('pushToTalkSelect');
+  if (pushToTalkSelect) {
+    pushToTalkSelect.replaceChildren(...OlangaShortcuts.PUSH_TO_TALK.map(({ value, label }) => Object.assign(document.createElement('option'), { value, textContent: label })));
+    pushToTalkSelect.value = pushToTalkStatus.value;
+    pushToTalkSelect.addEventListener('change', () => {
+      applyPushToTalk(pushToTalkSelect.value, true);
+      scheduleSaveAppSettings();
+    });
+  }
+  window.electronAPI?.onPushToTalk?.(() => handlePushToTalk());
 
   nvidiaApiKey = nvidiaKey || nvidiaApiKey;
   if (nvidiaSettingsKeyInput) {
@@ -684,7 +812,7 @@ async function init() {
   }
   // The hosted Magpie model resolves its own function ID. Remove the
   // obsolete legacy setting now that there is no UI for it.
-  localStorage.removeItem('olanga_nvidia_function_id');
+  removeLegacyKeys(['olanga_nvidia_function_id']);
 
   applyPrefsToSettingsUI({
     city: userCity,
@@ -694,7 +822,11 @@ async function init() {
     ttsRate,
     nvidiaVoice: nvidiaVoiceName,
     features: getEnabledFeatures(),
-    keyRotation: apiKeyRotation
+    keyRotation: apiKeyRotation,
+    bargeIn: bargeInEnabled,
+    streamReplies: streamRepliesEnabled,
+    endOfSpeech: endOfSpeechKey(),
+    pushToTalk: pushToTalkStatus.value
   });
 
   if (geminiKeys.length > 0) {
@@ -714,8 +846,7 @@ async function init() {
   const handleManualAddTask = () => {
     const text = taskInput.value.trim();
     if (text) {
-      addTask(text);
-      taskInput.value = '';
+      if (addTask(text).ok) taskInput.value = '';
     }
   };
 
@@ -747,8 +878,7 @@ async function init() {
     if (!raw) return;
     const seconds = parseTimerInput(raw);
     if (seconds > 0) {
-      createTimer(seconds);
-      timerInput.value = '';
+      if (createTimer(seconds).ok) timerInput.value = '';
     }
   };
 
@@ -784,8 +914,8 @@ async function init() {
     });
   }
 
-  // Render initial timers (shows empty state)
-  renderTimers();
+  // Restore deadlines, including timers that expired while Olanga was closed.
+  loadTimers();
 
   try {
     if (orbCanvas) {
@@ -849,7 +979,7 @@ function updateStatusLightModeButton() {
 
 function cycleStatusLightMode() {
   statusLightMode = OlangaStatusLight.nextMode(statusLightMode);
-  OlangaPrefs.writeToStorage(localStorage, { statusLightMode }, ['statusLightMode']);
+  try { OlangaPrefs.writeToStorage(localStorage, { statusLightMode }, ['statusLightMode']); } catch (_) {}
   if (window.electronAPI?.setStatusLightMode) {
     window.electronAPI.setStatusLightMode(statusLightMode);
   }
@@ -867,11 +997,11 @@ function updateStatusLightSizeButton() {
 
 function cycleStatusLightSize() {
   statusLightSize = OlangaStatusLight.nextSize(statusLightSize);
-  OlangaPrefs.writeToStorage(
+  try { OlangaPrefs.writeToStorage(
     localStorage,
     { statusLightSize, statusLightSizeV2: true },
     ['statusLightSize']
-  );
+  ); } catch (_) {}
   if (window.electronAPI?.setStatusLightSize) {
     window.electronAPI.setStatusLightSize(statusLightSize);
   }
@@ -922,7 +1052,7 @@ function renderCustomWakeWords() {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-wake-id');
       if (!id) return;
-      removeCustomWakeWordGroup(id);
+      try { removeCustomWakeWordGroup(id); } catch (error) { showError('The wake word could not be removed. Please try again.'); return; }
       if (typeof saveAppSettings === 'function') {
         saveAppSettings().catch(() => {});
       }
@@ -938,7 +1068,7 @@ function renderCustomWakeWords() {
 // ============================================
 
 function getEnabledFeatures() {
-  return OlangaPrefs.readFromStorage(localStorage).features;
+  return runtimeFeatures ? [...runtimeFeatures] : OlangaPrefs.readFromStorage(localStorage).features;
 }
 
 function setFeatureEnabled(feature, enabled) {
@@ -946,7 +1076,8 @@ function setFeatureEnabled(feature, enabled) {
   const next = enabled
     ? [...new Set([...current, feature])]
     : current.filter(f => f !== feature);
-  OlangaPrefs.writeToStorage(localStorage, { features: next }, ['features']);
+  runtimeFeatures = next;
+  try { OlangaPrefs.writeToStorage(localStorage, { features: next }, ['features']); } catch (_) {}
   applyFeatureToggles();
   // Durable save (localStorage + secure store).
   if (typeof scheduleSaveAppSettings === 'function') {

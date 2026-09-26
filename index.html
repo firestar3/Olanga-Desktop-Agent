@@ -122,6 +122,8 @@
           <label class="setup-label" for="nvidiaKeyInput" style="margin-top:10px;">NVIDIA API Key <span class="setup-optional">(optional — Magpie voice only)</span></label>
           <input type="password" id="nvidiaKeyInput" name="nvidiaKey" class="setup-input" placeholder="NVIDIA key for Magpie voice only..." autocomplete="off" spellcheck="false">
           <button type="submit" class="setup-btn" id="saveKeyBtn">Activate Olanga</button>
+          <button type="button" class="setup-btn setup-local-btn" id="startLocalBtn">Use local commands without a key</button>
+          <p class="setup-hint">Type app, music, timer, checklist, and volume commands. Add a Gemini key later for questions and cloud speech.</p>
         </form>
       </div>
     </div>
@@ -462,6 +464,11 @@
         <p class="settings-hint">Choose how Olanga speaks. Windows uses the built-in system voice; Magpie uses NVIDIA cloud TTS.</p>
         <div class="voice-settings-grid">
           <div class="voice-settings-row full-width">
+            <label for="speechInputSelect">Speech recognition</label>
+            <select id="speechInputSelect"><option value="cloud">Gemini (cloud)</option><option value="offline">On-device commands (English, review first)</option><option value="offline-general">On-device dictation (English, experimental)</option></select>
+            <p class="settings-hint">On-device recognition asks you to review the transcript before sending. It can be slower and less accurate. Questions and screen tasks still use Gemini; audio stays on this device.</p>
+          </div>
+          <div class="voice-settings-row full-width">
             <label for="ttsEngineSelect">Voice Engine</label>
             <select id="ttsEngineSelect">
               <option value="windows">Windows (built-in)</option>
@@ -475,6 +482,29 @@
               <span id="ttsRateValue">1.05x</span>
             </div>
           </div>
+          <div class="voice-settings-row full-width">
+            <label for="endOfSpeechSelect">End of speech</label>
+            <select id="endOfSpeechSelect">
+              <option value="standard">Standard (1.5 second pause)</option>
+              <option value="quick">Quick (1 second pause)</option>
+              <option value="fast">Fast (0.7 second pause; may cut off long pauses)</option>
+            </select>
+            <p class="settings-hint">How long Olanga waits after you stop talking before it sends your request.</p>
+          </div>
+        </div>
+        <div class="rotation-toggle-row">
+          <label class="toggle-switch">
+            <input type="checkbox" id="bargeInToggle" checked>
+            <span class="slider"></span>
+          </label>
+          <span>Interrupt a reply by saying “Hey Olanga”</span>
+        </div>
+        <div class="rotation-toggle-row">
+          <label class="toggle-switch">
+            <input type="checkbox" id="streamRepliesToggle" checked>
+            <span class="slider"></span>
+          </label>
+          <span>Streamed replies: start answering before the full reply is ready</span>
         </div>
         <div id="magpieVoiceSettings" class="voice-settings-grid" style="margin-top: 12px;">
           <div class="voice-settings-row full-width">
@@ -505,6 +535,18 @@
           </label>
           <span>Launch at login</span>
         </div>
+      </div>
+
+      <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
+        <h3>Push-to-talk</h3>
+        <p class="settings-hint">Press a shortcut anywhere in Windows to start talking without the wake word. It can also interrupt a reply.</p>
+        <div class="voice-settings-grid">
+          <div class="voice-settings-row full-width">
+            <label for="pushToTalkSelect">Shortcut</label>
+            <select id="pushToTalkSelect"><option value="off">Off</option></select>
+          </div>
+        </div>
+        <p id="pushToTalkStatus" class="settings-hint" role="status" aria-live="polite"></p>
       </div>
 
       <div class="settings-section agent-settings">
@@ -614,13 +656,21 @@
   <script src="./shared/quick-actions.js"></script>
   <script src="./shared/gemini-request.js"></script>
   <script src="./shared/fast-intents.js"></script>
+  <script src="./shared/productivity.js"></script>
   <script src="./shared/nvidia-key.js"></script>
+  <script src="./shared/gemini-keys.js"></script>
+  <script src="./shared/shortcuts.js"></script>
+  <script src="./shared/conversation.js"></script>
+  <script src="./shared/briefing.js"></script>
+  <script src="./shared/health.js"></script>
   <script src="./shared/prefs-schema.js"></script>
   <script src="./js/core.js"></script>
   <script src="./js/audio-controls.js"></script>
   <script src="./js/voice.js"></script>
+  <script src="./js/offline-speech.js"></script>
   <script src="./js/tts.js"></script>
   <script src="./js/timers-tasks.js"></script>
+  <script src="./js/productivity.js"></script>
   <script src="./js/assistant.js"></script>
   <script src="./shared/action-plan.js"></script>
   <script src="./js/desktop-workflows.js"></script>

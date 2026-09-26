@@ -57,5 +57,12 @@
 .desktop-task-dialog button:disabled, .desktop-task-dialog textarea:disabled { opacity: .48; cursor: default; }
 .desktop-task-dialog :focus-visible, .desktop-task-launch:focus-visible { outline: 2px solid #d1b9ff; outline-offset: 3px; }
 .desktop-task-footer { margin-bottom: 0; }
+.desktop-task-undo { padding: 14px; margin: 14px 0; border: 1px solid #a791d830; border-radius: 12px; }
+.desktop-task-diff { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin: 14px 0; }
+.desktop-task-diff h3 { font-size: 12px; }
+.desktop-task-diff pre { max-height: 250px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px; margin: 0; background: #0b0b13; border-radius: 8px; font: 12px/1.6 monospace; }
+.desktop-task-removed { color: #ffd1d7; background: #9d26384d; text-decoration: line-through; }
+.desktop-task-added { color: #c1f9df; background: #17734a66; }
+@media (max-width: 540px) { .desktop-task-diff { grid-template-columns: 1fr; } }
 @media (max-width: 540px) { .desktop-task-dialog { padding: 20px; width: calc(100vw - 24px); } .desktop-task-dialog h2 { font-size: 22px; } .desktop-task-header { gap: 8px; } }
 @media (prefers-reduced-motion: reduce) { .desktop-task-launch, .desktop-task-primary, .desktop-task-secondary { transition: none; } }

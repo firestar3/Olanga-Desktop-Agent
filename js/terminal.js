@@ -15,6 +15,13 @@ const terminalStartupHtml = `Windows PowerShell<br>Copyright (C) Microsoft Corpo
 let terminalTabsData = [];
 let currentTerminalTabId = 0;
 let terminalDefaultCwd = 'C:\\';
+const terminalSessionPromises = new WeakMap();
+const closingTerminalTabs = new Set();
+let terminalSaveWarningShown = false;
+
+function isLiveTerminalTab(tab) {
+  return terminalTabsData.includes(tab) && !closingTerminalTabs.has(tab);
+}
 
 function createTerminalHeaderEntry() {
   return {
@@ -41,17 +48,26 @@ function normalizeTerminalTab(tab) {
   if (!tab.entries || !Array.isArray(tab.entries)) {
     tab.entries = [createTerminalHeaderEntry()];
   }
-  if (!tab.cwd) {
+  tab.entries = tab.entries.filter(entry => entry && typeof entry === 'object');
+  if (typeof tab.cwd !== 'string' || !tab.cwd) {
     tab.cwd = terminalDefaultCwd;
   }
-  if (!tab.name) {
+  if (typeof tab.name !== 'string' || !tab.name) {
     tab.name = `Terminal ${tab.id + 1}`;
   }
   return tab;
 }
 
 function saveTerminalTabs() {
-  localStorage.setItem(terminalStorageKey, JSON.stringify(terminalTabsData));
+  try {
+    localStorage.setItem(terminalStorageKey, JSON.stringify(terminalTabsData));
+    terminalSaveWarningShown = false;
+    return true;
+  } catch (error) {
+    if (!terminalSaveWarningShown) alert('Terminal history could not be saved. Copy any output you need before closing Olanga.');
+    terminalSaveWarningShown = true;
+    return false;
+  }
 }
 
 function getActiveTerminalTab() {
@@ -74,7 +90,8 @@ function renderTerminalEntry(entry) {
   entryDiv.className = 'terminal-entry';
   if (entry.type === 'header') {
     entryDiv.classList.add('terminal-startup-header');
-    entryDiv.innerHTML = entry.html || '';
+    // Stored history is data; only the built-in header is trusted markup.
+    entryDiv.innerHTML = terminalStartupHtml;
   } else if (entry.type === 'command') {
     entryDiv.classList.add('terminal-command-line');
     entryDiv.innerHTML = `<span class="terminal-prompt">${escapeHTML(entry.prompt || '')}</span> <span class="terminal-command-text"></span>`;
@@ -158,19 +175,24 @@ function switchTerminalTab(tabId) {
 
 async function ensureTerminalSession(tab) {
   if (!window.electronAPI || !window.electronAPI.createTerminalSession || !tab) {
-    return;
+    throw new Error('Terminal sessions are unavailable. Restart Olanga and try again.');
   }
-
-  const response = await window.electronAPI.createTerminalSession({
-    sessionId: tab.id
-  });
-
-  if (response && response.cwd) {
-    tab.cwd = response.cwd;
-    if (tab.id === currentTerminalTabId) {
-      updateTerminalPromptText();
+  if (!isLiveTerminalTab(tab)) return false;
+  if (terminalSessionPromises.has(tab)) return terminalSessionPromises.get(tab);
+  const pending = (async () => {
+    // Match the previous startup behavior: let Windows choose an existing home
+    // directory instead of passing a saved path that may no longer exist.
+    const response = await window.electronAPI.createTerminalSession({ sessionId: tab.id });
+    if (!isLiveTerminalTab(tab)) return false;
+    if (response && response.cwd) {
+      tab.cwd = response.cwd;
+      if (tab.id === currentTerminalTabId) updateTerminalPromptText();
     }
-  }
+    return true;
+  })();
+  terminalSessionPromises.set(tab, pending);
+  try { return await pending; }
+  catch (error) { terminalSessionPromises.delete(tab); throw error; }
 }
 
 async function addTerminalTab() {
@@ -184,17 +206,14 @@ async function addTerminalTab() {
 }
 
 async function closeTerminalTab(tabId) {
-  if (terminalTabsData.length <= 1) {
+  const closingTab = terminalTabsData.find(tab => tab.id === tabId);
+  if (!closingTab || closingTerminalTabs.has(closingTab)) return;
+  if (terminalTabsData.length - closingTerminalTabs.size <= 1) {
     alert('You need at least one terminal tab open.');
     return;
   }
 
-  const tabIndex = terminalTabsData.findIndex(tab => tab.id === tabId);
-  if (tabIndex === -1) {
-    return;
-  }
-
-  const closingTab = terminalTabsData[tabIndex];
+  closingTerminalTabs.add(closingTab);
   if (window.electronAPI && window.electronAPI.closeTerminalSession) {
     try {
       await window.electronAPI.closeTerminalSession({ sessionId: closingTab.id });
@@ -203,6 +222,10 @@ async function closeTerminalTab(tabId) {
     }
   }
 
+  const tabIndex = terminalTabsData.indexOf(closingTab);
+  closingTerminalTabs.delete(closingTab);
+  terminalSessionPromises.delete(closingTab);
+  if (tabIndex < 0) return;
   terminalTabsData.splice(tabIndex, 1);
   if (currentTerminalTabId === tabId) {
     const nextTab = terminalTabsData[Math.max(0, tabIndex - 1)];
@@ -241,16 +264,13 @@ function resetTerminalTab(tabId) {
 }
 
 function ensureTerminalTabsLoaded() {
-  const savedTerminalTabs = localStorage.getItem(terminalStorageKey);
-  if (savedTerminalTabs) {
-    try {
-      terminalTabsData = JSON.parse(savedTerminalTabs).map(normalizeTerminalTab);
-    } catch (error) {
-      console.error('Error parsing terminal tabs from localStorage, resetting tabs:', error);
-      terminalTabsData = [createTerminalTab('Terminal 1', 'C:\\')];
-    }
-  } else {
-    terminalTabsData = [createTerminalTab('Terminal 1', 'C:\\')];
+  try {
+    const saved = JSON.parse(localStorage.getItem(terminalStorageKey) || '[]');
+    terminalTabsData = Array.isArray(saved) ? saved.filter(tab => tab && typeof tab === 'object')
+      .map((tab, index) => normalizeTerminalTab({ ...tab, id: index })) : [];
+  } catch (error) {
+    console.warn('[Olanga] Could not read saved terminal tabs:', error.message);
+    terminalTabsData = [];
   }
 
   if (terminalTabsData.length === 0) {
@@ -265,9 +285,8 @@ function ensureTerminalTabsLoaded() {
 
 async function initTerminalTabs() {
   ensureTerminalTabsLoaded();
-  for (const tab of terminalTabsData) {
-    await ensureTerminalSession(tab);
-  }
+  // Saved tabs are UI state. The main process creates a shell on the first
+  // explicit command; startup must not launch an optional, hidden terminal.
   terminalDefaultCwd = getActiveTerminalTab()?.cwd || terminalDefaultCwd;
   renderTerminalTabs();
   renderTerminalOutput();
@@ -311,27 +330,19 @@ async function executeTerminalCommand(command) {
     return;
   }
 
-  appendTerminalEntry(activeTab.id, {
-    type: 'command',
-    text: command,
-    prompt: getTerminalPromptText()
-  });
-
   // Handle special commands
   if (command.toLowerCase() === 'clear' || command.toLowerCase() === 'cls') {
     resetTerminalTab(activeTab.id);
     return;
   }
 
-  appendTerminalEntry(activeTab.id, {
-    type: 'status',
-    text: 'Running...'
-  });
-
   try {
+    if (!await ensureTerminalSession(activeTab) || !isLiveTerminalTab(activeTab)) return;
+    appendTerminalEntry(activeTab.id, { type: 'command', text: command, prompt: `PS ${activeTab.cwd}>` });
+    appendTerminalEntry(activeTab.id, { type: 'status', text: 'Running...' });
     const response = await window.electronAPI.executeTerminalSessionCommand({ command, sessionId: activeTab.id, cwd: activeTab.cwd });
-
-    const terminalTab = terminalTabsData.find(tab => tab.id === activeTab.id);
+    if (!isLiveTerminalTab(activeTab)) return;
+    const terminalTab = activeTab;
     if (terminalTab && response && response.cwd) {
       terminalTab.cwd = response.cwd;
       if (terminalTab.id === currentTerminalTabId) {
@@ -351,6 +362,7 @@ async function executeTerminalCommand(command) {
         : 'Command finished.'
     });
   } catch (error) {
+    if (!isLiveTerminalTab(activeTab)) return;
     appendTerminalEntry(activeTab.id, {
       type: 'error',
       text: error.message || 'Command execution failed'
@@ -360,9 +372,10 @@ async function executeTerminalCommand(command) {
 
 async function initializeTerminal() {
   await initTerminalTabs();
-  saveTerminalTabs();
   renderTerminalTabs();
   renderTerminalOutput();
 }
 
-initializeTerminal();
+initializeTerminal().catch(error => {
+  console.warn('[Olanga] Terminal initialization failed:', error.message);
+});

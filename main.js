@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, clipboard, protocol, net, safeStorage, screen, dialog, desktopCapturer, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, clipboard, protocol, net, safeStorage, screen, dialog, desktopCapturer, globalShortcut, Notification } = require('electron');
 const fs = require('fs');
 const http2 = require('http2');
 const zlib = require('zlib');
@@ -17,6 +17,7 @@ const { createMediaController } = require('./desktop/media-controller');
 const mediaController = createMediaController();
 const { isTrustedMainFrame, validateStoreKey } = require('./shared/ipc-policy');
 const { normalizeNvidiaKey } = require('./shared/nvidia-key');
+const { normalizeSavedKeys: normalizeGeminiKeys, validateCandidateKeys: validateGeminiKeys } = require('./shared/gemini-keys');
 
 let mainWindow;
 let tray = null;
@@ -1065,7 +1066,6 @@ if (!gotTheLock) {
 app.on('before-quit', () => {
   app.isQuiting = true;
   mediaController.dispose();
-  for (const cancel of pendingAppLaunches) cancel();
   desktopAutomation?.dispose();
   destroyStatusIndicatorWindow();
 });
@@ -1100,6 +1100,37 @@ trustedMainIpc.handle('get-open-at-login', () => getOpenAtLogin());
 
 trustedMainIpc.handle('set-open-at-login', (_event, enabled) => setOpenAtLogin(enabled));
 
+trustedMainIpc.handle('get-app-info', () => ({ version: app.getVersion(), packaged: app.isPackaged }));
+
+const { createPushToTalk } = require('./desktop/push-to-talk');
+const pushToTalk = createPushToTalk({
+  globalShortcut,
+  onTrigger: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('push-to-talk'); }
+});
+trustedMainIpc.handle('set-push-to-talk', (_event, value) => pushToTalk.set(value));
+app.on('will-quit', () => pushToTalk.dispose());
+
+// Timer and reminder notices appear only when the user is not already looking
+// at Olanga, where the ringing card is visible. Olanga plays its own sound.
+const activeNotifications = new Set();
+trustedMainIpc.on('notify', (_event, payload) => {
+  const text = (value, limit) => (typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, limit) : '');
+  const title = text(payload?.title, 80), body = text(payload?.body, 240);
+  if (!title || !Notification.isSupported()) return;
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()) return;
+  try {
+    const notice = new Notification({ title, body, icon: path.join(__dirname, 'icon.png'), silent: true });
+    const release = () => activeNotifications.delete(notice);
+    notice.on('click', () => { release(); showMainWindow(); });
+    notice.on('close', release);
+    activeNotifications.add(notice);
+    if (activeNotifications.size > 20) activeNotifications.delete(activeNotifications.values().next().value);
+    notice.show();
+  } catch (error) {
+    console.warn('[Main] Notification could not be shown:', error.message);
+  }
+});
+
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['https:', 'http:', 'spotify:']);
 
 function openExternalSafe(url) {
@@ -1109,7 +1140,9 @@ function openExternalSafe(url) {
       console.warn(`[Main] Blocked openExternal for disallowed protocol: ${parsed.protocol}`);
       return;
     }
-    shell.openExternal(parsed.toString());
+    shell.openExternal(parsed.toString()).catch(error => {
+      console.warn('[Main] Could not open external link:', error.message);
+    });
   } catch {
     console.warn(`[Main] Blocked openExternal for invalid URL: ${url}`);
   }
@@ -1147,192 +1180,69 @@ function runPowerShell(script) {
 trustedMainIpc.handle('play-spotify', (_event, { type, term }) => mediaController.execute({ action: type, term, spotifyOnly: true }));
 trustedMainIpc.handle('reload-spotify', () => mediaController.execute({ action: 'RELOAD', spotifyOnly: true }));
 trustedMainIpc.handle('media-control', (_event, command, spotifyOnly, level) => mediaController.execute({ action: String(command).replace(/^MEDIA_/, ''), spotifyOnly, level }));
-const pendingAppLaunches = new Set();
+const { createAppController } = require('./desktop/app-controller');
+const appController = createAppController();
+app.on('before-quit', () => appController.dispose());
 trustedMainIpc.on('media-cancel', () => {
   mediaController.cancel();
-  for (const cancel of pendingAppLaunches) cancel();
+  appController.cancel();
+  closeController.cancel();
+  screenshotRequest?.abort();
 });
 
+trustedMainIpc.handle('list-app-capabilities', () => appController.listCapabilities());
+const { createReleaseService } = require('./desktop/release-service');
+const releaseService = createReleaseService({ getInstalledVersion: () => app.getVersion() });
+trustedMainIpc.handle('check-release', () => releaseService.check());
+trustedMainIpc.handle('arrange-app', (_event, payload) => appController.arrange(payload));
 trustedMainIpc.handle('open-app', async (event, appName) => {
   if (typeof appName !== 'string' || !appName.trim() || appName.length > 120) return { ok: false, message: 'Please specify an app name.' };
   if (/^spotify$/i.test(appName.trim())) return mediaController.execute({ action: 'OPEN', spotifyOnly: true });
-  const safeAppName = escapeForSendKeys(appName);
-  console.log(`[Main] Opening app via Windows Search: ${appName}`);
-  // Use Windows Search to find and open the app
-  const script = `
-    $wshell = New-Object -ComObject wscript.shell
-    $wshell.SendKeys('^{ESC}')
-    Start-Sleep -Milliseconds 400
-    $wshell.SendKeys('${safeAppName}')
-    Start-Sleep -Milliseconds 600
-    $wshell.SendKeys('{ENTER}')
-  `;
-  
-  return new Promise(resolve => {
-    const ps = spawn('powershell', ['-NoProfile', '-Command', script], { windowsHide: true, shell: false });
-    let settled = false;
-    const cancel = () => { ps.kill(); finish({ ok: false, message: 'App launch cancelled.' }); };
-    const finish = result => { if (settled) return; settled = true; clearTimeout(timer); pendingAppLaunches.delete(cancel); resolve(result); };
-    const timer = setTimeout(() => { ps.kill(); finish({ ok: false, message: `Opening ${appName} timed out.` }); }, 10000);
-    pendingAppLaunches.add(cancel);
-    ps.on('error', () => finish({ ok: false, message: `I couldn't open ${appName}.` }));
-    ps.stderr.on('data', () => {});
-    ps.on('close', code => finish(code === 0
-      ? { ok: true, verified: false, message: `I requested ${appName} to open, but couldn't verify its window.` }
-      : { ok: false, message: `I couldn't open ${appName}.` }));
-  });
+  return appController.open(appName);
 });
 
-// Spoken app names rarely match the executable ("Word" is WINWORD.EXE).
-const CLOSE_APP_ALIASES = {
-  chrome: 'chrome',
-  'google chrome': 'chrome',
-  edge: 'msedge',
-  'microsoft edge': 'msedge',
-  firefox: 'firefox',
-  word: 'winword',
-  'microsoft word': 'winword',
-  excel: 'excel',
-  powerpoint: 'powerpnt',
-  outlook: 'outlook',
-  code: 'code',
-  'vs code': 'code',
-  'visual studio code': 'code',
-  cursor: 'cursor',
-  terminal: 'windowsterminal',
-  'windows terminal': 'windowsterminal',
-  teams: 'teams',
-  'microsoft teams': 'teams',
-  obs: 'obs64',
-  roblox: 'robloxplayerbeta'
-};
+const { createCloseController } = require('./desktop/close-controller');
+const closeController = createCloseController();
+app.on('before-quit', () => closeController.dispose());
+trustedMainIpc.handle('close-app', (_event, appName) => closeController.close(appName));
 
-// Closing these would break the desktop, the session, or Olanga itself.
-const CLOSE_APP_BLOCKLIST = [
-  'explorer', 'olanga', 'electron', 'dwm', 'winlogon', 'csrss', 'wininit',
-  'services', 'lsass', 'smss', 'svchost', 'fontdrvhost', 'sihost', 'ctfmon',
-  'searchhost', 'shellexperiencehost', 'startmenuexperiencehost', 'textinputhost',
-  'applicationframehost', 'systemsettings', 'lockapp', 'runtimebroker', 'audiodg',
-  'conhost'
-];
-
-function escapeForPowerShellString(value) {
-  return String(value ?? '').replace(/'/g, "''");
-}
-
-// Wildcards would widen the -like match to unrelated (or all) processes.
-function sanitizeAppName(value) {
-  return String(value ?? '').replace(/[*?\[\]`$;|&<>]/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function buildCloseAppTargets(appName) {
-  const clean = sanitizeAppName(appName).toLowerCase();
-  if (!clean) return [];
-
-  const alias = CLOSE_APP_ALIASES[clean];
-  const targets = alias ? [alias, clean] : [clean];
-  // "Microsoft Word" should still match a window titled "... - Word".
-  const words = clean.split(' ').filter((word) => word.length >= 3);
-  if (words.length > 1) targets.push(words[words.length - 1]);
-
-  return [...new Set(targets)];
-}
-
-// Closes visible application windows matching a spoken name. Only processes that
-// own a main window are eligible, which keeps background services out of reach.
-trustedMainIpc.handle('close-app', async (event, appName) => {
-  const targets = buildCloseAppTargets(appName);
-  if (targets.length === 0) {
-    return { ok: false, reason: 'empty-name' };
-  }
-
-  const targetList = targets.map((target) => `'${escapeForPowerShellString(target)}'`).join(',');
-  const blockedList = CLOSE_APP_BLOCKLIST.map((name) => `'${name}'`).join(',');
-
-  const script = `
-$ErrorActionPreference = 'SilentlyContinue'
-$targets = @(${targetList})
-$blocked = @(${blockedList})
-$byName = @()
-$byTitle = @()
-foreach ($p in Get-Process) {
-  if ($p.MainWindowHandle -eq 0) { continue }
-  $name = $p.ProcessName.ToLower()
-  if ($blocked -contains $name) { continue }
-  $title = ''
-  if ($p.MainWindowTitle) { $title = $p.MainWindowTitle.ToLower() }
-  $nameHit = $false
-  $titleHit = $false
-  foreach ($t in $targets) {
-    if ($name -like "*$t*") { $nameHit = $true }
-    elseif ($title -like "*$t*") { $titleHit = $true }
-  }
-  if ($nameHit) { $byName += $p } elseif ($titleHit) { $byTitle += $p }
-}
-# A window merely titled "Spotify" (a browser tab, say) is only a candidate when
-# no actual Spotify process matched.
-$candidates = $byTitle
-if ($byName.Count -gt 0) { $candidates = $byName }
-if ($candidates.Count -eq 0) { Write-Output 'NONE'; exit 0 }
-$names = (($candidates | ForEach-Object { $_.ProcessName }) | Sort-Object -Unique) -join ', '
-$ids = $candidates | ForEach-Object { $_.Id }
-foreach ($p in $candidates) { $null = $p.CloseMainWindow() }
-Start-Sleep -Milliseconds 2000
-$survivors = Get-Process -Id $ids
-if ($survivors) {
-  Write-Output "PENDING:$names"
-} else {
-  Write-Output "CLOSED:$names"
-}
-`;
-
-  console.log(`[Main] Closing app matching: ${targets.join(' | ')}`);
-  const { stdout } = await runPowerShell(script);
-  const output = String(stdout || '').trim();
-
-  if (/^PENDING:/.test(output) || /^CLOSED:/.test(output)) {
-    const [status, closed] = output.split(':');
-    console.log(`[Main] ${status === 'PENDING' ? 'Close requested; waiting for app' : 'Closed'}: ${closed}`);
-    return { ok: true, closed, pending: status === 'PENDING', forced: false };
-  }
-
-  console.log(`[Main] No open window matched: ${targets.join(' | ')}`);
-  return { ok: false, reason: 'not-running' };
-});
-
-let screenshotPending = false;
+let screenshotRequest = null;
+app.on('before-quit', () => screenshotRequest?.abort());
 trustedMainIpc.handle('request-screenshot', async () => {
-  if (screenshotPending) throw new Error('A screen selection is already open.');
-  screenshotPending = true;
+  if (screenshotRequest) throw new Error('A screen selection is already open.');
+  const controller = new AbortController();
+  screenshotRequest = controller;
   const wasVisible = mainWindow.isVisible();
   try {
     const choice = await dialog.showMessageBox(mainWindow, {
       type: 'question', title: 'Share a screen selection?',
       message: 'Allow Olanga to analyze the area you select?',
       detail: 'The selected image is sent to Google Gemini to diagnose your request. Hide private content first. This gives no permission to edit. Windows Snipping Tool places the selection on your clipboard.',
-      buttons: ['Cancel', 'Select screen area'], defaultId: 0, cancelId: 0, noLink: true
+      buttons: ['Cancel', 'Select screen area'], defaultId: 0, cancelId: 0, noLink: true, signal: controller.signal
     });
-    if (choice.response !== 1) return null;
+    if (controller.signal.aborted || choice.response !== 1) return null;
     const previousImage = clipboard.readImage().toPNG();
     statusOverlay.setSuspended(true);
     mainWindow.hide();
     await new Promise(resolve => setTimeout(resolve, 250));
+    if (controller.signal.aborted) return null;
     await shell.openExternal('ms-screenclip:');
     return await new Promise(resolve => {
       let attempts = 0;
+      const finish = value => { clearInterval(interval); controller.signal.removeEventListener('abort', cancel); resolve(value); };
+      const cancel = () => finish(null);
       const interval = setInterval(() => {
-        const image = clipboard.readImage();
-        if (!image.isEmpty() && !image.toPNG().equals(previousImage)) {
-          clearInterval(interval);
-          resolve(image.toDataURL());
-        } else if (++attempts >= 60) {
-          clearInterval(interval);
-          resolve(null);
-        }
+        try {
+          const image = clipboard.readImage();
+          if (!image.isEmpty() && !image.toPNG().equals(previousImage)) finish(image.toDataURL());
+          else if (++attempts >= 60) finish(null);
+        } catch (_) { finish(null); }
       }, 500);
+      controller.signal.addEventListener('abort', cancel, { once: true });
+      if (controller.signal.aborted) cancel();
     });
   } finally {
-    screenshotPending = false;
+    screenshotRequest = null;
     statusOverlay.setSuspended(false);
     if (wasVisible && mainWindow && !mainWindow.isDestroyed()) showMainWindow();
   }
@@ -1402,12 +1312,18 @@ function getSecureStorePath() {
 }
 
 function readSecureStore() {
+  let raw;
   try {
-    const raw = fs.readFileSync(getSecureStorePath(), 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return {};
+    raw = fs.readFileSync(getSecureStorePath(), 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return {};
+    throw new Error('Secure credential storage could not be read. Existing data was preserved.');
   }
+  try {
+    const store = JSON.parse(raw);
+    if (!store || typeof store !== 'object' || Array.isArray(store) || Object.values(store).some(value => typeof value !== 'string' || !value)) throw new Error('Invalid secure storage.');
+    return store;
+  } catch (_) { throw new Error('Secure credential storage is damaged. Existing data was preserved.'); }
 }
 
 function writeSecureStore(store) {
@@ -1417,26 +1333,66 @@ function writeSecureStore(store) {
   fs.renameSync(pending, target);
 }
 
+// Provider requests retrieve saved credentials here, never from renderer payloads.
+function getGeminiProviderCredentials() {
+  const store = readSecureStore();
+  const decrypt = key => {
+    if (!store[key]) return null;
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('Credential storage unavailable.');
+    return safeStorage.decryptString(Buffer.from(store[key], 'base64'));
+  };
+  const rawKeys = decrypt('gemini_api_keys');
+  const savedKeys = rawKeys ? JSON.parse(rawKeys) : [];
+  const keys = normalizeGeminiKeys(savedKeys);
+  let preferences = {};
+  try { const raw = decrypt('app_preferences'); if (raw) preferences = JSON.parse(raw); } catch { /* Invalid optional preferences retain default rotation. */ }
+  return { keys, rotation: preferences?.keyRotation === true };
+}
+const { createProviderService } = require('./desktop/provider-service');
+// Chromium's network stack keeps connections to Gemini warm across idle gaps
+// and honors system proxy settings. Provider requests never carry cookies.
+const providerFetch = (input, init) => net.fetch(input, { ...init, credentials: 'omit' });
+const providerService = createProviderService({ fetchImpl: providerFetch, getCredentials: getGeminiProviderCredentials });
+trustedMainIpc.handle('provider-generate', (_event, payload) => providerService.generate(payload));
+trustedMainIpc.handle('provider-stream', (event, payload) => providerService.generate(payload, text => {
+  if (!event.sender.isDestroyed()) event.sender.send('provider-stream-chunk', { requestId: payload.requestId, text });
+}));
+// Opening the connection while the user is still speaking or typing takes the
+// TLS setup off the request itself. No credential, prompt or body is sent.
+let providerWarmedAt = 0;
+trustedMainIpc.on('provider-warm', () => {
+  if (Date.now() - providerWarmedAt < 15000) return;
+  providerWarmedAt = Date.now();
+  providerFetch('https://generativelanguage.googleapis.com/v1beta/models', { method: 'HEAD', redirect: 'error' })
+    .then(response => { try { void response.body?.cancel?.(); } catch { /* Already closed. */ } }, () => {});
+});
+trustedMainIpc.handle('provider-cancel', (_event, requestId) => providerService.cancel(requestId));
+trustedMainIpc.handle('provider-status', () => {
+  let configured = false;
+  try { configured = getGeminiProviderCredentials().keys.some(key => typeof key === 'string' && key.trim()); } catch { /* Status never exposes credential errors or content. */ }
+  return { ...providerService.status(), configured };
+});
+app.on('before-quit', () => providerService.dispose());
+
 trustedMainIpc.handle('secure-store-get', async (event, key) => {
   validateStoreKey(key);
   const storePath = getSecureStorePath();
   const store = readSecureStore();
   const encrypted = store[String(key)];
-  if (!encrypted) {
+  if (!Object.hasOwn(store, String(key))) {
     console.warn(`[Main] secure-store-get miss for "${key}" (path=${storePath})`);
     return null;
   }
   try {
     if (!safeStorage.isEncryptionAvailable()) {
-      console.warn('[Main] safeStorage encryption unavailable');
-      return null;
+      throw new Error('OS-level encryption is unavailable');
     }
     const value = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
     console.log(`[Main] secure-store-get ok for "${key}" (chars=${String(value || '').length})`);
     return value;
   } catch (error) {
-    console.warn(`[Main] Failed to decrypt secure value for "${key}":`, error.message);
-    return null;
+    console.warn(`[Main] Failed to decrypt secure value for "${key}".`);
+    throw new Error('Secure credential storage could not be decrypted. Existing data was preserved.');
   }
 });
 
@@ -1445,10 +1401,18 @@ trustedMainIpc.handle('secure-store-set', async (event, payload = {}) => {
   const value = key === 'nvidia_api_key' && typeof payload.value === 'string'
     ? normalizeNvidiaKey(payload.value) : payload.value;
   if (value != null && (typeof value !== 'string' || value.length > 100000)) throw new Error('Invalid secure store value');
+  if (key === 'gemini_api_keys' && value != null && value !== '') {
+    let keys;
+    try { keys = JSON.parse(value); } catch { throw new Error('Invalid Gemini API key list.'); }
+    validateGeminiKeys(keys);
+  }
   if (!key) throw new Error('Missing secure store key');
 
   const store = readSecureStore();
-  if (value === null || value === undefined || value === '') {
+  // An empty NVIDIA entry is an encrypted deletion tombstone. A missing entry
+  // permits legacy migration, so deleting this marker could revive an old key
+  // when browser-storage cleanup failed.
+  if (value === null || value === undefined || (value === '' && key !== 'nvidia_api_key')) {
     delete store[key];
   } else {
     if (!safeStorage.isEncryptionAvailable()) {
@@ -1468,6 +1432,11 @@ function escapePowerShellSingleQuotedString(value) {
 
 function createTerminalSession(sessionId, cwd) {
   const resolvedCwd = cwd || os.homedir();
+  try {
+    if (typeof resolvedCwd !== 'string' || !path.isAbsolute(resolvedCwd) || !fs.statSync(resolvedCwd).isDirectory()) throw new Error('Invalid directory');
+  } catch (_) {
+    throw new Error('The terminal folder is unavailable. Open a new terminal tab and try again.');
+  }
   const processHandle = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', '-'], {
     cwd: resolvedCwd,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -1481,7 +1450,8 @@ function createTerminalSession(sessionId, cwd) {
     buffer: '',
     running: false,
     queue: [],
-    currentCommand: null
+    currentCommand: null,
+    closed: false
   };
 
   function failQueuedCommands(error) {
@@ -1495,8 +1465,16 @@ function createTerminalSession(sessionId, cwd) {
     }
     session.running = false;
   }
+  session.dispose = error => {
+    if (session.closed) return;
+    session.closed = true;
+    failQueuedCommands(error);
+    if (terminalSessions.get(session.id) === session) terminalSessions.delete(session.id);
+    try { if (!processHandle.killed) processHandle.kill(); } catch (_) {}
+  };
 
   const handleData = (chunk) => {
+    if (session.closed) return;
     session.buffer += chunk.toString('utf8');
     let newlineIndex = session.buffer.indexOf('\n');
 
@@ -1521,7 +1499,7 @@ function createTerminalSession(sessionId, cwd) {
             success: pending.exitCode === 0,
             exitCode: pending.exitCode
           });
-          process.nextTick(() => drainTerminalSession(session.id));
+          process.nextTick(() => { if (terminalSessions.get(session.id) === session) drainTerminalSession(session.id); });
         } else if (line && !line.startsWith('PS ')) {
           session.currentCommand.outputLines.push(line);
         }
@@ -1533,22 +1511,24 @@ function createTerminalSession(sessionId, cwd) {
 
   processHandle.stdout.on('data', handleData);
   processHandle.stderr.on('data', handleData);
+  processHandle.on('error', error => session.dispose(new Error(`Terminal could not start: ${error.message}`)));
+  processHandle.stdin.on('error', error => session.dispose(new Error(`Terminal input failed: ${error.message}`)));
   processHandle.on('close', (code) => {
-    failQueuedCommands(new Error(`Terminal session closed unexpectedly (code ${code ?? 'unknown'})`));
-    terminalSessions.delete(session.id);
+    session.dispose(new Error(`Terminal session closed unexpectedly (code ${code ?? 'unknown'})`));
   });
 
-  processHandle.stdin.write(`[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\r\n`);
-  processHandle.stdin.write(`$ErrorActionPreference = 'Continue'\r\n`);
-  processHandle.stdin.write(`Set-Location -LiteralPath '${escapePowerShellSingleQuotedString(resolvedCwd)}'\r\n`);
-
   terminalSessions.set(session.id, session);
+  try {
+    processHandle.stdin.write(`[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\r\n`);
+    processHandle.stdin.write(`$ErrorActionPreference = 'Continue'\r\n`);
+    processHandle.stdin.write(`Set-Location -LiteralPath '${escapePowerShellSingleQuotedString(resolvedCwd)}'\r\n`);
+  } catch (error) { session.dispose(error); throw error; }
   return { cwd: resolvedCwd };
 }
 
 function drainTerminalSession(sessionId) {
   const session = terminalSessions.get(String(sessionId));
-  if (!session || session.running || session.currentCommand || session.queue.length === 0) {
+  if (!session || session.closed || session.running || session.currentCommand || session.queue.length === 0) {
     return;
   }
 
@@ -1561,10 +1541,12 @@ function drainTerminalSession(sessionId) {
     exitCode: 0
   };
 
-  session.process.stdin.write(`${nextCommand.command}\r\n`);
-  session.process.stdin.write(`Write-Output "__OLANGA_EXIT__:$LASTEXITCODE"\r\n`);
-  session.process.stdin.write(`Write-Output "__OLANGA_CWD__:$((Get-Location).Path)"\r\n`);
-  session.process.stdin.write(`Write-Output "__OLANGA_DONE__"\r\n`);
+  try {
+    session.process.stdin.write(`${nextCommand.command}\r\n`);
+    session.process.stdin.write(`Write-Output "__OLANGA_EXIT__:$LASTEXITCODE"\r\n`);
+    session.process.stdin.write(`Write-Output "__OLANGA_CWD__:$((Get-Location).Path)"\r\n`);
+    session.process.stdin.write(`Write-Output "__OLANGA_DONE__"\r\n`);
+  } catch (error) { session.dispose(error); }
 }
 
 trustedMainIpc.handle('terminal-session-create', async (event, payload = {}) => {
@@ -1626,7 +1608,7 @@ trustedMainIpc.handle('terminal-session-close', async (event, payload = {}) => {
     }
   }
 
-  terminalSessions.delete(sessionId);
+  session.dispose(new Error('Terminal session was closed.'));
   return { closed: true };
 });
 

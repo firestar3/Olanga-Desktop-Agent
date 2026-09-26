@@ -172,6 +172,18 @@ test('removed NIM model preferences cannot affect Gemini or Magpie settings', ()
   assert.equal(Object.hasOwn(result, 'nvidiaResponseModel'), false);
 });
 
+test('voice interruption, end-of-speech timing and push-to-talk default to the original behavior', () => {
+  const loaded = prefs.load(fakeStorage());
+  assert.equal(loaded.bargeIn, true);
+  assert.equal(loaded.endOfSpeech, 'standard');
+  assert.equal(prefs.END_OF_SPEECH_MS[loaded.endOfSpeech], 1500);
+  assert.equal(loaded.pushToTalk, 'off');
+  const stored = prefs.readFromStorage(fakeStorage({ olanga_barge_in: 'false', olanga_end_of_speech: 'fast', olanga_push_to_talk: 'Control+Alt+Space' }));
+  assert.deepEqual([stored.bargeIn, stored.endOfSpeech, stored.pushToTalk], [false, 'fast', 'Control+Alt+Space']);
+  const invalid = prefs.readFromStorage(fakeStorage({ olanga_end_of_speech: '10', olanga_push_to_talk: 'Control+Alt+Delete' }));
+  assert.deepEqual([invalid.endOfSpeech, invalid.pushToTalk], ['standard', 'off']);
+});
+
 test('five shortcut slots survive secure-store merge and storage roundtrip', () => {
   const initial = prefs.defaults();
   initial.quickActions[0].label = 'My editor';

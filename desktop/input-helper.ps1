@@ -23,6 +23,8 @@ public static class OlangaDesktop {
   public class Window { public string handle,title,processName; public int processId; public Bounds bounds; }
   public class Control { public string name,controlType,runtimeId; public Bounds bounds; public bool isPassword,isEditable; public int processId; }
   public class Snapshot { public Window foreground; public Window[] windows; public Bounds primaryBounds; public Control focusedControl; }
+  public class EditCheckpoint { public string handle,processStart,runtimeId,automationId,controlType,className,parentRuntimeId,windowTitle,text; public int processId,nativeHandle; }
+  public class EditRead { public bool supported; public string message; public EditCheckpoint checkpoint; }
   public delegate bool EnumProc(IntPtr hwnd, IntPtr param);
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr context);
   [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
@@ -83,6 +85,72 @@ public static class OlangaDesktop {
   public static void CheckPassword() {
     var control=FocusedControl();
     if(control!=null && control.isPassword) throw new Exception("Password fields are not supported by desktop actions.");
+  }
+  static string RuntimeId(System.Windows.Automation.AutomationElement element) { return element==null?"":String.Join(".",element.GetRuntimeId()); }
+  static EditCheckpoint ReadEditor(string handle,int pid) {
+    var hwnd=Check(handle,pid);
+    var process=Process.GetProcessById(pid);
+    if(System.Text.RegularExpressions.Regex.IsMatch(process.ProcessName,"^(cmd|powershell|pwsh|windowsterminal|conhost|openconsole|bash|wsl|mintty|alacritty|wezterm|hyper|putty|wt|regedit|taskmgr)$",System.Text.RegularExpressions.RegexOptions.IgnoreCase)) throw new Exception("Terminal and system controls do not support text undo.");
+    var element=System.Windows.Automation.AutomationElement.FocusedElement;
+    if(element==null) throw new Exception("No accessible editor is focused.");
+    var info=element.Current;
+    if(info.ProcessId!=pid || info.IsPassword || !info.IsEnabled || info.IsOffscreen || info.ControlType!=System.Windows.Automation.ControlType.Edit) throw new Exception("This field does not support verified text undo.");
+    // Bind the control to this exact top-level window, not merely a shared process.
+    var ancestor=element;
+    bool inWindow=false;
+    for(int i=0;i<64 && ancestor!=null;i++) {
+      if(ancestor.Current.NativeWindowHandle==hwnd.ToInt64()) { inWindow=true; break; }
+      ancestor=System.Windows.Automation.TreeWalker.RawViewWalker.GetParent(ancestor);
+    }
+    if(!inWindow) throw new Exception("The editor does not belong to the approved window.");
+    object pattern;
+    if(!element.TryGetCurrentPattern(System.Windows.Automation.ValuePattern.Pattern,out pattern) || ((System.Windows.Automation.ValuePattern)pattern).Current.IsReadOnly) throw new Exception("This editor does not expose a writable full text value. Undo is unavailable.");
+    var text=((System.Windows.Automation.ValuePattern)pattern).Current.Value;
+    if(text==null || text.Length>20000) throw new Exception("Undo supports accessible fields containing at most 20,000 characters.");
+    var runtimeId=RuntimeId(element);
+    if(String.IsNullOrEmpty(runtimeId)) throw new Exception("The editor has no stable accessibility identity.");
+    return new EditCheckpoint { handle=handle,processId=pid,processStart=process.StartTime.ToUniversalTime().Ticks.ToString(),runtimeId=runtimeId,
+      automationId=info.AutomationId,controlType=info.ControlType.ProgrammaticName,className=info.ClassName,nativeHandle=info.NativeWindowHandle,
+      parentRuntimeId=RuntimeId(System.Windows.Automation.TreeWalker.RawViewWalker.GetParent(element)),windowTitle=Read(hwnd).title,text=text };
+  }
+  public static EditRead CaptureEdit(string handle,int pid) {
+    try { return new EditRead { supported=true,checkpoint=ReadEditor(handle,pid),message="A local text checkpoint is available." }; }
+    catch(Exception error) { return new EditRead { supported=false,message=error.Message }; }
+  }
+  static bool SameEditor(EditCheckpoint a,EditCheckpoint b) {
+    return a.handle==b.handle && a.processId==b.processId && a.processStart==b.processStart && a.runtimeId==b.runtimeId && a.automationId==b.automationId &&
+      a.controlType==b.controlType && a.className==b.className && a.nativeHandle==b.nativeHandle && a.parentRuntimeId==b.parentRuntimeId && a.windowTitle==b.windowTitle;
+  }
+  static string Lines(string value) { return value.Replace("\r\n","\n").Replace("\r","\n"); }
+  static EditCheckpoint VerifyReplacement(EditCheckpoint expected,string replacement,Func<EditCheckpoint> read,Func<long> elapsed,Action<int> wait) {
+    // SetValue can return before a provider publishes its updated accessible
+    // value. Poll readback only: never repeat a write or accept a changed editor.
+    while(true) {
+      var after=read();
+      // The title may gain an unsaved marker after SetValue. Preserve every
+      // other identity guard, and retain the observed title in the checkpoint.
+      var title=after.windowTitle; after.windowTitle=expected.windowTitle;
+      bool same=SameEditor(after,expected); after.windowTitle=title;
+      if(!same) throw new Exception("The replacement was sent but the editor identity changed. Inspect the editor before continuing.");
+      if(Lines(after.text)==Lines(replacement)) return after;
+      long remaining=1500-elapsed();
+      if(remaining<=0) throw new Exception("The replacement was sent but its complete text could not be verified. Inspect the editor before continuing.");
+      wait((int)Math.Min(40,remaining));
+    }
+  }
+  public static EditCheckpoint ReplaceEdit(EditCheckpoint expected,string replacement) {
+    if(expected==null || replacement==null || replacement.Length>20000) throw new Exception("Invalid text restoration request.");
+    IdleKeys();
+    var current=ReadEditor(expected.handle,expected.processId);
+    if(!SameEditor(current,expected)) throw new Exception("Undo conflict: the window, process, document, or editor control changed. No text was restored.");
+    if(current.text!=expected.text) throw new Exception("Undo conflict: the text changed after the checkpoint. No text was restored.");
+    object pattern;
+    var element=System.Windows.Automation.AutomationElement.FocusedElement;
+    if(RuntimeId(element)!=expected.runtimeId || !element.TryGetCurrentPattern(System.Windows.Automation.ValuePattern.Pattern,out pattern)) throw new Exception("The editor changed before replacement. No text was restored.");
+    Check(expected.handle,expected.processId);
+    ((System.Windows.Automation.ValuePattern)pattern).SetValue(replacement);
+    var watch=Stopwatch.StartNew();
+    return VerifyReplacement(current,replacement,delegate { return ReadEditor(expected.handle,expected.processId); },delegate { return watch.ElapsedMilliseconds; },Thread.Sleep);
   }
   public static Snapshot Inspect() {
     var list=new List<Window>();
@@ -165,12 +233,12 @@ public static class OlangaDesktop {
 while ($null -ne ($line = [Console]::ReadLine())) {
   $request = $null
   try {
-    if ($line.Length -gt 24000) { throw 'Request too large.' }
+    if ($line.Length -gt 180000) { throw 'Request too large.' }
     $request = $line | ConvertFrom-Json
     $result = $null
     if ($request.region) {
       $region = $request.region
-      if ($request.kind -eq 'type' -or $request.kind -eq 'hotkey') { [OlangaDesktop]::CheckRegion([int]$request.processId,[int]$region.x,[int]$region.y,[int]$region.width,[int]$region.height) }
+      if ($request.kind -in @('type', 'hotkey', 'capture-edit', 'replace-edit')) { [OlangaDesktop]::CheckRegion([int]$request.processId,[int]$region.x,[int]$region.y,[int]$region.width,[int]$region.height) }
       if ($request.kind -eq 'scroll') { [OlangaDesktop]::CheckPointerRegion([int]$region.x,[int]$region.y,[int]$region.width,[int]$region.height) }
       if ($request.kind -eq 'click') { [OlangaDesktop]::CheckPointRegion([int]$request.x,[int]$request.y,[int]$region.x,[int]$region.y,[int]$region.width,[int]$region.height) }
     }
@@ -179,6 +247,8 @@ while ($null -ne ($line = [Console]::ReadLine())) {
       'inspect' { $result = [OlangaDesktop]::Inspect() }
       'focus' { [OlangaDesktop]::Focus([string]$request.handle, [int]$request.processId) }
       'check' { [OlangaDesktop]::CheckTarget([string]$request.handle, [int]$request.processId) }
+      'capture-edit' { $result = [OlangaDesktop]::CaptureEdit([string]$request.handle, [int]$request.processId) }
+      'replace-edit' { $result = [OlangaDesktop]::ReplaceEdit([OlangaDesktop+EditCheckpoint]$request.checkpoint, [string]$request.text) }
       'click' { [OlangaDesktop]::Click([string]$request.handle,[int]$request.processId,[int]$request.x,[int]$request.y,[string]$request.button,[int]$request.count,[int]$request.bounds.x,[int]$request.bounds.y,[int]$request.bounds.width,[int]$request.bounds.height) }
       'type' { [OlangaDesktop]::Type([string]$request.handle,[int]$request.processId,[string]$request.text,[bool]$request.region,[int]$request.region.x,[int]$request.region.y,[int]$request.region.width,[int]$request.region.height) }
       'hotkey' { [OlangaDesktop]::Hotkey([string]$request.handle,[int]$request.processId,[int[]]$request.keys) }

@@ -2,7 +2,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { isLikedSongs } = require('../shared/fast-intents');
 
-const ACTIONS = new Set(['OPEN', 'LIKED', 'SONG', 'ALBUM', 'PLAYLIST', 'ARTIST', 'LIBRARY', 'RELOAD', 'PLAY', 'PAUSE', 'PLAY_PAUSE', 'NEXT', 'PREV', 'STATUS', 'VOLUME_SET', 'VOLUME_STATUS', 'VOLUME_UP', 'VOLUME_DOWN', 'VOLUME_MUTE']);
+const ACTIONS = new Set(['OPEN', 'LIKED', 'SONG', 'ALBUM', 'PLAYLIST', 'ARTIST', 'LIBRARY', 'RELOAD', 'PLAY', 'PAUSE', 'PLAY_PAUSE', 'NEXT', 'PREV', 'STATUS', 'VOLUME_SET', 'VOLUME_STATUS', 'VOLUME_UP', 'VOLUME_DOWN', 'VOLUME_MUTE', 'VOLUME_MUTE_ON', 'VOLUME_MUTE_OFF']);
 function normalizeMediaRequest(payload) {
   if (!payload || typeof payload !== 'object' || !ACTIONS.has(payload.action)) throw new Error('Unsupported media action.');
   const term = typeof payload.term === 'string' ? payload.term.trim() : '';
@@ -22,6 +22,7 @@ function createMediaController({ spawnProcess = spawn, platform = process.platfo
   let pending = null;
   let sequence = 0;
   let buffer = '';
+  let disposed = false;
   function stop(message = 'Media request cancelled.') {
     const previous = child;
     child = null;
@@ -31,7 +32,7 @@ function createMediaController({ spawnProcess = spawn, platform = process.platfo
       pending.reject(new Error(message));
       pending = null;
     }
-    if (previous) previous.kill();
+    try { previous?.kill(); } catch { /* The child may already have exited. */ }
   }
   function connect() {
     if (child) return;
@@ -51,7 +52,7 @@ function createMediaController({ spawnProcess = spawn, platform = process.platfo
         if (!line) continue;
         let result;
         try { result = JSON.parse(line); } catch { return stop('The Windows media helper could not initialize.'); }
-        if (!pending || result.id !== pending.id) return stop('Unexpected media helper response.');
+        if (!result || typeof result !== 'object' || Array.isArray(result) || !pending || result.id !== pending.id) return stop('Unexpected media helper response.');
         const current = pending;
         pending = null;
         clearTimeout(current.timer);
@@ -73,6 +74,7 @@ function createMediaController({ spawnProcess = spawn, platform = process.platfo
   }
   return {
     async execute(payload) {
+      if (disposed) throw new Error('Media control is unavailable because Olanga is closing.');
       const request = normalizeMediaRequest(payload);
       if (platform !== 'win32') return { ok: false, message: 'Media control currently requires Windows.' };
       if (pending) throw new Error('A media request is still running.');
@@ -81,11 +83,12 @@ function createMediaController({ spawnProcess = spawn, platform = process.platfo
         const id = ++sequence;
         const timer = setTimeout(() => stop('Windows media control took too long to respond. The requested change could not be verified.'), timeoutMs);
         pending = { id, timer, resolve, reject };
-        child.stdin.write(JSON.stringify({ ...request, id }) + '\n');
+        try { child.stdin.write(JSON.stringify({ ...request, id }) + '\n'); }
+        catch { stop('Windows media control disconnected.'); }
       });
     },
     cancel: () => { if (pending) stop(); },
-    dispose: stop
+    dispose: () => { disposed = true; stop(); }
   };
 }
 
