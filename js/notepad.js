@@ -232,7 +232,10 @@ notepadImportBtn.addEventListener('click', () => {
       if (!noteIsUnchanged(targetTab, original)) { alert('This note changed while the file was loading. Import again to replace it.'); return; }
       targetTab.content = escapeHTML(String(event.target.result));
       if (currentTabId == targetTab.id) notepadTextarea.innerHTML = targetTab.content;
-      if (!saveNotepadTabs()) { currentTab.content = previous; notepadTextarea.innerHTML = previous; }
+      if (!saveNotepadTabs()) {
+        targetTab.content = original;
+        if (currentTabId == targetTab.id) notepadTextarea.innerHTML = original;
+      }
     };
     reader.onerror = () => alert('The file could not be read. Your note has not changed.');
     reader.readAsText(file);

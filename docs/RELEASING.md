@@ -44,7 +44,7 @@ Before releasing, install the built version and check All Lights mode over anoth
 
 ## Commit and publish
 
-Choose a new version and update `package.json` and both root version entries in `package-lock.json`. Choose the branch whose changes you want to release. Review the source changes and staged file list before committing:
+Choose a new version and update `package.json` and both root version entries in `package-lock.json`. Write the public feature and update notes in `docs/releases/<version>.md`; the workflow prepends them to its generated verification notice. Choose the branch whose changes you want to release. Review the source changes and staged file list before committing:
 
 ```powershell
 git status --short
@@ -53,14 +53,18 @@ git add --all
 git diff --cached --stat
 $releaseVersion = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
 git commit -m "Release v$releaseVersion"
-git push -u origin HEAD
+git fetch origin
+git merge-base --is-ancestor origin/main HEAD
+if ($LASTEXITCODE -ne 0) { throw 'Integrate the current remote main before publishing. Do not force-push.' }
+git push origin HEAD:main
+if ($LASTEXITCODE -ne 0) { throw 'Publishing main failed. Resolve it before creating the release tag.' }
 git tag -a "v$releaseVersion" -m "Olanga v$releaseVersion"
 git push origin "v$releaseVersion"
 ```
 
 The ignore rules exclude promotional videos/audio/screenshots under `artifacts/`, local diagnostic outputs, the extracted `model/` working copy, `dist/`, `build/` and `node_modules/`. The app icon and `vosk-model-v2.tar.gz` are required build inputs and remain versioned. The Release workflow uploads the installer and verification files as release assets; they do not need to be committed to Git.
 
-If you prefer the release on your usual release branch, merge this work there using your normal process **before** creating the tag. The workflow builds the commit the tag points to. `npm run check` rejects a tag that differs from `package.json` so the installer and release cannot silently disagree. Do not overwrite an existing public tag or installer. Asset uploads deliberately omit `--clobber`; a collision fails instead of silently replacing published bytes.
+This publishes the reviewed commit to remote `main` even when your checkout has another branch name, then tags that same commit. If branch protection requires a pull request, merge it and check out the resulting `main` commit before tagging. The workflow builds the commit the tag points to. `npm run check` rejects a tag that differs from `package.json` so the installer and release cannot silently disagree. Do not overwrite an existing public tag or installer. Asset uploads deliberately omit `--clobber`; a collision fails instead of silently replacing published bytes.
 
 After pushing the tag, open the repository's Actions tab and wait for **Release** to finish. A manual workflow dispatch builds a downloadable Actions artifact without publishing a release.
 

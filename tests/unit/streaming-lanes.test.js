@@ -6,7 +6,7 @@ const path = require('node:path');
 
 // A real assistant.js with scripted provider streams, a recording speech
 // stream and no network. Replies arrive in small chunks like SSE updates.
-function harness({ interrupted = false, replies = [] } = {}) {
+function harness({ interrupted = false, failedSpeech = false, truncated = false, replies = [] } = {}) {
   const calls = { streams: [], generates: [], opened: [], acks: [], followUps: 0, states: [], errors: [], transcriptions: 0, audioRouter: 0, router: 0 };
   const speech = { pushed: [], ended: null, cancelled: 0 };
   const node = () => ({ textContent: '', classList: { add() {}, remove() {} } });
@@ -20,7 +20,7 @@ function harness({ interrupted = false, replies = [] } = {}) {
         calls.streams.push(payload);
         const chunks = replies.shift() || ['I have no scripted reply.'];
         for (const chunk of chunks) { await Promise.resolve(); onText(chunk); }
-        return { ok: true, text: chunks.join(''), keyIndex: 0 };
+        return { ok: true, text: chunks.join(''), keyIndex: 0, truncated };
       },
       providerGenerate: async payload => { calls.generates.push(payload); return { ok: true, text: 'unused', keyIndex: 0 }; }
     } },
@@ -33,7 +33,7 @@ function harness({ interrupted = false, replies = [] } = {}) {
     speakResponse: message => { calls.spoken = [...(calls.spoken || []), message]; },
     speakResponseAndThen: async (message, callback) => { calls.spoken = [...(calls.spoken || []), message]; callback(); },
     showError: message => calls.errors.push(message),
-    createSpeechStream: () => ({ push: text => speech.pushed.push(text), end: async text => { speech.ended = text; return !interrupted; }, cancel: () => { speech.cancelled++; } }),
+    createSpeechStream: () => ({ failed: failedSpeech, push: text => speech.pushed.push(text), end: async text => { speech.ended = text; return !interrupted && !failedSpeech; }, cancel: () => { speech.cancelled++; } }),
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/assistant.js'), 'utf8'), context);
@@ -67,7 +67,7 @@ test('a typed question streams a spoken answer without the router or a spoken ac
 });
 
 test('answer-lane escapes speak nothing, acknowledge late, and continue in the router or Google Search', async () => {
-  const routed = harness({ replies: [['[RO', 'UTE]']] });
+  const routed = harness({ replies: [['RES', 'PONSE: [RO', 'UTE]']] });
   await routed.context.processTextCommandWithGemini('Could you tell me how to reorganize my week?');
   assert.deepEqual(routed.speech.pushed, []);
   assert.equal(routed.calls.router, 1);
@@ -78,6 +78,41 @@ test('answer-lane escapes speak nothing, acknowledge late, and continue in the r
   assert.deepEqual(plain(searched.calls.streams[1].body.tools), [{ google_search: {} }]);
   assert.equal(searched.speech.ended, 'Sunny and 72 degrees.');
   assert.equal(searched.calls.router, 0);
+});
+
+test('truncated typed and spoken streams fail without replaying their already delivered prefix', async () => {
+  for (const spoken of [false, true]) {
+    const prefix = 'A black hole forms when a massive star collapses. ';
+    const chunks = spoken ? ['USER_SAID: How does a black hole form?\nRESPONSE: ', prefix, 'The next step is'] : [prefix, 'The next step is'];
+    const { context, calls, speech, store } = harness({ truncated: true, replies: [chunks] });
+    if (spoken) await context.processAudioBlobWithGemini({}, { rough: 'how does a black hole form' });
+    else await context.processTextCommandWithGemini('How does a black hole form?');
+    assert.deepEqual(speech.pushed, [prefix, 'The next step is']);
+    assert.equal(speech.ended, null, 'The incomplete stream cannot finish as a successful answer');
+    assert.equal(speech.cancelled, 1);
+    assert.equal(calls.streams.length, 1);
+    assert.equal(calls.router, 0, 'A truncated answer must not replay the request through another model');
+    assert.equal(store.snapshot().activity.at(-1).state, 'failed');
+    assert.match(context.aiText.textContent, /answer was cut off at the response limit/);
+    assert.equal(calls.spoken.length, 1);
+    assert.doesNotMatch(calls.spoken[0], /massive star|next step/);
+    assert.match(calls.spoken[0], /answer was cut off/);
+    assert.equal(calls.followUps, 0);
+    assert.ok(history(context).every(message => !message.includes('The next step is')));
+  }
+});
+
+test('speech playback failure preserves the answer text and reports failed without retry or follow-up', async () => {
+  const text = 'Canberra is the capital. Anything else?';
+  const { context, calls, speech, store } = harness({ failedSpeech: true, replies: [[text]] });
+  await context.processTextCommandWithGemini('What is the capital of Australia?');
+  assert.equal(context.aiText.textContent, text);
+  assert.equal(speech.ended, text);
+  assert.equal(store.snapshot().activity.at(-1).state, 'failed');
+  assert.match(calls.errors.at(-1), /Speech stopped before the answer finished/);
+  assert.equal(calls.spoken, undefined, 'Do not replay the text or a voice error through a failed engine');
+  assert.equal(calls.states.at(-1), 'idle');
+  assert.equal(calls.followUps, 0);
 });
 
 test('live questions go straight to streamed Google Search and follow-up questions keep the microphone open', async () => {

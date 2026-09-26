@@ -51,3 +51,22 @@ test('typed answers stream plain text and drop bracket markers that appear later
   assert.equal(parseReply('RESPONSE: Canberra.').answer, 'Canberra.');
   assert.equal(parseReply('[unterminated marker that never closes').escape, 'router');
 });
+
+test('a RESPONSE label split at any boundary is withheld before answering or escaping', () => {
+  for (const full of ['RESPONSE: [ROUTE]', '  RESPONSE: [SEARCH]', 'response: Canberra is the capital.', 'Respect takes time.']) {
+    const expected = parseReply(full);
+    const splits = [...Array(full.length - 1)].map((_, index) => [full.slice(0, index + 1), full.slice(index + 1)]);
+    splits.push([...full]);
+    for (const chunks of splits) {
+      const parser = createReplyParser();
+      const events = chunks.flatMap(chunk => parser.push(chunk));
+      events.push(...parser.end());
+      assert.equal(parser.answer, expected.answer, JSON.stringify(chunks));
+      assert.equal(events.find(event => event.type === 'escape')?.route || null, expected.escape, JSON.stringify(chunks));
+      assert.equal(events.filter(event => event.type === 'text').map(event => event.text).join(''), expected.answer, JSON.stringify(chunks));
+    }
+  }
+  const plain = createReplyParser();
+  assert.deepEqual(plain.push('Res'), []);
+  assert.deepEqual(plain.end(), [{ type: 'text', text: 'Res' }], 'A final partial word remains ordinary text');
+});

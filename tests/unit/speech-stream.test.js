@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function fixture({ engine = 'windows', synthesize = async () => ({ audioBase64: 'AAAAAA==' }), hold = false } = {}) {
+function fixture({ engine = 'windows', synthesize = async () => ({ audioBase64: 'AAAAAA==' }), hold = false, windowsResult = true } = {}) {
   const spoken = [], played = [], states = [], pending = [];
   const context = vm.createContext({
     console: { log() {}, warn() {}, error() {} }, setTimeout, clearTimeout, atob, Blob, Uint8Array, ArrayBuffer, DataView,
@@ -17,7 +17,7 @@ function fixture({ engine = 'windows', synthesize = async () => ({ audioBase64: 
   // Windows speech settles when finished or when stopAssistantSpeech cancels it.
   context.__spoken = text => new Promise(resolve => {
     spoken.push(text);
-    const finish = () => resolve(true);
+    const finish = () => resolve(windowsResult);
     context.__cancel = () => resolve(false);
     if (hold) pending.push(finish); else setImmediate(finish);
   });
@@ -49,11 +49,39 @@ test('stopping speech ends the stream without speaking later sentences', async (
   assert.deepEqual(spoken, ['First sentence.']);
   context.stopAssistantSpeech();
   assert.equal(await stream.done, false);
+  assert.equal(stream.failed, false, 'A user interruption is distinct from a playback failure');
   stream.push('Third sentence. ');
   pending.forEach(finish => finish());
   await tick();
   assert.deepEqual(spoken, ['First sentence.']);
   assert.equal(await stream.end('First sentence. Second sentence. Third sentence.'), false);
+});
+
+test('failed Windows playback settles false and never sends queued or later sentences', async () => {
+  for (const rejected of [false, true]) {
+    const { context, spoken } = fixture({ windowsResult: false });
+    if (rejected) context.__spoken = async text => { spoken.push(text); throw new Error('Speech failed'); };
+    const stream = context.createSpeechStream();
+    stream.push('First sentence. Second sentence. ');
+    assert.equal(await stream.done, false);
+    assert.equal(stream.failed, true);
+    stream.push('Third sentence. ');
+    assert.equal(await stream.end('First sentence. Second sentence. Third sentence.'), false);
+    await tick();
+    assert.deepEqual(spoken, ['First sentence.']);
+    assert.equal(vm.runInContext('speakingWatchdog', context), null);
+  }
+});
+
+test('interrupted Magpie playback cannot count as a completed stream or replay in Windows', async () => {
+  const { context, spoken, played } = fixture({ engine: 'magpie' });
+  context.playSpeechChunk = async blob => { played.push(blob); return false; };
+  const stream = context.createSpeechStream();
+  stream.push('First sentence. Second sentence. ');
+  assert.equal(await stream.end('First sentence. Second sentence.'), false);
+  assert.equal(stream.failed, true);
+  assert.equal(played.length, 1);
+  assert.deepEqual(spoken, []);
 });
 
 test('a muted voice completes silently and a newer reply supersedes an older stream', async () => {

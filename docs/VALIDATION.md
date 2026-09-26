@@ -1,3 +1,24 @@
+# 1.4.0 publication and follow-up validation — September 26, 2026
+
+The public [Olanga 1.4.0 release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.4.0) was built from `b74b8dbe226ceb6e90100e97902792e46ec3b41d`. Its [Windows release workflow](https://github.com/firestar3/Olanga-Desktop-Agent/actions/runs/36280354990) passed unit tests, syntax and asset checks, renderer checks, the installer build and packaged-source verification. The installer is **127,417,454 bytes**, with SHA-256 `b8c44d6ee8a3d8582940935ce10964a2ad87e315c21dcde90744bff489a0dd24`. GitHub's asset digest, the published checksum file and the release metadata agree. It is **unsigned**, as recorded in that metadata.
+
+Four additional fixes were verified after that tag was published: cut-off streamed answers report failure, split response labels stay buffered, interrupted playback does not report completion, and failed note imports restore the original note without changing another active tab. These fixes are on `main`; they are **not included in the published 1.4.0 installer**. The existing tag and release assets were preserved.
+
+| Current source check | Result |
+| --- | --- |
+| Unit suite | **471 passed, zero failures or skips** |
+| Syntax, assets and version | **40 application JavaScript files passed** |
+| Isolated startup/settings smoke | **Passed** |
+| Workspace UI and persistence | **16 checks passed** |
+| Renderer races and storage recovery | **11 checks passed**, including the new failed-import regression |
+| Rebuilt local package | **49 source files**, native helpers, offline model and version matched; the packaged executable's isolated smoke passed |
+| Release workflow syntax | YAML and all **9 PowerShell blocks** parsed successfully |
+| Repository file review | No generated media, build outputs, extracted model directory or credential files in the push |
+
+The failed-import regression failed against the previous source and passed after the fix. Streaming regressions cover provider truncation, response-label chunk boundaries and failed playback. The UI checks use isolated profiles; they make no live provider, microphone or privileged desktop calls. The rebuilt local installer includes the follow-up fixes and remains unpublished. This release pass does not establish live streaming latency, physical-microphone accuracy or an installation/upgrade result.
+
+The sections below are historical records. Their test counts, local installer hashes and unpublished-build statements describe those earlier runs, not the current public release.
+
 # Conversational latency validation — September 26, 2026
 
 These checks cover the latency work described in [IMPROVEMENTS.md](IMPROVEMENTS.md#conversational-latency). No live Gemini key was used, so provider response times on real prompts are not measured here. The package version remains **1.4.0**.

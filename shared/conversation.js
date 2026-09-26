@@ -104,7 +104,11 @@
         else return;
       }
       if (phase === 'start') {
-        let head = buffer.trimStart().replace(/^RESPONSE:\s*/i, '');
+        let head = buffer.trimStart();
+        // Keep a possible label until enough characters arrive to distinguish
+        // it from an answer. SSE may split anywhere inside "RESPONSE:".
+        if (!final && head.length < 9 && 'RESPONSE:'.startsWith(head.toUpperCase())) return;
+        head = head.replace(/^RESPONSE:\s*/i, '');
         if (!head) { if (final) phase = 'done'; return; }
         if (escapes && head[0] === '[') {
           const close = head.indexOf(']');

@@ -120,6 +120,33 @@ app.whenReady().then(async () => {
         assertRace(notepadTextarea.textContent === 'new typing', 'Late import erased typing');
       } finally { window.FileReader = Reader; HTMLInputElement.prototype.click = click; }
     });
+    await check('failed file imports restore the original note, preserve another active tab, and can retry', () => {
+      const Reader = window.FileReader, click = HTMLInputElement.prototype.click, setItem = Storage.prototype.setItem;
+      let reader, failSave = false;
+      window.FileReader = class { constructor() { reader = this; } readAsText() {} };
+      HTMLInputElement.prototype.click = function () { if (this.type === 'file') this.onchange({ target: { files: [{}] } }); else click.call(this); };
+      Storage.prototype.setItem = function (key, value) { if (failSave && key === 'olangaNotepadTabs') throw new Error('Fixture quota'); return setItem.call(this, key, value); };
+      try {
+        for (const background of [false, true]) {
+          resetNotes(); saveNotepadTabs();
+          const durable = localStorage.getItem('olangaNotepadTabs'), alertCount = alerts.length;
+          failSave = true;
+          notepadImportBtn.click();
+          if (background) switchNotepadTab(101);
+          reader.onload({ target: { result: '<unsaved import>' } });
+          assertRace(notepadTabsData[0].content === 'original alpha', 'Failed import replaced the original note in memory');
+          assertRace(currentTabId === (background ? 101 : 100), 'Failed import changed the active tab');
+          assertRace(notepadTextarea.textContent === (background ? 'original beta' : 'original alpha'), 'Failed import changed the visible note');
+          assertRace(localStorage.getItem('olangaNotepadTabs') === durable, 'Failed import changed durable notes');
+          assertRace(alerts.slice(alertCount).some(text => text.includes('could not be saved')), 'Failed import did not report the save failure');
+          failSave = false;
+          if (background) switchNotepadTab(100);
+          notepadImportBtn.click(); reader.onload({ target: { result: '<retry succeeded>' } });
+          assertRace(notepadTextarea.textContent === '<retry succeeded>', 'Retry did not import literal file content');
+          assertRace(JSON.parse(localStorage.getItem('olangaNotepadTabs'))[0].content === '&lt;retry succeeded&gt;', 'Retry did not save the imported note');
+        }
+      } finally { window.FileReader = Reader; HTMLInputElement.prototype.click = click; Storage.prototype.setItem = setItem; }
+    });
     await check('news refreshes ignore stale success and stale failure, and cache failures can retry', async () => {
       const wait = async count => { for (let i = 0; replies.length < count && i < 100; i++) await new Promise(r => setTimeout(r, 10)); assertRace(replies.length >= count, 'Missing news generation'); };
       replies.length = 0; const old = loadNewsBrief(true); await wait(1);

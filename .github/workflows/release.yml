@@ -122,6 +122,10 @@ jobs:
           }
           [IO.File]::WriteAllText((Join-Path (Resolve-Path dist).Path 'RELEASE-METADATA.json'), ($metadata | ConvertTo-Json -Depth 4), $utf8)
           $notes = "<!-- olanga-artifact-verification -->`n$signingText`n`nCompare the downloaded installer's SHA-256 with the attached SHA256SUMS file. A matching checksum detects changed bytes; it is not a publisher signature. See RELEASE-METADATA.json for this build's recorded checks.`n`nUpdates are manual. Automatic download, installation, and rollback remain disabled.`n"
+          $versionNotes = Join-Path 'docs/releases' "$version.md"
+          if (Test-Path -LiteralPath $versionNotes -PathType Leaf) {
+            $notes = (Get-Content -LiteralPath $versionNotes -Raw).TrimEnd() + "`n`n" + $notes
+          }
           [IO.File]::WriteAllText((Join-Path (Resolve-Path dist).Path 'RELEASE-NOTES.md'), $notes, $utf8)
           Write-Host "Release artifact: $installerName ($signingStatus). SHA256SUMS was generated from the completed installer."
 

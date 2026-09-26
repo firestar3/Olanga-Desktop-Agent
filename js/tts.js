@@ -762,7 +762,7 @@ function createSpeechStream({ onStart } = {}) {
   const splitter = OlangaConversation.createSentenceSplitter();
   const voiceConfig = getSelectedNvidiaVoiceConfig();
   const queue = [];
-  let received = '', ended = false, started = false, pumping = false, settled = false;
+  let received = '', ended = false, started = false, pumping = false, settled = false, failed = false;
   let useWindows = ttsEngine !== 'magpie' || !nvidiaApiKey || Date.now() < magpieUnavailableUntil;
   let resolveDone;
   const done = new Promise(resolve => { resolveDone = resolve; });
@@ -782,16 +782,15 @@ function createSpeechStream({ onStart } = {}) {
   };
 
   async function speakItem(item) {
-    if (isTtsMuted) return;
+    if (isTtsMuted) return true;
     if (!started) { started = true; setState(State.SPEAKING); try { onStart?.(); } catch (_) {} }
     if (!useWindows && item.audio) {
       try {
         const blob = await item.audio;
-        if (!current()) return;
-        await playSpeechChunk(blob, { isFinal: false, onFinal() {} });
-        return;
+        if (!current()) return false;
+        return await playSpeechChunk(blob, { isFinal: false, onFinal() {} });
       } catch (error) {
-        if (!current()) return;
+        if (!current()) return false;
         useWindows = true;
         magpieUnavailableUntil = Date.now() + MAGPIE_COOLDOWN_MS;
         console.warn('[Olanga] Continuing the streamed reply with Windows TTS:', error.message);
@@ -802,28 +801,38 @@ function createSpeechStream({ onStart } = {}) {
       if (cancelAssistantPlayback) cancelAssistantPlayback();
       try { synthesis.cancel(); } catch (_) {}
     });
-    await speakWithWindowsTts(item.text, () => {});
-    clearSpeakingWatchdog();
+    try { return await speakWithWindowsTts(item.text, () => {}); }
+    finally { clearSpeakingWatchdog(); }
   }
 
   async function pump() {
     if (pumping) return;
     pumping = true;
     try {
-      while (current() && queue.length) await speakItem(queue.shift());
+      while (current() && !failed && queue.length) {
+        if (await speakItem(queue.shift()) !== true) {
+          failed = current();
+          queue.length = 0;
+          settle(false);
+          break;
+        }
+      }
     } catch (error) {
       console.warn('[Olanga] Streamed speech stopped:', error.message);
-      if (current()) queue.length = 0;
+      failed = current();
+      queue.length = 0;
+      settle(false);
     } finally { pumping = false; }
     if (!current()) settle(false);
-    else if (ended && !queue.length) settle(true);
+    else if (ended && !failed && !queue.length) settle(true);
   }
 
   return {
     done,
     get started() { return started; },
+    get failed() { return failed; },
     push(text) {
-      if (ended || !current() || typeof text !== 'string' || !text) return;
+      if (ended || settled || !current() || typeof text !== 'string' || !text) return;
       received += text;
       enqueue(splitter.push(text));
     },
@@ -832,7 +841,7 @@ function createSpeechStream({ onStart } = {}) {
     end(finalText) {
       if (!ended) {
         ended = true;
-        if (!current()) settle(false);
+        if (!current() || failed) settle(false);
         else enqueue([...splitter.push(typeof finalText === 'string' && finalText.startsWith(received) ? finalText.slice(received.length) : ''), ...splitter.flush()]);
       }
       return done;

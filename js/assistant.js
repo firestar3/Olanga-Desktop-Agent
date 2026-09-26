@@ -253,6 +253,9 @@ async function callGeminiGenerate(model, body, options = {}) {
       const error = response?.error || {};
       throw Object.assign(new Error(error.message || 'Gemini could not complete this request.'), { name: error.name || 'Error', status: error.status || 0, code: error.code || 'provider-error' });
     }
+    // Some text may already have been spoken. Fail without replaying that
+    // prefix or treating a token-limit stop as a complete answer.
+    if (response.truncated === true) throw Object.assign(new Error('The answer was cut off at the response limit. Please ask for a shorter answer.'), { code: 'max-tokens' });
     if (typeof response.text !== 'string' || !response.text.trim()) throw new Error('No response from Gemini');
     if (onText && !streaming) onText(response.text);
     return response.text;
@@ -848,6 +851,7 @@ function startStreamedReply(request) {
   };
   Promise.resolve(request.acknowledgement).then(open);
   return {
+    get failed() { return stream?.failed === true; },
     push(text) {
       if (discarded || !text) return;
       shown += text;
@@ -871,11 +875,20 @@ async function finishStreamedAnswer(request, reply, answer) {
   rememberConversationMessage('model', text);
   aiText.textContent = text;
   transcriptAi.classList.remove('hidden');
-  window.OlangaActivity?.finish(request.activityId, 'completed');
-  window.OlangaActivity?.timing('total', Date.now() - request.startedAt, 'ok');
   const completed = await reply.end(text);
   // An interrupted or superseded reply leaves the state to whoever took over.
-  if (!completed || request.signal.aborted || request.version !== assistantRequestVersion) return;
+  if (request.signal.aborted || request.version !== assistantRequestVersion) return;
+  if (!completed) {
+    window.OlangaActivity?.finish(request.activityId, reply.failed ? 'failed' : 'cancelled');
+    window.OlangaActivity?.timing('total', Date.now() - request.startedAt, reply.failed ? 'error' : 'cancelled');
+    if (reply.failed) {
+      showError('Speech stopped before the answer finished. The full text is shown above.');
+      setState(State.IDLE);
+    }
+    return;
+  }
+  window.OlangaActivity?.finish(request.activityId, 'completed');
+  window.OlangaActivity?.timing('total', Date.now() - request.startedAt, 'ok');
   if (text.endsWith('?')) enterAiFollowUpMode();
   else setState(State.IDLE);
 }
