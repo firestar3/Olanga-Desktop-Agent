@@ -84,6 +84,8 @@ async function stop() {
       await evaluate(`document.getElementById('startLocalBtn').click(); void 0`);
       const local = await evaluate(`({ visible: !document.getElementById('mainScreen').classList.contains('hidden'), key: !!apiKey, mic: !!micStream, input: OlangaWorkspace.snapshot().speechInput })`);
       check('Keyless startup works without opening a microphone', local.visible && !local.key && !local.mic && local.input === 'cloud');
+      const update = await evaluate('window.electronAPI.getUpdateState()');
+      check('Packaged updater starts idle with no automatic download or install', update.phase === 'idle' && update.status === 'not-checked' && update.installedVersion === report.version && !update.canDownload && !update.canInstall && update.bytesReceived === 0 && update.automaticUpdatesEnabled === false);
       const created = await evaluate(`(() => { const timer = createTimer(1800, 'Packaged fixture'); const task = addTask('Packaged fixture'); return timer.ok && task.ok; })()`);
       check('Packaged local timer and task save successfully', created);
       await send('Page.reload');

@@ -1192,8 +1192,28 @@ trustedMainIpc.on('media-cancel', () => {
 
 trustedMainIpc.handle('list-app-capabilities', () => appController.listCapabilities());
 const { createReleaseService } = require('./desktop/release-service');
-const releaseService = createReleaseService({ getInstalledVersion: () => app.getVersion() });
-trustedMainIpc.handle('check-release', () => releaseService.check());
+const { createManualUpdater, createElectronUpdateFetch } = require('./desktop/manual-updater');
+const { createInstallerLauncher } = require('./desktop/update-installer');
+const releaseService = createReleaseService({ getInstalledVersion: () => app.getVersion(), fetchImpl: (...args) => net.fetch(...args) });
+const manualUpdater = createManualUpdater({
+  releaseService,
+  fetchImpl: createElectronUpdateFetch(net),
+  updatesDir: path.join(app.getPath('userData'), 'updates'),
+  getInstalledVersion: () => app.getVersion(),
+  canInstall: app.isPackaged && process.platform === 'win32',
+  launchInstaller: createInstallerLauncher({ spawnImpl: spawn, quit: () => app.quit() }),
+  onState: state => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-state-changed', state);
+  }
+});
+// These endpoints accept no URL, path or installer arguments from the renderer.
+// Download and installation happen only after their separate user actions.
+trustedMainIpc.handle('check-release', () => manualUpdater.check({ force: true }));
+trustedMainIpc.handle('update-state', () => manualUpdater.getState());
+trustedMainIpc.handle('update-download', () => manualUpdater.download());
+trustedMainIpc.handle('update-cancel', () => manualUpdater.cancel());
+trustedMainIpc.handle('update-install', () => manualUpdater.install());
+app.on('before-quit', () => manualUpdater.dispose());
 trustedMainIpc.handle('arrange-app', (_event, payload) => appController.arrange(payload));
 trustedMainIpc.handle('open-app', async (event, appName) => {
   if (typeof appName !== 'string' || !appName.trim() || appName.length > 120) return { ok: false, message: 'Please specify an app name.' };

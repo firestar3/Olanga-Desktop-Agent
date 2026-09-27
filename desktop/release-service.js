@@ -1,6 +1,8 @@
 const RELEASES_URL = 'https://github.com/firestar3/Olanga-Desktop-Agent/releases';
 const LATEST_API_URL = 'https://api.github.com/repos/firestar3/Olanga-Desktop-Agent/releases/latest';
 const MAX_RESPONSE_BYTES = 256 * 1024;
+const MAX_INSTALLER_BYTES = 512 * 1024 * 1024;
+const MAX_CHECKSUM_BYTES = 64 * 1024;
 function cancelBody(response) {
   try { void Promise.resolve(response?.body?.cancel?.()).catch(() => {}); } catch { /* Already closed/locked. */ }
 }
@@ -43,11 +45,27 @@ function validateRelease(payload) {
   const prefix = '/firestar3/Olanga-Desktop-Agent/releases/tag/';
   if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.port || url.username || url.password || url.search || url.hash || pathname.slice(0, prefix.length).toLowerCase() !== prefix.toLowerCase() || pathname.slice(prefix.length) !== payload.tag_name) throw new Error('invalid-release');
   const hasAsset = name => payload.assets.some(asset => asset && asset.name === name && asset.state === 'uploaded' && Number.isSafeInteger(asset.size) && asset.size > 0);
+  const downloadAsset = (name, maximum) => {
+    const matches = payload.assets.filter(asset => asset?.name === name);
+    if (matches.length !== 1) return null;
+    const asset = matches[0];
+    if (asset.state !== 'uploaded' || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > maximum) return null;
+    // The renderer never supplies download URLs. Match GitHub's canonical URL
+    // against the validated repository, tag and exact asset name.
+    const expected = `${RELEASES_URL}/download/${encodeURIComponent(payload.tag_name)}/${encodeURIComponent(name)}`;
+    if (asset.browser_download_url !== expected) return null;
+    if (asset.digest != null && !/^sha256:[a-f\d]{64}$/i.test(asset.digest)) return null;
+    return { name, size: asset.size, url: expected, sha256: asset.digest ? asset.digest.slice(7).toLowerCase() : null };
+  };
+  const installer = downloadAsset(`Olanga-Setup-${parsed.version}.exe`, MAX_INSTALLER_BYTES);
+  const checksums = downloadAsset('SHA256SUMS', MAX_CHECKSUM_BYTES);
   return {
     version: parsed.version,
     url: RELEASES_URL + '/tag/' + encodeURIComponent(payload.tag_name),
     installerAvailable: hasAsset(`Olanga-Setup-${parsed.version}.exe`),
     checksumsAvailable: hasAsset('SHA256SUMS'),
+    downloadAvailable: !!(installer && checksums),
+    downloadCandidate: installer && checksums ? { version: parsed.version, installer, checksums } : null,
   };
 }
 
@@ -87,6 +105,7 @@ async function readBoundedJson(response, signal) {
 function createReleaseService({ getInstalledVersion = () => require('../package.json').version, fetchImpl = globalThis.fetch, now = Date.now, timeoutMs = 8000, cacheTtlMs = 15 * 60 * 1000, failureCacheTtlMs = 60 * 1000 } = {}) {
   let cached = null;
   let pending = null;
+  let downloadCandidate = null;
   const base = installedVersion => ({ installedVersion, url: RELEASES_URL, channel: 'stable', automaticUpdatesEnabled: false, downloaded: false, assetVerification: 'not-performed', signingVerified: false });
   async function checkOnce() {
     const installedVersion = String(getInstalledVersion());
@@ -96,15 +115,16 @@ function createReleaseService({ getInstalledVersion = () => require('../package.
     try {
       const result = await Promise.race([
         (async () => {
-          const response = await fetchImpl(LATEST_API_URL, { method: 'GET', redirect: 'error', signal: abort.signal, headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'Olanga-Desktop-Agent' } });
+          const response = await fetchImpl(LATEST_API_URL, { method: 'GET', redirect: 'error', credentials: 'omit', cache: 'no-store', signal: abort.signal, headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'Olanga-Desktop-Agent' } });
           try {
             if (abort.signal.aborted) throw new Error('timeout');
             if (response.status === 404) return { ...base(installedVersion), ok: true, status: 'no-release', message: 'No stable Olanga release is published on GitHub yet.' };
             if (response.status === 403 || response.status === 429) throw new Error('rate-limited');
             if (!response.ok) throw new Error('server-unavailable');
-            const release = validateRelease(await readBoundedJson(response, abort.signal));
+            const { downloadCandidate: candidate, ...release } = validateRelease(await readBoundedJson(response, abort.signal));
             const difference = compareVersions(release.version, installedVersion);
-            const message = difference > 0 ? `Olanga ${release.version} is available. Open the release page to review it and update manually.` : difference === 0 ? `Olanga ${installedVersion} matches the latest stable release.` : `Installed Olanga ${installedVersion} is newer than the latest stable release (${release.version}).`;
+            downloadCandidate = difference > 0 ? candidate : null;
+            const message = difference > 0 ? `Olanga ${release.version} is available.${candidate ? ' Download it here, then choose Install & restart when you are ready.' : ' Open the release page to review the available files.'}` : difference === 0 ? `Olanga ${installedVersion} matches the latest stable release.` : `Installed Olanga ${installedVersion} is newer than the latest stable release (${release.version}).`;
             return { ...base(installedVersion), ...release, ok: true, status: difference > 0 ? 'update-available' : difference === 0 ? 'up-to-date' : 'ahead', updateAvailable: difference > 0, message: message + (difference > 0 && !release.installerAvailable ? ' A Windows installer is not listed in that release yet.' : '') };
           } finally { cancelBody(response); }
         })(),
@@ -118,9 +138,10 @@ function createReleaseService({ getInstalledVersion = () => require('../package.
     } finally { clearTimeout(timer); abort.abort(); }
   }
   return {
-    async check() {
-      if (cached && now() < cached.expiresAt) return { ...cached.result, cached: true };
+    async check({ force = false } = {}) {
+      if (!force && cached && now() < cached.expiresAt) return { ...cached.result, cached: true };
       if (pending) return { ...await pending, cached: true };
+      downloadCandidate = null;
       pending = checkOnce().then(result => {
         const final = { ...result, checkedAt: new Date(now()).toISOString(), cached: false };
         cached = { result: final, expiresAt: now() + (result.ok ? cacheTtlMs : failureCacheTtlMs) };
@@ -128,7 +149,8 @@ function createReleaseService({ getInstalledVersion = () => require('../package.
       });
       try { return { ...await pending }; } finally { pending = null; }
     },
+    getDownloadCandidate() { return downloadCandidate ? structuredClone(downloadCandidate) : null; },
   };
 }
 
-module.exports = { createReleaseService, compareVersions, parseVersion, validateRelease, RELEASES_URL, LATEST_API_URL };
+module.exports = { createReleaseService, compareVersions, parseVersion, validateRelease, RELEASES_URL, LATEST_API_URL, MAX_INSTALLER_BYTES, MAX_CHECKSUM_BYTES };

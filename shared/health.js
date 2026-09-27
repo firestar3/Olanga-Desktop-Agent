@@ -58,7 +58,7 @@
     else if (!shortcut.registered) add('shortcut', 'Push-to-talk', 'warn', `${shortcut.label || shortcut.value} is already used by another app.`, 'Choose a different shortcut in Settings.');
     else add('shortcut', 'Push-to-talk', 'ok', `Press ${shortcut.label || shortcut.value} anywhere to talk.`);
 
-    if (snapshot.app?.version) add('version', 'Version', 'info', `Olanga ${snapshot.app.version}${snapshot.app.packaged === false ? ', running from source' : ''}.`, 'Workspace → Apps → Check for updates.');
+    if (snapshot.app?.version) add('version', 'Version', 'info', `Olanga ${snapshot.app.version}${snapshot.app.packaged === false ? ', running from source' : ''}.`, 'Workspace → Apps & updates → Check for updates.');
     return checks;
   }
   function summarize(checks) {

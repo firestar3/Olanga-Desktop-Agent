@@ -2,11 +2,15 @@
 
 The app remains a complete Electron Windows application, distributed through this repository's GitHub Releases as an NSIS installer. No website deployment or separate backend server is needed. Users supply their provider keys.
 
-## Manual update checks
+## Manual in-app updates
 
-**Workspace → Apps → Check for updates** reads the latest stable release metadata from the fixed public repository `firestar3/Olanga-Desktop-Agent`. It compares semantic versions and offers a link to that release. The check has an eight-second deadline; repeated clicks share the same in-flight request. Successful checks are cached in memory for 15 minutes and failed checks for one minute. There is no startup check or background polling.
+**Workspace → Apps & updates → Check for updates** reads the latest stable release metadata from the fixed public repository `firestar3/Olanga-Desktop-Agent`. It compares semantic versions and offers **Download update** when a newer release has valid installer and checksum assets. Each explicit check refreshes metadata, with an eight-second deadline; concurrent requests share one check. There is no startup check or background polling.
 
-The service validates the release URL, tag, stable-release flags, response type and size. It does not download installers, fetch checksum files, inspect installer signatures, install updates, or perform rollback. An asset named `SHA256SUMS` means that checksum metadata is available; it does not prove that the user's downloaded installer has been verified. Network, rate-limit and malformed-response failures remain distinct from “up to date.” GitHub's latest-release endpoint excludes drafts and prereleases. See the [GitHub Releases API documentation](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
+Checking does not download anything. A separate **Download update** action fetches the exact version-matched installer and `SHA256SUMS` from that release. The main process validates the fixed repository URLs, every redirect, bounded file sizes and SHA-256 hashes, including GitHub asset digests when supplied. Downloads stream to a private updates directory under the app's data folder, with progress, cancellation and partial-file cleanup. Network, rate-limit and malformed-response failures remain distinct from “up to date.”
+
+Only **Install & restart** launches an installer, after rehashing the saved file. The renderer cannot supply a download URL, file path or executable arguments. The NSIS update path retains the existing installation directory, installation mode and app data, and reopens Olanga. An ordinary app quit never installs anything. The button is available in packaged Windows builds; source checkouts can check and download but cannot install. Ready downloads are session-only; abandoned update files are removed on the next explicit download. Versions through 1.4.0 need one manual installer update to gain this flow.
+
+Checksum verification does not verify publisher identity. The UI does not claim a verified Windows signature, and the current unsigned release remains clearly identified in release metadata. Installation, elevated-install cancellation and rollback are separate from the download and launch checks. See the [GitHub Releases API documentation](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
 
 ## Verify locally
 
@@ -16,6 +20,7 @@ npm run check
 npm test
 npm run smoke
 npm run smoke:workspace
+npm run smoke:updates
 npm run smoke:offline
 npm run smoke:apps
 npm run smoke:overlay
@@ -30,7 +35,7 @@ npm run smoke:packaged
 
 The installer is `dist/Olanga-Setup-<package-version>.exe`. `npm run pack` produces `dist/win-unpacked/` for a quick packaging check. Use a Windows desktop session for smoke checks. The native overlay check briefly moves the pointer and clicks only its own isolated test windows; leave the mouse alone while it runs. It restores the pointer afterward and makes no live model calls.
 
-The Workspace check exercises real UI and local state with an isolated profile and blocked network. The offline check compares the bundled Vosk recognizers using synthetic WAVs; it does not use a microphone or dispatch desktop actions. The app-adapter check launches and arranges only its own disposable fixture, including missing/multiple-window and cancellation cases.
+The Workspace check exercises real UI and local state with an isolated profile and blocked network. The updates smoke uses the real renderer and preload with simulated update IPC: explicit actions, progress, cancellation, retries and reload races are checked without downloading or launching an installer. The offline check compares the bundled Vosk recognizers using synthetic WAVs; it does not use a microphone or dispatch desktop actions. The app-adapter check launches and arranges only its own disposable fixture, including missing/multiple-window and cancellation cases.
 
 The desktop smoke check opens a temporary editor, clicks only that fixture, performs a real scoped full-field replacement, verifies exact text readback and captures a fresh fixture image. It restores the original text and checks that intervening text or control changes prevent undo. Close other Olanga instances first and leave the keyboard and pointer alone. Native confirmations are injected only in the test; production requires both. The default test uses no credentials or network.
 

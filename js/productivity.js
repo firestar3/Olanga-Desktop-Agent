@@ -32,12 +32,12 @@
   panel.id = 'workspaceDialog';
   panel.setAttribute('aria-labelledby', 'workspaceTitle');
   panel.innerHTML = `<header><div><p class="workspace-eyebrow">YOUR DESKTOP</p><h2 id="workspaceTitle">Workspace</h2></div><button type="button" id="workspaceClose" aria-label="Close workspace">×</button></header>
-    <nav aria-label="Workspace sections">${['Activity', 'Routines', 'Saved names', 'Apps', 'Diagnostics', 'Memories', 'Health'].map((title, i) => `<button type="button" data-workspace-tab="${i}" aria-pressed="${i === 0}">${title}</button>`).join('')}</nav>
+    <nav aria-label="Workspace sections">${['Activity', 'Routines', 'Saved names', 'Apps & updates', 'Diagnostics', 'Memories', 'Health'].map((title, i) => `<button type="button" data-workspace-tab="${i}" aria-pressed="${i === 0}">${title}</button>`).join('')}</nav>
     <p id="workspaceStatus" role="status" aria-live="polite"></p>
     <section data-workspace-page="0"><div class="workspace-heading"><h3>Recent activity</h3><button type="button" id="activityClear">Clear</button></div><p class="workspace-help">Current-session receipts show actual results. Saved history keeps only operation types and statuses, without prompts, screenshots, task names, or document text.</p><label class="workspace-check"><input type="checkbox" id="saveActivity"> Keep activity after restart</label><div id="activityList"></div></section>
     <section data-workspace-page="1" hidden><h3>Routines</h3><p class="workspace-help">Save common local commands, one per line. Review every run before it starts. Interrupted runs never restart automatically.</p><form id="routineForm"><label for="routineName">Name</label><input id="routineName" maxlength="100" required placeholder="Focus time"><label for="routineLines">Commands</label><textarea id="routineLines" rows="5" required placeholder="Open Spotify&#10;Set volume to 25%&#10;Set a timer for 25 minutes called Focus"></textarea><div class="workspace-actions"><button type="submit">Save routine</button><button type="button" id="routineReset">New routine</button></div></form><div id="routineList"></div><h3>Previous runs</h3><div id="routineRuns"></div></section>
     <section data-workspace-page="2" hidden><h3>Saved names</h3><p class="workspace-help">Choose your own names for supported apps and private Spotify playlists. Olanga remembers only what you save here.</p><label class="workspace-check"><input type="checkbox" id="memoryEnabled"> Use my saved names</label><form id="memoryForm"><label for="memoryKind">Type</label><select id="memoryKind"><option value="aliases">App alias</option><option value="playlists">Playlist preference</option></select><label for="memoryAlias">Your name</label><input id="memoryAlias" maxlength="100" required placeholder="work browser"><label for="memoryTarget">App or private playlist name</label><input id="memoryTarget" maxlength="100" required placeholder="Chrome"><button type="submit">Save name</button></form><div id="memoryList"></div><button type="button" id="memoryClear">Delete all saved names</button></section>
-    <section data-workspace-page="3" hidden><div class="workspace-heading"><h3>App capabilities</h3><button type="button" id="appsRefresh">Refresh</button></div><p class="workspace-help">Check which supported apps Windows can find. Other app names can still use Windows Search, with an unverified result.</p><div id="capabilitiesList">Select Refresh to check installed apps.</div><hr><h3>Updates</h3><p class="workspace-help">Check releases manually. Olanga never downloads or installs an update automatically.</p><button type="button" id="checkRelease">Check for updates</button><div id="releaseStatus" role="status"></div></section>
+    <section data-workspace-page="3" hidden><div class="workspace-heading"><h3>App capabilities</h3><button type="button" id="appsRefresh">Refresh</button></div><p class="workspace-help">Check which supported apps Windows can find. Other app names can still use Windows Search, with an unverified result.</p><div id="capabilitiesList">Select Refresh to check installed apps.</div><div class="release-card"><div class="workspace-heading"><h3>Olanga updates</h3><span id="releaseVersion" class="release-version"></span></div><p class="workspace-help">Check when you want, download here, then choose when to install. Olanga never checks, downloads or installs updates automatically.</p><p id="releaseStatus" role="status" aria-live="polite">Check for a newer version of Olanga.</p><progress id="releaseProgress" class="release-progress" max="100" value="0" aria-label="Update download progress" hidden></progress><p id="releaseDetail" class="release-detail" hidden></p><p id="releaseWarning" class="release-warning" hidden></p><div class="workspace-actions release-actions"><button type="button" id="checkRelease">Check for updates</button><button type="button" id="downloadUpdate" class="workspace-primary" hidden>Download update</button><button type="button" id="cancelUpdate" hidden>Cancel download</button><button type="button" id="installUpdate" class="workspace-primary" hidden>Install & restart</button><button type="button" id="releaseNotes" hidden>Release notes</button></div></div></section>
     <section data-workspace-page="4" hidden><h3>Performance</h3><label class="workspace-check"><input type="checkbox" id="diagnosticsEnabled"> Collect local performance measurements</label><p class="workspace-help">Stores timings and success/error categories only. Nothing is uploaded. Turning this off deletes measurements.</p><div class="workspace-actions"><button type="button" id="timingsClear">Clear measurements</button><button type="button" id="timingsExport">Export measurements</button></div><div id="timingList"></div></section>
     <section data-workspace-page="5" hidden><h3>Memories</h3><p class="workspace-help">Things you asked Olanga to remember, for example “remember that my locker code is 4312”. Olanga never adds memories on its own. While enabled, memories are sent to Gemini with your requests so answers can use them.</p><label class="workspace-check"><input type="checkbox" id="factsEnabled"> Use my memories in answers</label><form id="factForm"><label for="factText">Add a memory</label><input id="factText" maxlength="300" required placeholder="My sister's birthday is June 5"><button type="submit">Save memory</button></form><div id="factList"></div><button type="button" id="factsClear">Delete all memories</button></section>
     <section data-workspace-page="6" hidden><div class="workspace-heading"><h3>Health check</h3><button type="button" id="healthRun">Run check</button></div><p class="workspace-help">Checks the microphone, wake word, speech, voice, Gemini and storage without changing anything. The connection test sends one short request to Gemini.</p><p id="healthSummary" class="health-summary" role="status" aria-live="polite"></p><div id="healthList"></div><button type="button" id="healthTest">Test Gemini connection</button></section>`;
@@ -198,12 +198,56 @@
       list.replaceChildren(); for (const app of result.apps) list.append(row(app.name, `${pretty(app.status || (app.installed ? 'installed' : 'missing'))} · ${(app.operations || []).map(pretty).join(', ') || 'No verified adapter available'}`));
     } finally { control.disabled = false; }
   }));
-  panel.querySelector('#checkRelease').addEventListener('click', guarded(async () => {
-    const target = panel.querySelector('#releaseStatus'); target.textContent = 'Checking the latest release…';
-    if (!window.electronAPI.checkRelease) { target.textContent = 'Open GitHub Releases to compare versions.'; target.append(button('Open releases', () => window.electronAPI.openExternal('https://github.com/firestar3/Olanga-Desktop-Agent/releases'))); return; }
-    const result = await window.electronAPI.checkRelease(); target.textContent = result.message;
-    if (result.url) target.append(button('View release', () => window.electronAPI.openExternal(result.url)));
-  }));
+  let updateState = { phase: 'idle' }, updateAction = 0, updateEventRevision = 0;
+  const updateControls = Object.fromEntries(['checkRelease', 'downloadUpdate', 'cancelUpdate', 'installUpdate', 'releaseNotes', 'releaseStatus', 'releaseVersion', 'releaseProgress', 'releaseDetail', 'releaseWarning'].map(id => [id, panel.querySelector('#' + id)]));
+  function renderUpdate(state) {
+    if (!state || typeof state !== 'object') return;
+    updateState = state;
+    const busy = ['checking', 'downloading', 'verifying', 'installing'].includes(state.phase);
+    const downloading = state.phase === 'downloading' || (state.phase === 'verifying' && !state.downloaded);
+    updateControls.checkRelease.disabled = busy;
+    updateControls.checkRelease.textContent = state.phase === 'checking' ? 'Checking…' : 'Check for updates';
+    updateControls.downloadUpdate.hidden = !state.canDownload || busy || state.phase === 'ready';
+    updateControls.downloadUpdate.disabled = busy;
+    updateControls.cancelUpdate.hidden = !downloading;
+    updateControls.installUpdate.hidden = !state.canInstall;
+    updateControls.installUpdate.disabled = busy;
+    updateControls.installUpdate.textContent = state.phase === 'installing' ? 'Installing…' : 'Install & restart';
+    updateControls.releaseNotes.hidden = !state.url || state.phase === 'idle';
+    updateControls.releaseStatus.textContent = state.message || 'Check for a newer version of Olanga.';
+    updateControls.releaseStatus.classList.toggle('workspace-error', state.phase === 'error' || state.ok === false);
+    updateControls.releaseVersion.textContent = state.installedVersion ? `Installed ${state.installedVersion}` : '';
+    updateControls.releaseProgress.hidden = !downloading;
+    updateControls.releaseProgress.value = Number.isFinite(state.progress) ? Math.max(0, Math.min(100, state.progress)) : 0;
+    const size = bytes => (Math.max(0, Number(bytes) || 0) / 1048576).toFixed(1) + ' MB';
+    updateControls.releaseDetail.textContent = downloading ? `${size(state.bytesReceived)} of ${size(state.totalBytes)}${state.phase === 'verifying' ? ' · Verifying download…' : ''}` : state.phase === 'ready' ? (state.canInstall ? 'Olanga will close, update your existing installation and reopen. Your settings and saved data stay in place.' : 'Install & restart is available in the installed Windows app.') : '';
+    updateControls.releaseDetail.hidden = !updateControls.releaseDetail.textContent;
+    updateControls.releaseWarning.textContent = state.assetVerification === 'sha256-verified' ? 'Download checksum verified. A Windows publisher signature has not been verified.' : '';
+    updateControls.releaseWarning.hidden = !updateControls.releaseWarning.textContent;
+  }
+  async function updateOperation(method, pendingPhase, pendingMessage) {
+    const operation = ++updateAction;
+    renderUpdate({ ...updateState, phase: pendingPhase, message: pendingMessage });
+    try {
+      if (typeof window.electronAPI[method] !== 'function') throw new Error('This build does not support in-app updates.');
+      const result = await window.electronAPI[method]();
+      if (operation === updateAction) renderUpdate(result);
+    } catch (error) {
+      if (operation === updateAction) renderUpdate({ ...updateState, phase: 'error', ok: false, message: error.message || 'The update could not be completed. Try again.' });
+    }
+  }
+  updateControls.checkRelease.addEventListener('click', () => updateOperation('checkRelease', 'checking', 'Checking the latest release…'));
+  updateControls.downloadUpdate.addEventListener('click', () => updateOperation('downloadUpdate', 'downloading', 'Starting download…'));
+  updateControls.cancelUpdate.addEventListener('click', () => updateOperation('cancelUpdate', 'verifying', 'Cancelling download…'));
+  updateControls.installUpdate.addEventListener('click', () => updateOperation('installUpdate', 'installing', 'Preparing to install and restart…'));
+  updateControls.releaseNotes.addEventListener('click', () => { if (updateState.url) window.electronAPI.openExternal(updateState.url); });
+  window.electronAPI.onUpdateState?.(state => { updateEventRevision++; renderUpdate(state); });
+  // Reading local state restores progress after a renderer reload; it does not
+  // check the network or start a download.
+  if (window.electronAPI.getUpdateState) {
+    const initialAction = updateAction, initialRevision = updateEventRevision;
+    window.electronAPI.getUpdateState().then(state => { if (initialAction === updateAction && initialRevision === updateEventRevision) renderUpdate(state); }).catch(() => {});
+  }
 
   const openReviews = new Set();
   window.cancelRoutineReviews = () => { for (const review of openReviews) review.close(); };

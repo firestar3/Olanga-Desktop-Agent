@@ -13,8 +13,8 @@ function release(version = '1.4.0') {
     tag_name: 'v' + version, html_url: RELEASES_URL + '/tag/v' + version,
     draft: false, prerelease: false,
     assets: [
-      { name: `Olanga-Setup-${version}.exe`, state: 'uploaded', size: 1234 },
-      { name: 'SHA256SUMS', state: 'uploaded', size: 100 },
+      { name: `Olanga-Setup-${version}.exe`, state: 'uploaded', size: 1234, browser_download_url: `${RELEASES_URL}/download/v${version}/Olanga-Setup-${version}.exe` },
+      { name: 'SHA256SUMS', state: 'uploaded', size: 100, browser_download_url: `${RELEASES_URL}/download/v${version}/SHA256SUMS` },
     ],
   };
 }
@@ -37,6 +37,8 @@ test('manual check reads only the fixed public metadata endpoint and links to it
   assert.equal(calls[0].url, LATEST_API_URL);
   assert.equal(calls[0].options.method, 'GET');
   assert.equal(calls[0].options.redirect, 'error');
+  assert.equal(calls[0].options.credentials, 'omit');
+  assert.equal(calls[0].options.cache, 'no-store');
   assert.equal(calls[0].options.headers.Authorization, undefined);
   assert.equal(calls[0].options.body, undefined);
   assert.equal(result.updateAvailable, true);
@@ -122,6 +124,51 @@ test('network and rate-limit failures are cached briefly without claiming up-to-
   const offline = await service(async () => { throw new Error('offline'); }).check();
   assert.equal(offline.status, 'unavailable');
   assert.match(offline.message, /Local app controls/);
+});
+
+test('an explicit fresh check bypasses cached metadata but still coalesces concurrent requests', async () => {
+  let calls = 0;
+  const checker = service(async () => { calls++; return reply(release(calls === 1 ? '1.4.0' : '1.4.1')); });
+  assert.equal((await checker.check()).version, '1.4.0');
+  assert.equal((await checker.check()).version, '1.4.0');
+  const [fresh, concurrent] = await Promise.all([checker.check({ force: true }), checker.check({ force: true })]);
+  assert.equal(calls, 2);
+  assert.equal(fresh.version, '1.4.1');
+  assert.equal(concurrent.version, '1.4.1');
+});
+
+test('download candidates require exact trusted asset URLs, unique names, bounded sizes and valid digests', async () => {
+  const checker = service(async () => reply(release()));
+  const result = await checker.check();
+  assert.equal(result.downloadAvailable, true);
+  assert.equal(result.downloadCandidate, undefined, 'private download paths stay out of public metadata');
+  const candidate = checker.getDownloadCandidate();
+  assert.equal(candidate.installer.name, 'Olanga-Setup-1.4.0.exe');
+  candidate.installer.url = 'https://attacker.example/file.exe';
+  assert.notEqual(checker.getDownloadCandidate().installer.url, candidate.installer.url);
+  for (const patch of [
+    { browser_download_url: 'https://attacker.example/setup.exe' },
+    { browser_download_url: `${RELEASES_URL}/download/v1.3.1/Olanga-Setup-1.4.0.exe` },
+    { browser_download_url: `${RELEASES_URL}/download/v1.4.0/Olanga-Setup-1.4.0.exe?target=elsewhere` },
+    { size: 513 * 1024 * 1024 }, { digest: 'md5:abcd' },
+  ]) {
+    const payload = release(); Object.assign(payload.assets[0], patch);
+    const invalid = service(async () => reply(payload));
+    assert.equal((await invalid.check()).downloadAvailable, false, JSON.stringify(patch));
+    assert.equal(invalid.getDownloadCandidate(), null);
+  }
+  const duplicate = release(); duplicate.assets.push({ ...duplicate.assets[0] });
+  assert.equal((await service(async () => reply(duplicate)).check()).downloadAvailable, false);
+});
+
+test('failed and non-upgrade checks invalidate a previously available download candidate', async () => {
+  let payload = release();
+  const checker = service(async () => payload ? reply(payload) : reply({}, 503));
+  await checker.check(); assert.ok(checker.getDownloadCandidate());
+  payload = null;
+  await checker.check({ force: true }); assert.equal(checker.getDownloadCandidate(), null);
+  payload = release('1.3.1');
+  await checker.check({ force: true }); assert.equal(checker.getDownloadCandidate(), null);
 });
 
 test('an absent stable release and an invalid installed version remain distinct', async () => {

@@ -41,6 +41,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openApp: (appName) => ipcRenderer.invoke('open-app', appName),
   listAppCapabilities: () => ipcRenderer.invoke('list-app-capabilities'),
   checkRelease: () => ipcRenderer.invoke('check-release'),
+  getUpdateState: () => ipcRenderer.invoke('update-state'),
+  downloadUpdate: () => ipcRenderer.invoke('update-download'),
+  cancelUpdate: () => ipcRenderer.invoke('update-cancel'),
+  installUpdate: () => ipcRenderer.invoke('update-install'),
+  onUpdateState: (callback) => {
+    const handler = (_event, state) => callback(state);
+    ipcRenderer.on('update-state-changed', handler);
+    return () => ipcRenderer.removeListener('update-state-changed', handler);
+  },
   arrangeApp: (payload) => ipcRenderer.invoke('arrange-app', payload),
   closeApp: (appName) => ipcRenderer.invoke('close-app', appName),
   requestScreenshot: () => ipcRenderer.invoke('request-screenshot'),

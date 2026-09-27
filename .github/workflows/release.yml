@@ -5,8 +5,8 @@ name: Release
 # installer as a workflow artifact instead, which is handy for testing.
 #
 # To publish a new version:
-#   git tag -a v1.4.0 -m "Olanga v1.4.0"
-#   git push origin v1.4.0
+#   git tag -a v1.4.1 -m "Olanga v1.4.1"
+#   git push origin v1.4.1
 #
 # Prerequisite: electron-builder must be in devDependencies (npm install
 # --save-dev electron-builder) and that change committed.
@@ -62,6 +62,9 @@ jobs:
 
       - name: Check renderer races and storage recovery
         run: npm run smoke:renderer
+
+      - name: Check manual update controls and theme consistency
+        run: npm run smoke:updates
 
       - name: Build the installer
         env:
@@ -165,6 +168,6 @@ jobs:
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
           } else {
-            gh release create $tag @assets --title "Olanga $tag" --generate-notes --notes-file dist/RELEASE-NOTES.md
+            gh release create $tag @assets --title "Olanga $tag" --notes-file dist/RELEASE-NOTES.md
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

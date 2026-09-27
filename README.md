@@ -26,7 +26,7 @@ Olanga is an open-source Windows assistant for the things you do throughout the 
 
 Common commands run directly through local controls, with no API key required for typed requests. Choose cloud transcription or optional on-device English recognition. Gemini handles questions and requests that need interpretation. A small corner orb keeps Olanga within reach while you work in other apps.
 
-**Olanga 1.4.0** brings these tools together: reviewed routines, activity receipts, saved app and playlist names, reminders and alarms, memories you explicitly save, a spoken daily briefing and a local health check. It also adds streamed conversational replies, configurable push-to-talk and wake-word interruption, alongside optional on-device transcription and local commands that work without a key.
+**Olanga 1.4.1** brings these tools together: reviewed routines, activity receipts, saved app and playlist names, reminders and alarms, memories you explicitly save, a spoken daily briefing and a local health check. Streamed conversational replies, configurable push-to-talk and wake-word interruption sit alongside optional on-device transcription and local commands that work without a key. Workspace shares Olanga's familiar controls and includes manual downloads and installation of updates.
 
 ## See it in action
 
@@ -78,7 +78,7 @@ Response time varies with hardware, network, voice engine and app startup. The [
 
 ## Get started
 
-1. Download **Olanga-Setup-1.4.0.exe** from [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases) and run it. It adds desktop and Start-menu shortcuts.
+1. Download **Olanga-Setup-1.4.1.exe** from [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases) and run it. It adds desktop and Start-menu shortcuts.
 2. Choose **Use local commands without a key**, or add your own [Google Gemini API key](https://aistudio.google.com/apikey) for cloud transcription, conversation, screen understanding, planning, and Notes/News AI.
 3. Use the built-in **Windows voice**, or choose **NVIDIA Magpie** in Settings and add a separate [NVIDIA hosted API key](https://build.nvidia.com/settings/api-keys). Use **Save & Test** to verify Magpie synthesis.
 4. Type a request, or enable voice input and say **“Hey Olanga”**, wait for the listening orb, and give your request. **Settings → Speech recognition** offers cloud and on-device modes; on-device modes ask you to review the transcript before sending it. You can also enable a push-to-talk shortcut in Settings.
@@ -94,7 +94,7 @@ Open **Workspace** from the top bar:
 - **Activity** shows each action's actual result, including failures, cancellation and unverified outcomes. History is session-only by default. Optional saved history keeps operation types and statuses, without prompts or result text.
 - **Routines** save up to 12 supported local actions, such as opening and arranging apps, setting volume and starting a focus timer. Review the individual steps and choose **Run selected steps** each time. Runs stop on failure. After interruption, completed steps cannot repeat; uncertain steps require your explicit selection after checking what happened.
 - **Saved names** lets you create, edit and delete aliases for supported apps and private Spotify playlists. Enable **Use my saved names** to apply them. Olanga does not infer or save preferences from conversations.
-- **Apps** checks which supported apps Windows can find and which operations are available. Known apps use verified launch targets; other names can use Windows Search with an explicitly unverified result. Arrangement requires exactly one matching window.
+- **Apps & updates** checks which supported apps Windows can find and which operations are available. Known apps use verified launch targets; other names can use Windows Search with an explicitly unverified result. Arrangement requires exactly one matching window. Check for an Olanga update, download it here, and choose **Install & restart** when you're ready.
 - **Diagnostics** optionally saves timing and outcome measurements locally, with clear and export controls. Disabling it deletes those measurements. Gemini request and token counts are available separately for the current session.
 - **Memories** lists facts you explicitly save, with add and delete controls. **Use my memories in answers** is on by default; switch it off to stop including those facts with Gemini requests without deleting them. Olanga does not infer memories from ordinary conversation.
 - **Health** reports microphone, wake-word, speech recognition, voice, Gemini, storage, internet and shortcut status, with suggested fixes. Checking status does not call a model. The separate **Test Gemini connection** button sends a short Gemini request.
@@ -178,9 +178,11 @@ Gemini **3.5 Flash-Lite** handles transcription, routing and responses; **3.5 Fl
 
 ## Updates
 
-Use **Workspace → Apps → Check for updates** to compare your version with the latest stable GitHub release and open its page. Checks run on demand and are cached briefly. Olanga does not download or install updates automatically.
+Use **Workspace → Apps & updates → Check for updates** to compare your version with the latest stable GitHub release. Choose **Download update** to download it inside Olanga, with progress and cancellation. Once the download is verified, **Install & restart** updates the existing installation and reopens Olanga, preserving your settings and saved data. Checks, downloads and installation happen only when you choose them; nothing installs on ordinary quit.
 
-The release workflow produces installer checksums and observed signing-status metadata. A matching checksum confirms file bytes, not publisher identity; the in-app check does not download or verify those assets. Windows signing requires configured credentials. Signed automatic updates and rollback remain disabled pending signing configuration and recovery tests.
+Olanga verifies the downloaded installer's SHA-256 against the release checksum and checks the file again before installation. The release also records its signing status. A matching checksum confirms file bytes, not publisher identity; releases without a configured Windows certificate remain unsigned. Automatic updates and rollback remain disabled.
+
+Versions through 1.4.0 have a release-page link only. Install 1.4.1 once from [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases) to get the in-app update flow for future versions.
 
 ## Run from source
 

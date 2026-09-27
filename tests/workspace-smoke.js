@@ -12,7 +12,7 @@ const report = { passed: false, startedAt: new Date().toISOString(), checks: [],
   coverage: { realDom: true, isolatedProfile: true, providerCalls: false, microphone: false, desktopActions: false, speechPlayback: false, zoomFactor: 1 } };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 globalThis.fetch = async () => { report.forbiddenCalls.push('main-fetch'); throw new Error('Remote HTTP disabled in Workspace smoke.'); };
-const forbidden = new Set(['provider-generate', 'nvidia-tts-config', 'nvidia-tts-synthesize', 'open-app', 'arrange-app', 'close-app', 'play-spotify', 'reload-spotify', 'media-control', 'desktop-capture', 'desktop-run', 'desktop-undo', 'execute-command', 'terminal-session-create', 'terminal-session-execute', 'fetch-news-bundle']);
+const forbidden = new Set(['check-release', 'update-download', 'update-install', 'provider-generate', 'nvidia-tts-config', 'nvidia-tts-synthesize', 'open-app', 'arrange-app', 'close-app', 'play-spotify', 'reload-spotify', 'media-control', 'desktop-capture', 'desktop-run', 'desktop-undo', 'execute-command', 'terminal-session-create', 'terminal-session-execute', 'fetch-news-bundle']);
 const handle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, callback) => handle(channel, (event, ...args) => {
   if (forbidden.has(channel)) { report.forbiddenCalls.push(channel); throw new Error('Native/provider work disabled in Workspace smoke.'); }
@@ -389,7 +389,7 @@ app.whenReady().then(async () => {
 
     await scenario('Apps tab explains manual discovery and updates without doing native or network work', async () => {
       await open(); await tab(3);
-      assert.match(await evaluate(() => document.querySelector('[data-workspace-page="3"]').innerText), /App capabilities/);
+      assert.match(await evaluate(() => document.querySelector('[data-workspace-page="3"]').innerText), /App capabilities/i);
       await screenshot('apps');
     });
 

@@ -4149,44 +4149,406 @@ input:checked + .slider:before {
 .quick-action-editor input:focus-visible, .quick-action-editor textarea:focus-visible { outline: 2px solid #a397ff; outline-offset: 2px; }
 .agent-settings { margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px; }
 .agent-settings label { display: block; margin: 14px 0 6px; }
-/* Workspace uses native dialogs so keyboard focus stays inside the active review. */
-.workspace-launch { margin-left: auto; padding: 8px 14px; border: 1px solid var(--border-subtle, #444); border-radius: 10px; background: rgba(140, 110, 235, .12); color: inherit; cursor: pointer; }
-.activity-peek { margin-top: 10px; color: #b8abc9; font-size: 12px; text-transform: capitalize; }
-.workspace-dialog { position: fixed; inset: 0; margin: auto; box-sizing: border-box; width: min(720px, calc(100vw - 36px)); max-height: calc(100vh - 54px); padding: 26px; border: 1px solid #494051; border-radius: 20px; background: #17131f; color: #eee9f4; box-shadow: 0 24px 80px #0009; overflow-y: auto; }
-.workspace-dialog::backdrop { background: #05020bbb; backdrop-filter: blur(5px); }
-.workspace-dialog header, .workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.workspace-dialog h2, .workspace-dialog h3 { margin: 0 0 12px; }
-.workspace-dialog h3 { margin-top: 20px; }
-.workspace-dialog p { line-height: 1.5; }
-.workspace-eyebrow { color: #b9a0e2; font-size: 11px; letter-spacing: .13em; margin: 0 0 5px; }
-.workspace-dialog nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0; }
-.workspace-dialog button { border: 1px solid #4c405b; border-radius: 9px; background: #2a2135; color: #f1e9fa; padding: 8px 12px; font: inherit; font-size: 12px; cursor: pointer; }
-.workspace-dialog button:hover { background: #3b2b4e; }
-.workspace-dialog button[aria-pressed="true"] { background: #734db1; border-color: #a17adf; }
-.workspace-dialog button:disabled { opacity: .5; cursor: default; }
-.workspace-dialog :focus-visible { outline: 2px solid #c2a0fa; outline-offset: 3px; }
-.workspace-dialog input:not([type="checkbox"]), .workspace-dialog select, .workspace-dialog textarea { display: block; width: 100%; box-sizing: border-box; margin: 6px 0 14px; padding: 10px; border: 1px solid #50435e; border-radius: 8px; background: #100c17; color: #eee9f4; font: inherit; font-size: 13px; }
-.workspace-dialog textarea { resize: vertical; min-height: 90px; }
-.workspace-dialog form > label { font-size: 12px; color: #cfbfdf; }
-.workspace-help { margin: 5px 0 12px; color: #b9adca; font-size: 12px; }
-.workspace-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.workspace-check { display: flex; align-items: flex-start; gap: 9px; margin: 12px 0; font-size: 13px; overflow-wrap: anywhere; }
-.workspace-check input { accent-color: #b08bed; margin-top: 3px; flex-shrink: 0; }
-.workspace-item { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid #352b40; }
-.workspace-item > div:first-child { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
-.workspace-item strong { font-size: 13px; }
-.workspace-item ol { font-size: 12px; color: #c5b6d7; padding-left: 20px; }
-.workspace-item li { margin: 6px 0; }
-#workspaceStatus { min-height: 0; color: #c5e2bf; font-size: 12px; }
-#workspaceStatus:empty { display: none; }
-#workspaceStatus.workspace-error { color: #ffb5b5; }
-.health-summary { font-size: 13px; color: #e2d6f1; }
-.health-summary:empty { display: none; }
-#healthList .workspace-item strong { white-space: pre; }
-#healthList .workspace-item[data-health="ok"] strong { color: #a6e3b0; }
-#healthList .workspace-item[data-health="info"] strong { color: #b9c5ff; }
-#healthList .workspace-item[data-health="warn"] strong { color: #f3d27f; }
-#healthList .workspace-item[data-health="fail"] strong { color: #ffa3a3; }
-.health-fix { color: #dccfee; }
+/* Workspace shares the main app's palette, typography, and Settings controls.
+   Native dialogs keep keyboard focus inside the active review. */
+.workspace-launch {
+  appearance: none;
+  margin-left: auto;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.workspace-launch:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+}
+
+.activity-peek {
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.workspace-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(720px, calc(100vw - 36px));
+  max-height: calc(100vh - 54px);
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color-scheme: dark;
+}
+
+.workspace-dialog::backdrop {
+  background: rgba(10, 10, 15, 0.85);
+  backdrop-filter: blur(8px);
+}
+
+.workspace-dialog header,
+.workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.workspace-dialog h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.workspace-dialog > h2 {
+  margin-bottom: 12px;
+}
+
+.workspace-dialog h3 {
+  margin: 20px 0 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.workspace-heading h3 {
+  margin: 0;
+}
+
+.workspace-dialog section > h3:first-child {
+  margin-top: 0;
+}
+
+.workspace-dialog p {
+  line-height: 1.5;
+}
+
+.workspace-eyebrow {
+  margin: 0 0 5px;
+  color: var(--accent-light);
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+.workspace-dialog nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 20px 0;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.workspace-dialog button {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 10px 14px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.workspace-dialog button:not(:disabled):hover {
+  border-color: var(--accent);
+  color: var(--accent-light);
+}
+
+.workspace-dialog nav button {
+  padding: 8px 12px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.workspace-dialog nav button:not(:disabled):hover {
+  border-color: transparent;
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.workspace-dialog button[type="submit"],
+.workspace-dialog .workspace-primary,
+.workspace-dialog nav button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.workspace-dialog button[type="submit"]:not(:disabled):hover,
+.workspace-dialog .workspace-primary:not(:disabled):hover,
+.workspace-dialog nav button[aria-pressed="true"]:not(:disabled):hover {
+  border-color: var(--accent-deep);
+  background: var(--accent-deep);
+  color: white;
+}
+
+.workspace-dialog button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workspace-launch:focus-visible,
+.workspace-dialog :focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: 3px;
+}
+
+#workspaceClose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  font-size: 22px;
+  font-weight: 400;
+}
+
+#workspaceClose:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+}
+
+.workspace-dialog input:not([type="checkbox"]),
+.workspace-dialog select,
+.workspace-dialog textarea {
+  display: block;
+  width: 100%;
+  margin: 6px 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.workspace-dialog input:focus,
+.workspace-dialog select:focus,
+.workspace-dialog textarea:focus {
+  border-color: var(--accent);
+}
+
+.workspace-dialog input::placeholder,
+.workspace-dialog textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.workspace-dialog textarea {
+  resize: vertical;
+  min-height: 90px;
+}
+
+.workspace-dialog form > label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.workspace-dialog hr {
+  margin: 20px 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.workspace-dialog a {
+  color: var(--accent-light);
+  text-underline-offset: 3px;
+}
+
+.workspace-help {
+  margin: 5px 0 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.workspace-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 12px 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.workspace-check input {
+  accent-color: var(--accent);
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.workspace-item {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.workspace-item > div:first-child {
+  flex: 1;
+  min-width: min(160px, 100%);
+  overflow-wrap: anywhere;
+}
+
+.workspace-item strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.workspace-item ol {
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.workspace-item li {
+  margin: 6px 0;
+}
+
+#workspaceStatus {
+  margin-bottom: 12px;
+  color: var(--success);
+  font-size: 12px;
+}
+
+#workspaceStatus:empty,
+.health-summary:empty {
+  display: none;
+}
+
+#workspaceStatus.workspace-error,
+#releaseStatus.workspace-error {
+  color: var(--danger);
+}
+
+.health-summary {
+  margin: 12px 0;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+#healthList .workspace-item strong {
+  white-space: pre-wrap;
+}
+
+#healthList .workspace-item[data-health="ok"] strong { color: var(--success); }
+#healthList .workspace-item[data-health="info"] strong { color: var(--accent-light); }
+#healthList .workspace-item[data-health="warn"] strong { color: var(--warning); }
+#healthList .workspace-item[data-health="fail"] strong { color: var(--danger); }
+.health-fix { color: var(--text-primary); }
+
+.release-card {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.release-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.release-version {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.release-detail {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.release-warning {
+  margin-top: 8px;
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.release-progress {
+  width: 100%;
+  height: 8px;
+  margin-top: 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  accent-color: var(--accent);
+  overflow: hidden;
+}
+
+.release-progress::-webkit-progress-bar {
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+
+.release-progress::-webkit-progress-value {
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+}
+
+@media (max-width: 480px) {
+  .workspace-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    padding: 18px;
+  }
+
+  .workspace-dialog nav button {
+    padding: 8px 10px;
+  }
+}
 .timer-when { font-size: 11px; color: var(--text-secondary); letter-spacing: .5px; }
 .setup-local-btn { margin-top: 10px; background: transparent; border: 1px solid #736082; }

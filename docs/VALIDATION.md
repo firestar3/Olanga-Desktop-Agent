@@ -1,3 +1,26 @@
+# 1.4.1 validation — September 26, 2026
+
+This release restores Workspace's shared app theme and adds manual in-app update downloads and installation. It also includes the four follow-up fixes described in the 1.4.0 record below.
+
+| Check | Result |
+| --- | --- |
+| Unit suite | **506 passed**, zero failures or skips |
+| Syntax, assets and version | **42 application JavaScript files passed**, version **1.4.1** |
+| Isolated startup/settings smoke | **Passed** |
+| Workspace UI and persistence | **16 checks passed** |
+| Renderer races and storage recovery | **11 checks passed** |
+| Manual update UI | **11 scenarios passed** with the real renderer and preload and simulated update IPC |
+| Real GitHub download through production Electron transport | **127,417,454 installer bytes downloaded and SHA-256 verified**, with no installer execution |
+| Windows installer and packaged app | NSIS build passed; **51 source files**, native helpers, offline model and version matched; packaged startup/persistence smoke passed |
+
+The updater checks cover explicit actions, progress, cancellation, retry, errors, reopening the panel and late state responses. In particular, installation verification cannot offer a misleading download-cancel button, and a stale initial state cannot replace a newer ready event. Computed styles and screenshots at normal and narrow widths confirmed that Workspace's font declarations, fields, buttons, tabs and dialog colors match the existing app. The isolated visual tests block Google Fonts; all components use the same fallback in those screenshots.
+
+The live download used a disposable profile and a fixture installed version of 1.3.1 to retrieve the then-current public 1.4.0 release. The production service verified GitHub's asset digests, the published checksum file and the streamed installer bytes in **6.472 seconds** for that one run. This is not a download-speed guarantee. No user profile, provider key or microphone was used. The first live attempt exposed Electron 36's failure to return manual redirects through `net.fetch`; the corrected native request adapter passed the complete download and seven additional transport regressions.
+
+Installer-launch tests use simulated child processes to verify the fixed NSIS update/restart arguments, duplicate-request handling and failure recovery. They do **not** execute an installation or establish upgrade, UAC, antivirus, signing or rollback behavior on this machine. Windows publisher signatures are not verified by the in-app updater; checksums establish matching bytes. Ready downloads last for the current app session, with abandoned cache files cleaned on a later explicit download. There are no automatic checks, downloads or installations on quit.
+
+Local reports, fixtures and screenshots remain under ignored `build/qa/`; generated media and installers are not committed to the repository.
+
 # 1.4.0 publication and follow-up validation — September 26, 2026
 
 The public [Olanga 1.4.0 release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.4.0) was built from `b74b8dbe226ceb6e90100e97902792e46ec3b41d`. Its [Windows release workflow](https://github.com/firestar3/Olanga-Desktop-Agent/actions/runs/36280354990) passed unit tests, syntax and asset checks, renderer checks, the installer build and packaged-source verification. The installer is **127,417,454 bytes**, with SHA-256 `b8c44d6ee8a3d8582940935ce10964a2ad87e315c21dcde90744bff489a0dd24`. GitHub's asset digest, the published checksum file and the release metadata agree. It is **unsigned**, as recorded in that metadata.

@@ -1,6 +1,6 @@
 {
   "name": "olanga-control",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Olanga - Your AI Voice Assistant",
   "main": "main.js",
   "scripts": {
@@ -17,6 +17,7 @@
     "smoke:voice": "electron tests/voice-command-smoke.js",
     "smoke:voice:audio": "electron tests/voice-command-smoke.js --live-audio",
     "smoke:workspace": "electron tests/workspace-smoke.js",
+    "smoke:updates": "electron tests/manual-update-smoke.js --hidden",
     "smoke:renderer": "electron tests/renderer-races-smoke.js --hidden",
     "smoke:apps": "node tests/app-adapter-smoke.js",
     "smoke:offline": "electron tests/offline-speech-smoke.js --compare-grammar",

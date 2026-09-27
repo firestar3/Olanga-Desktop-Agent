@@ -98,7 +98,9 @@ While Olanga speaks, the wake-word recognizer keeps listening if voice interrupt
 
 ## Release checks and artifacts
 
-`checkRelease` runs only on explicit UI request, fetches the fixed public repository's latest stable-release metadata, validates the response and repository URL, compares semantic versions and caches results. It has an eight-second timeout, a 256 KiB response limit and no background poller. Failure is reported as unavailable, not up-to-date. The app opens the release page without downloading or validating installer bytes.
+`checkRelease` runs only on explicit UI request, fetches the fixed public repository's latest stable-release metadata, validates the response and repository URL, and compares semantic versions. It has an eight-second timeout, a 256 KiB response limit and no background poller. Explicit UI checks refresh metadata; concurrent checks coalesce. Failure is reported as unavailable, not up-to-date.
+
+`desktop/manual-updater.js` owns the separate download, cancellation and installation states. Only validated release assets can be downloaded; redirects stay on GitHub's allowed release hosts, sizes and deadlines are bounded, and data streams into a private temporary directory. The published SHA-256 and available GitHub asset digests are checked before a download becomes ready. Progress reaches the renderer through a narrow event; IPC accepts no renderer-provided URL or executable path. `desktop/update-installer.js` launches the reverified installer only after **Install & restart**, using NSIS's existing-install update and reopen switches. A normal exit never installs an update, and source builds cannot launch installers.
 
 The release workflow emits `SHA256SUMS` and observed Authenticode status beside the installer. Optional signing requires both configured Windows signing secrets and valid signatures on the final installer and packaged executable. Without them, artifacts are explicitly unsigned. No automatic updater, signed update feed or tested rollback is enabled. See [releasing](RELEASING.md) for maintainer procedures.
 
