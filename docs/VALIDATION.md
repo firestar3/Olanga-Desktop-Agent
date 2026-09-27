@@ -21,6 +21,8 @@ Installer-launch tests use simulated child processes to verify the fixed NSIS up
 
 Local reports, fixtures and screenshots remain under ignored `build/qa/`; generated media and installers are not committed to the repository.
 
+The first release CI run exposed a test-clock defect: `Date.now()` used the fixture date while the zero-argument `Date` constructor used the runner's actual date. The test harness now uses the same clock for both. All **506 unit tests passed under UTC**, and the **19 timer/task tests passed under both UTC and America/Los_Angeles**, retaining the exact today/tomorrow assertions. No application behavior changed for this correction.
+
 # 1.4.0 publication and follow-up validation — September 26, 2026
 
 The public [Olanga 1.4.0 release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.4.0) was built from `b74b8dbe226ceb6e90100e97902792e46ec3b41d`. Its [Windows release workflow](https://github.com/firestar3/Olanga-Desktop-Agent/actions/runs/36280354990) passed unit tests, syntax and asset checks, renderer checks, the installer build and packaged-source verification. The installer is **127,417,454 bytes**, with SHA-256 `b8c44d6ee8a3d8582940935ce10964a2ad87e315c21dcde90744bff489a0dd24`. GitHub's asset digest, the published checksum file and the release metadata agree. It is **unsigned**, as recorded in that metadata.

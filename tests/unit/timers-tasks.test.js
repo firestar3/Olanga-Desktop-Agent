@@ -8,7 +8,10 @@ const source = fs.readFileSync(path.join(__dirname, '../../js/timers-tasks.js'),
 function harness(store = new Map(), start = 100000) {
   let now = start, nextInterval = 0, alarms = 0;
   const intervals = new Map();
-  class Clock extends Date { static now() { return now; } }
+  class Clock extends Date {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
+  }
   const context = vm.createContext({
     Date: Clock, setTimeout, clearTimeout, console: { log() {}, error() {} }, window: {},
     activeTimers: [], activeTasks: [], alarmIntervalId: null, timersContainer: null,
@@ -203,7 +206,7 @@ test('every checklist mutation preserves memory and durable records after a save
   }
 });
 
-const sixAm = new Date(2026, 8, 26, 6, 0, 0).getTime();
+const sixAm = new Date(2020, 8, 26, 6, 0, 0).getTime();
 const hours = value => value * 3600000;
 // Values created inside the vm context have their own prototypes.
 const plain = value => JSON.parse(JSON.stringify(value));
