@@ -6,7 +6,11 @@ const path = require('node:path');
 const { createFileWorkflows, fileName } = require('../../desktop/file-workflows');
 
 async function fixture(t, options = {}) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'olanga-file-workflows-'));
+  // Windows runners may expose TEMP through a short path or directory alias.
+  // These fixtures represent ordinary native-picked paths; keep alias/link
+  // rejection in production and give the fixture its actual canonical root.
+  const temporaryRoot = await fs.realpath(os.tmpdir());
+  const directory = await fs.mkdtemp(path.join(temporaryRoot, 'olanga-file-workflows-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const source = path.join(directory, 'source'), destination = path.join(directory, 'destination');
   await fs.mkdir(source); await fs.mkdir(destination);
@@ -72,6 +76,16 @@ test('hard-linked files and symbolic links cannot enter a workflow', async t => 
   assert.equal((await service.selectFiles([file])).ok, false); await fs.unlink(link);
   try { await fs.symlink(file, link); } catch (error) { if (error.code === 'EPERM') return; throw error; }
   assert.equal((await service.selectFiles([link])).ok, false);
+});
+test('linked parent folders cannot be selected as file sources or destinations', async t => {
+  const { service, directory, source, file } = await fixture(t);
+  const linked = path.join(directory, 'linked-source');
+  await fs.symlink(source, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  const selected = await service.selectFiles([path.join(linked, path.basename(file))]);
+  const destination = await service.selectDestination(linked);
+  assert.equal(selected.ok, false); assert.match(selected.message, /Linked or redirected folders/);
+  assert.equal(destination.ok, false); assert.match(destination.message, /Linked or redirected folders/);
+  assert.equal(await fs.readFile(file, 'utf8'), 'Original selected content.');
 });
 test('replaced directory or file identities invalidate the preview', async t => {
   const { service, source, directory, rename } = await fixture(t);

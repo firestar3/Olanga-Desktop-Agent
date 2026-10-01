@@ -5,7 +5,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { createProjectKnowledge } = require('../../desktop/project-knowledge');
 async function fixture(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'olanga-project-'));
+  // Windows runners may expose TEMP through a short name or junction. The
+  // service requires canonical paths so links cannot expand the selected scope.
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'olanga-project-')));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const root = path.join(dir, 'notes'); await fs.mkdir(root);
   const service = createProjectKnowledge({ stateFile: path.join(dir, 'state.json'), chooseFolder: async () => root, revealFile: async () => {} });

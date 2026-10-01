@@ -4,7 +4,7 @@ The stable 1.5.0 source includes the Workspace, voice, media, work tools, option
 
 | Check | Result |
 | --- | --- |
-| Combined unit suite | **710 passed**, zero failures or skips |
+| Combined unit suite | **711 passed**, zero failures or skips |
 | Syntax, assets and version | **71 JavaScript files passed**, version **1.5.0** |
 | Workspace and Work tools | **12 checks passed** with production renderer/preload, selected-file operations and isolated data |
 | Manual update UI and shared theme | **11 scenarios passed** |
@@ -15,6 +15,8 @@ The stable 1.5.0 source includes the Workspace, voice, media, work tools, option
 | Windows installer | NSIS build passed; installer and application both verified **unsigned** |
 
 Release testing found and corrected two test synchronization defects without changing product behavior or weakening its assertions. The Spotify startup fixture had replaced sleeps with no-ops while retaining a shortened wall-clock deadline; CPU load could exhaust it before the next fake session appeared. It now uses a deterministic clock with the production deadlines. The file Undo smoke had treated the first appearance of the original path as completion, although Undo was still verifying and removing a temporary hard link. It now waits for the verified completion receipt, checks the final single-link state, and waits for a fresh picker result before the next operation. The final complete unit and UI checks passed.
+
+The first GitHub check also exposed noncanonical temporary paths in the file-workflow and project fixtures. The hosted runner can supply an aliased temporary directory, while the production services deliberately require resolved, unredirected paths. Both failures were reproduced locally with temporary-directory junctions. The fixtures now resolve their temporary roots before constructing file and settings paths; all 11 file-workflow and eight project tests pass with both ordinary and aliased temporary directories. Added coverage confirms that linked source and destination folders are still rejected. The production path and link checks remain unchanged.
 
 The compatibility test preserved timer identities/deadlines, completed and pending tasks, aliases, explicit memories, routines, activity/timing records, secure preferences and shortcuts. It made no provider calls, captured no real microphone and used no installed user data. This verifies data compatibility between packaged applications; it is not an NSIS upgrade, UAC or rollback test. Beta 2 was installed and restarted locally in an earlier step; the stable 1.5.0 installer was built and checked separately.
 
