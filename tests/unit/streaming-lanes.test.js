@@ -71,7 +71,7 @@ test('answer-lane escapes speak nothing, acknowledge late, and continue in the r
   await routed.context.processTextCommandWithGemini('Could you tell me how to reorganize my week?');
   assert.deepEqual(routed.speech.pushed, []);
   assert.equal(routed.calls.router, 1);
-  assert.deepEqual(routed.calls.acks, ['On it.']);
+  assert.deepEqual(routed.calls.acks, ["I'm on it."]);
   const searched = harness({ replies: [['[SEARCH]'], ['Sunny and ', '72 degrees.']] });
   await searched.context.processTextCommandWithGemini('How warm is it in Paris right now?');
   assert.equal(searched.calls.streams.length, 2);
@@ -120,7 +120,7 @@ test('live questions go straight to streamed Google Search and follow-up questio
   await context.processTextCommandWithGemini("What's the weather today?");
   assert.equal(calls.streams.length, 1);
   assert.deepEqual(plain(calls.streams[0].body.tools), [{ google_search: {} }]);
-  assert.deepEqual(calls.acks, ['On it.'], 'Search keeps the spoken acknowledgment while it looks things up');
+  assert.deepEqual(calls.acks, ["I'm on it."], 'Search keeps the spoken acknowledgment while it looks things up');
   assert.equal(speech.ended, 'Rain is likely today. Want the hourly forecast?');
   assert.equal(calls.followUps, 1);
   assert.equal(calls.router, 0);

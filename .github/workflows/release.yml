@@ -5,8 +5,9 @@ name: Release
 # installer as a workflow artifact instead, which is handy for testing.
 #
 # To publish a new version:
-#   git tag -a v1.4.1 -m "Olanga v1.4.1"
-#   git push origin v1.4.1
+#   $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+#   git tag -a "v$version" -m "Olanga v$version"
+#   git push origin "v$version"
 #
 # Prerequisite: electron-builder must be in devDependencies (npm install
 # --save-dev electron-builder) and that change committed.
@@ -66,14 +67,21 @@ jobs:
       - name: Check manual update controls and theme consistency
         run: npm run smoke:updates
 
+      - name: Check work tools, review gates and local file recovery
+        run: npm run smoke:workbench
+
       - name: Build the installer
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          OLANGA_SIGNING_PUBLISHER_THUMBPRINT: ${{ vars.OLANGA_SIGNING_PUBLISHER_THUMBPRINT }}
         run: |
           $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)
           $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)
           if ($hasCertificate -ne $hasPassword) { throw 'Configure both WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD, or neither. A partial signing configuration must not silently produce an unsigned release.' }
+          $env:OLANGA_SIGNING_EXPECTED = if ($hasCertificate) { 'true' } else { 'false' }
+          node scripts/prepare-signing.js
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the publisher signing policy.' }
           if ($hasCertificate) {
             'OLANGA_SIGNING_EXPECTED=true' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             npm run dist -- --config.forceCodeSigning=true --config.win.signExecutable=true
@@ -88,6 +96,8 @@ jobs:
         run: npm run verify:package
 
       - name: Verify signing status and create release checksums
+        env:
+          OLANGA_SIGNING_PUBLISHER_THUMBPRINT: ${{ vars.OLANGA_SIGNING_PUBLISHER_THUMBPRINT }}
         run: |
           $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
           $installerPath = Join-Path (Resolve-Path dist).Path "Olanga-Setup-$version.exe"
@@ -95,15 +105,14 @@ jobs:
           $installers = @(Get-ChildItem -LiteralPath dist -Filter 'Olanga-Setup-*.exe' -File)
           if ($installers.Count -ne 1) { throw 'Expected exactly one version-matched installer; refusing to publish stale or ambiguous artifacts.' }
           $appPath = Join-Path (Resolve-Path 'dist/win-unpacked').Path 'Olanga.exe'
-          $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
-          $appSignature = Get-AuthenticodeSignature -LiteralPath $appPath
-          $signed = $env:OLANGA_SIGNING_EXPECTED -eq 'true'
+          node scripts/verify-signing.js
+          if ($LASTEXITCODE -ne 0) { throw 'The installer or application does not have a valid Authenticode signature matching the release signing policy.' }
+          $signingReport = Get-Content -LiteralPath dist/SIGNING-REPORT.json -Raw | ConvertFrom-Json
+          $signed = $signingReport.signing -eq 'signed'
           if ($signed) {
-            if ($signature.Status -ne 'Valid' -or $appSignature.Status -ne 'Valid') { throw 'Signing was required, but the installer or packaged executable does not have a valid Authenticode signature.' }
             $signingStatus = 'signed'
             $signingText = 'Windows Authenticode signatures were verified as valid for the installer and packaged executable in this build.'
           } else {
-            if ($signature.Status -ne 'NotSigned' -or $appSignature.Status -ne 'NotSigned') { throw 'The explicitly unsigned build has an unexpected signature status. Inspect the artifacts before publishing.' }
             $signingStatus = 'unsigned'
             $signingText = 'This installer is unsigned. No Windows publisher signature is provided.'
           }
@@ -118,8 +127,11 @@ jobs:
             installer = $installerName
             sha256 = $digest
             signing = $signingStatus
-            installerAuthenticodeStatus = [string]$signature.Status
-            appAuthenticodeStatus = [string]$appSignature.Status
+            installerAuthenticodeStatus = [string]$signingReport.installerAuthenticodeStatus
+            appAuthenticodeStatus = [string]$signingReport.appAuthenticodeStatus
+            signerThumbprint = $signingReport.signerThumbprint
+            expectedPublisherThumbprint = $signingReport.expectedPublisherThumbprint
+            publisherPinned = [bool]$signingReport.publisherPinned
             automaticUpdatesEnabled = $false
             rollbackValidated = $false
           }
@@ -149,12 +161,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $tag = $env:GITHUB_REF_NAME
+          $prereleaseFlags = @()
+          if ($tag -match '^v?\d+\.\d+\.\d+-') { $prereleaseFlags = @('--prerelease', '--latest=false') }
           $installer = (Get-ChildItem dist/Olanga-Setup-*.exe | Select-Object -First 1).FullName
           if (-not $installer) { throw 'No installer found in dist/' }
           $assets = @($installer, (Resolve-Path dist/SHA256SUMS).Path, (Resolve-Path dist/RELEASE-METADATA.json).Path, (Resolve-Path dist/RELEASE-NOTES.md).Path)
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
+            if ($prereleaseFlags.Count -gt 0) {
+              gh release edit $tag @prereleaseFlags
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
             # Existing bytes are never replaced. A public artifact collision
             # requires a new version or explicit maintainer investigation.
             gh release upload $tag @assets
@@ -168,6 +186,6 @@ jobs:
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
           } else {
-            gh release create $tag @assets --title "Olanga $tag" --notes-file dist/RELEASE-NOTES.md
+            gh release create $tag @assets @prereleaseFlags --verify-tag --title "Olanga $tag" --notes-file dist/RELEASE-NOTES.md
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

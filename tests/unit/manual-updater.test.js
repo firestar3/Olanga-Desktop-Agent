@@ -309,6 +309,74 @@ test('UI observer errors never interrupt an otherwise valid download', async t =
   await h.updater.check(); assert.equal((await h.updater.download()).phase, 'ready');
 });
 
+function restartHarness(t, h, { installedVersion = '1.4.0', ...options } = {}) {
+  const calls = [], launches = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url === LATEST_API_URL) return new Response(JSON.stringify(h.data.payload), { headers: { 'content-type': 'application/json' } });
+    if (url.endsWith('/SHA256SUMS')) return response(h.data.checksums);
+    if (url.endsWith('.exe')) return response(h.data.installer);
+    throw new Error('Unexpected fixture request');
+  };
+  const updater = createManualUpdater({ releaseService: createReleaseService({ getInstalledVersion: () => installedVersion, fetchImpl }), updatesDir: h.directory,
+    getInstalledVersion: () => installedVersion, fetchImpl, launchInstaller: async file => launches.push(file), ...options });
+  t.after(() => updater.dispose());
+  return { updater, calls, launches };
+}
+test('restart remains idle until explicit Check revalidates and restores complete cached bytes', async t => {
+  const h = harness(t); await h.updater.check(); await h.updater.download(); const file = downloadedFile(h.directory); await h.updater.dispose();
+  const restarted = restartHarness(t, h);
+  assert.equal(restarted.updater.getState().phase, 'idle'); await restarted.updater.install(); await restarted.updater.download();
+  assert.equal(restarted.calls.length, 0); assert.equal(restarted.launches.length, 0);
+  const state = await restarted.updater.check(); assert.equal(state.phase, 'ready'); assert.equal(state.canInstall, true);
+  assert.deepEqual(restarted.calls, [LATEST_API_URL, `${RELEASES_URL}/download/v1.4.1/SHA256SUMS`]);
+  assert.equal(downloadedFile(h.directory), file); await restarted.updater.install(); assert.equal(restarted.launches.length, 1);
+});
+test('restart cannot trust edited cache hashes, damaged bytes, missing metadata or already installed versions', async t => {
+  for (const change of ['bytes', 'hash-and-bytes', 'metadata', 'installed']) {
+    const h = harness(t); await h.updater.check(); await h.updater.download(); await h.updater.dispose();
+    const file = downloadedFile(h.directory), metadataPath = path.join(path.dirname(file), 'cache.json');
+    if (change.includes('bytes')) fs.writeFileSync(file, Buffer.alloc(h.data.installer.length, 9));
+    if (change === 'hash-and-bytes') { const metadata = JSON.parse(fs.readFileSync(metadataPath)); metadata.hash = sha(fs.readFileSync(file)); fs.writeFileSync(metadataPath, JSON.stringify(metadata)); }
+    if (change === 'metadata') fs.writeFileSync(metadataPath, 'x'.repeat(9000));
+    const restarted = restartHarness(t, h, { installedVersion: change === 'installed' ? '1.4.1' : '1.4.0' });
+    assert.notEqual((await restarted.updater.check()).phase, 'ready', change); await restarted.updater.install(); assert.equal(restarted.launches.length, 0);
+  }
+});
+test('restart checks the fresh manifest even without optional GitHub asset hashes', async t => {
+  const h = harness(t); h.data.payload.assets.forEach(asset => delete asset.digest);
+  await h.updater.check(); await h.updater.download(); await h.updater.dispose();
+  const file = downloadedFile(h.directory), metadataPath = path.join(path.dirname(file), 'cache.json');
+  const metadata = JSON.parse(fs.readFileSync(metadataPath));
+  fs.writeFileSync(file, Buffer.alloc(h.data.installer.length, 9)); metadata.hash = sha(fs.readFileSync(file)); fs.writeFileSync(metadataPath, JSON.stringify(metadata));
+  const restarted = restartHarness(t, h); const state = await restarted.updater.check();
+  assert.equal(state.canInstall, false); assert.equal(state.canDownload, true);
+  assert.equal(restarted.calls.some(url => url.endsWith('/SHA256SUMS')), true);
+});
+test('optional publisher policy rejects unsigned or mismatched files and rechecks before install', async t => {
+  const pin = 'A'.repeat(40);
+  for (const signature of [{ status: 'NotSigned', thumbprint: null }, { status: 'Valid', thumbprint: 'B'.repeat(40) }]) {
+    const h = harness(t, { updaterOptions: { expectedPublisherThumbprint: pin, verifySignature: async () => signature } });
+    await h.updater.check(); const result = await h.updater.download();
+    assert.equal(result.phase, 'error'); assert.match(result.message, /publisher/); assert.deepEqual(fs.readdirSync(h.directory), []);
+  }
+  let signature = { status: 'Valid', thumbprint: pin };
+  const h = harness(t, { updaterOptions: { expectedPublisherThumbprint: pin, verifySignature: async () => signature } });
+  await h.updater.check(); assert.equal((await h.updater.download()).signingVerified, true);
+  signature = { status: 'HashMismatch', thumbprint: pin }; await h.updater.install(); assert.equal(h.launches.length, 0);
+});
+test('restored downloads must meet the current publisher pin and cannot follow directory junctions', async t => {
+  const h = harness(t); await h.updater.check(); await h.updater.download(); await h.updater.dispose();
+  const pinned = restartHarness(t, h, { expectedPublisherThumbprint: 'A'.repeat(40), verifySignature: async () => ({ status: 'NotSigned', thumbprint: null }) });
+  assert.equal((await pinned.updater.check()).canInstall, false);
+  const existing = path.dirname(downloadedFile(h.directory)), renamed = path.join(h.directory, 'external-fixture');
+  fs.renameSync(existing, renamed);
+  try { fs.symlinkSync(renamed, existing, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (error.code === 'EPERM') { t.diagnostic('Junction test unavailable without symlink permission.'); return; } throw error; }
+  const linked = restartHarness(t, h); assert.equal((await linked.updater.check()).canInstall, false); assert.equal(linked.launches.length, 0);
+  fs.unlinkSync(existing);
+});
+
 function nativeTransport(onEnd) {
   const requests = [];
   const net = {

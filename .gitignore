@@ -39,3 +39,9 @@ tests/*.txt
 secure-store.json
 *.env
 .env.*
+
+# Local signing and phone HTTPS identities.
+*.pfx
+*.p12
+*.pem
+*.key

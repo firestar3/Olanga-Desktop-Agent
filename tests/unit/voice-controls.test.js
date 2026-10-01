@@ -106,3 +106,16 @@ test('push-to-talk falls back to typing when voice is unavailable and waits for 
   busy.context.handlePushToTalk();
   assert.equal(busy.context.currentState, 'idle'); assert.equal(busy.calls.recordings, 0);
 });
+
+test('local speech cannot wake the normal assistant and explicit recording stops it without changing preferences', () => {
+  const f = fixture({ state: 'idle' }); let active = true, stops = 0;
+  f.context.window.OlangaLocalSpeech = { isActive: () => active, stop: () => { active = false; stops++; } };
+  f.context.handleVoskResult('hey olanga open spotify', true);
+  assert.equal(f.calls.recordings, 0); assert.equal(f.context.currentState, 'idle');
+  f.context.handlePushToTalk();
+  assert.equal(stops, 1); assert.equal(f.calls.recordings, 1); assert.equal(f.context.isRecording, true);
+  assert.equal(f.context.isMicMuted, false); assert.equal(f.context.bargeInEnabled, true);
+  f.context.cancelRecording(); f.context.currentState = 'idle';
+  f.context.handleVoskResult('hey olanga', true);
+  assert.equal(f.calls.recordings, 2, 'Wake recognition resumes after local playback stops');
+});

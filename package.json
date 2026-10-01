@@ -1,6 +1,6 @@
 {
   "name": "olanga-control",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Olanga - Your AI Voice Assistant",
   "main": "main.js",
   "scripts": {
@@ -16,7 +16,10 @@
     "smoke:desktop": "electron tests/desktop-edit-smoke.js",
     "smoke:voice": "electron tests/voice-command-smoke.js",
     "smoke:voice:audio": "electron tests/voice-command-smoke.js --live-audio",
+    "smoke:spotify": "electron tests/voice-command-smoke.js --play-spotify --hidden",
     "smoke:workspace": "electron tests/workspace-smoke.js",
+    "smoke:workbench": "electron tests/workbench-smoke.js --hidden",
+    "smoke:sessions": "node tests/work-sessions-native-smoke.js",
     "smoke:updates": "electron tests/manual-update-smoke.js --hidden",
     "smoke:renderer": "electron tests/renderer-races-smoke.js --hidden",
     "smoke:apps": "node tests/app-adapter-smoke.js",
@@ -61,9 +64,15 @@
       "status-indicator.css",
       "status-indicator.js",
       "desktop-workflows.css",
-      "desktop/**/*"
+      "desktop/**/*",
+      "extensions/**/*",
+      "docs/PHONE_REMOTE.md"
     ],
     "extraResources": [
+      {
+        "from": "extensions",
+        "to": "extensions"
+      },
       {
         "from": "vosk-model-v2.tar.gz",
         "to": "vosk-model-v2.tar.gz"

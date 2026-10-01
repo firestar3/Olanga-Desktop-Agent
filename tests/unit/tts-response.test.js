@@ -467,6 +467,24 @@ test('acknowledgement watchdog releases the final reply if Windows never emits c
   assert.deepEqual(calls.states, []);
 });
 
+test('contextual acknowledgement allows the selected slow speech rate and still has a bounded watchdog', async () => {
+  const { context, calls, timers } = acknowledgementFixture();
+  context.ttsRate = 0.8;
+  let settled = false;
+  const pending = context.speakAssistantAcknowledgement("I'll start Spotify and set the volume to 75 percent.").then(result => { settled = true; return result; });
+  assert.equal(calls.spoken.length, 1, 'Context speech still starts synchronously');
+  assert.equal(calls.spoken[0].rate, 0.8);
+  const watchdog = [...timers.values()][0];
+  assert.ok(watchdog.delay > 5000 && watchdog.delay <= 12000);
+  await Promise.resolve(); assert.equal(settled, false);
+  calls.spoken[0].onend(); assert.equal(await pending, true);
+  assert.equal(timers.size, 0); assert.equal(calls.remote, 0);
+
+  const stalled = context.speakAssistantAcknowledgement('word '.repeat(100));
+  assert.equal([...timers.values()][0].delay, 12000);
+  [...timers.values()][0].callback(); assert.equal(await stalled, false);
+});
+
 test('muted, empty, or already aborted acknowledgements settle without speech', async () => {
   for (const { settings, text } of [
     { settings: { isTtsMuted: true }, text: 'On it.' },
@@ -580,4 +598,25 @@ test('a voice preference write failure preserves the selected engine and full vo
   assert.equal(select.options.length, 10); assert.equal(context.nvidiaVoiceName, 'Magpie-Multilingual.EN-US.Jason');
   assert.doesNotThrow(() => context.setTtsEngine('windows'));
   assert.equal(context.ttsEngine, 'windows'); assert.equal(context.ttsEngineSelect.value, 'windows');
+});
+
+
+test('Windows playback onset is emitted only by the first native start event', async () => {
+  const { context, calls } = acknowledgementFixture(); let starts = 0;
+  const pending = context.speakWithWindowsTts('Done.', null, { onStart: () => starts++ });
+  assert.equal(starts, 0); const { onstart, onend } = calls.spoken[0];
+  onstart(); onstart(); assert.equal(starts, 1); onend(); await pending; onstart(); assert.equal(starts, 1);
+});
+
+test('a cancelled native voice cannot emit stale playback onset', async () => {
+  const { context, calls } = acknowledgementFixture(); let starts = 0;
+  const pending = context.speakWithWindowsTts('Done.', null, { onStart: () => starts++ });
+  const onset = calls.spoken[0].onstart; context.stopAssistantSpeech(); onset();
+  assert.equal(await pending, false); assert.equal(starts, 0);
+});
+
+test('response wrapper distinguishes a failed voice from a completed response', async () => {
+  const { context, calls } = acknowledgementFixture(); context.ttsEngine = 'windows'; context.showError = () => {};
+  const pending = context.speakResponse('Done.'); calls.spoken[0].onerror({ error: 'synthesis-failed' });
+  assert.equal((await pending).status, 'failed');
 });

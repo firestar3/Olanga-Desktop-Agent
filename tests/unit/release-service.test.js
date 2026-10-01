@@ -257,6 +257,8 @@ test('workflow checksum step hashes actual unsigned fixture bytes and rejects a 
   const nativeEnvironment = { ...process.env, PSModulePath: path.join(path.dirname(powershell), 'Modules') };
   try {
     fs.mkdirSync(path.join(directory, 'dist/win-unpacked'), { recursive: true });
+    fs.mkdirSync(path.join(directory, 'scripts')); fs.mkdirSync(path.join(directory, 'desktop'));
+    for (const file of ['scripts/verify-signing.js', 'desktop/signing-policy.js', 'desktop/signature-helper.ps1', 'desktop/trusted-publisher.json']) fs.copyFileSync(path.resolve(__dirname, '../..', file), path.join(directory, file));
     fs.writeFileSync(path.join(directory, 'package.json'), '{"version":"9.8.7"}');
     const installer = path.join(directory, 'dist/Olanga-Setup-9.8.7.exe');
     const runScripts = Buffer.from(JSON.stringify(workflow.jobs.windows.steps.filter(step => step.run).map(step => step.run))).toString('base64');
@@ -275,11 +277,45 @@ test('workflow checksum step hashes actual unsigned fixture bytes and rejects a 
     assert.equal(metadata.automaticUpdatesEnabled, false);
     assert.equal(metadata.rollbackValidated, false);
     assert.match(fs.readFileSync(path.join(directory, 'dist/RELEASE-NOTES.md'), 'utf8'), /installer is unsigned/);
+    // A prerelease build can be checked in its own folder without consuming or
+    // rejecting older local installers in the default output directory.
+    fs.mkdirSync(path.join(directory, 'dist/next-level/win-unpacked'), { recursive: true });
+    fs.copyFileSync(installer, path.join(directory, 'dist/next-level/Olanga-Setup-9.8.7.exe'));
+    fs.copyFileSync(installer, path.join(directory, 'dist/next-level/win-unpacked/Olanga.exe'));
+    execFileSync(process.execPath, ['scripts/verify-signing.js'], { cwd: directory, env: { ...nativeEnvironment, OLANGA_BUILD_DIR: 'dist/next-level', OLANGA_SIGNING_EXPECTED: 'false' }, encoding: 'utf8', timeout: 60000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(directory, 'dist/next-level/SIGNING-REPORT.json'), 'utf8')).signing, 'unsigned');
     fs.writeFileSync(scriptPath, `$ErrorActionPreference = 'Stop'\n$env:OLANGA_SIGNING_EXPECTED = 'true'\n${metadataStep}`);
     assert.throws(() => execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], { cwd: directory, env: nativeEnvironment, encoding: 'utf8', timeout: 60000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }), error => /does not have a valid Authenticode signature/.test(String(error.stderr)));
   } finally {
     const resolved = path.resolve(directory);
     assert.ok(resolved.startsWith(tempRoot + path.sep) && path.basename(resolved).startsWith('olanga-release-test-'));
+    fs.rmSync(resolved, { recursive: true, force: true });
+  }
+});
+
+test('release workflow marks beta tags as prereleases without promoting them or clobbering assets', { skip: process.platform !== 'win32' }, () => {
+  const workflow = yaml.load(fs.readFileSync(path.resolve(__dirname, '../../.github/workflows/release.yml'), 'utf8'));
+  const publish = workflow.jobs.windows.steps.find(step => step.name === 'Attach installer and verification files to the release').run;
+  assert.doesNotMatch(publish, /--clobber/);
+  const tempRoot = path.resolve(os.tmpdir()), directory = fs.mkdtempSync(path.join(tempRoot, 'olanga-publish-test-'));
+  const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  try {
+    fs.mkdirSync(path.join(directory, 'dist'));
+    for (const name of ['Olanga-Setup-9.8.7.exe', 'SHA256SUMS', 'RELEASE-METADATA.json', 'RELEASE-NOTES.md']) fs.writeFileSync(path.join(directory, 'dist', name), 'Fixture only');
+    const cases = [ { tag: 'v1.5.0-beta.1', exists: false }, { tag: 'v1.5.0-beta.1', exists: true }, { tag: 'v1.5.0+build-local', exists: false } ];
+    for (const item of cases) {
+      const fixture = `$ErrorActionPreference = 'Stop'\n$env:GITHUB_REF_NAME = '${item.tag}'\n$script:calls = [Collections.Generic.List[object]]::new()\nfunction gh {\n  $script:calls.Add(@($args))\n  $global:LASTEXITCODE = 0\n  if ($args[1] -eq 'view') {\n    if ($args -contains '--json') { return '<!-- olanga-artifact-verification -->' }\n    $global:LASTEXITCODE = ${item.exists ? 0 : 1}\n  }\n}\n${publish}\nConvertTo-Json -InputObject @($script:calls.ToArray()) -Depth 5 -Compress`;
+      const script = path.join(directory, 'publish-fixture.ps1'); fs.writeFileSync(script, fixture);
+      const calls = JSON.parse(execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { cwd: directory, encoding: 'utf8', timeout: 20000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+      const command = calls.find(call => call[1] === (item.exists ? 'edit' : 'create'));
+      assert.ok(command, item.tag); assert.equal(command.includes('--prerelease'), item.tag.includes('-beta.'));
+      assert.equal(command.includes('--latest=false'), item.tag.includes('-beta.'));
+      if (!item.exists) assert.ok(command.includes('--verify-tag'));
+      if (item.exists) assert.ok(calls.some(call => call[1] === 'upload'));
+      assert.ok(calls.every(call => !call.includes('--clobber')));
+    }
+  } finally {
+    const resolved = path.resolve(directory); assert.ok(resolved.startsWith(tempRoot + path.sep) && path.basename(resolved).startsWith('olanga-publish-test-'));
     fs.rmSync(resolved, { recursive: true, force: true });
   }
 });

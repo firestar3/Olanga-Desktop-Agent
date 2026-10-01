@@ -1,0 +1,20 @@
+{
+  "name": "olanga-companion",
+  "displayName": "Olanga Companion",
+  "description": "Share selected context with Olanga and review version-checked edits and existing workspace tasks.",
+  "version": "0.1.0",
+  "publisher": "olanga",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "capabilities": { "untrustedWorkspaces": { "supported": "limited", "description": "Sharing selected text is available; file edits and task execution require a trusted workspace." } },
+  "contributes": { "commands": [
+    { "command": "olanga.connect", "title": "Olanga: Connect Companion" },
+    { "command": "olanga.disconnect", "title": "Olanga: Disconnect Companion" },
+    { "command": "olanga.shareSelection", "title": "Olanga: Share Selected Text and Diagnostics" },
+    { "command": "olanga.shareDocuments", "title": "Olanga: Share Open Documents" },
+    { "command": "olanga.shareTasks", "title": "Olanga: Share Available Workspace Tasks" }
+  ] }
+}

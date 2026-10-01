@@ -173,7 +173,7 @@
       return action(mute ? '[VOLUME_MUTE_ON]' : '[VOLUME_MUTE_OFF]', mute ? 'Muting system audio…' : 'Unmuting system audio…');
     }
     if (/^toggle (?:the )?(?:system|volume|audio|sound) mute$/i.test(text)) return action('[VOLUME_MUTE]', 'Toggling system mute…');
-    if ((match = /^(?:(set|raise|increase|lower|decrease|turn|change|adjust|make)\s+)?(?:(?:the|my|system|master)\s+)?volume(?:\s+(up|down))?\s+(?:(to|at)\s+)?([\w. -]+?)\s*(?:%|per\s*cent)?$/i.exec(text))) {
+    if ((match = /^(?:(set|raise|increase|lower|decrease|turn|change|adjust|make)\s+)?(?:(?:the|my|system|master)\s+)?volume(?:\s+(up|down))?\s+(?:(to|at)\s*)?([\w. -]+?)\s*(?:%|per\s*cent)?$/i.exec(text))) {
       // Directional wording without "to"/"at" can mean a relative change.
       // Do not turn "volume down 10%" into an absolute target of 10%.
       const directional = /^(?:raise|increase|lower|decrease)$/i.test(match[1] || '') || !!match[2];
@@ -184,7 +184,7 @@
       const level = number(amount);
       if ((!directional || match[3]) && Number.isFinite(level) && level >= 0 && level <= 100) return action(`[VOLUME_SET: ${level}]`, `Setting the volume to ${level}%…`);
     }
-    if (/^(?:turn (?:it|the volume) up|volume up|louder|increase (?:the )?volume)$/i.test(text)) return action('[VOLUME_UP]', 'Turning the volume up…');
+    if (/^(?:turn (?:it|the volume) up|volume up|louder|(?:raise|increase) (?:the )?volume)$/i.test(text)) return action('[VOLUME_UP]', 'Turning the volume up…');
     if (/^(?:turn (?:it|the volume) down|volume down|quieter|lower (?:the )?volume|decrease (?:the )?volume)$/i.test(text)) return action('[VOLUME_DOWN]', 'Turning the volume down…');
     if (/^(?:reload|restart) spotify(?: and (?:resume|play)(?: (?:the |my )?(?:current )?(?:song|music))?)?$/i.test(text)) return action('[SPOTIFY_RELOAD]', 'Restarting Spotify…');
     if ((match = /^(?:play|put on|start|listen to)\s+(.+?)(?:\s+(?:on|in|using)\s+spotify)?$/i.exec(text))) {
@@ -199,6 +199,15 @@
         if (kind === 'playlist' && likedSongs.test(name)) return action('[SPOTIFY_LIKED]', 'Opening your Liked Songs…');
         const type = kind === 'playlist' && named[1]?.toLowerCase() === 'my' ? 'LIBRARY' : kind === 'track' ? 'SONG' : kind.toUpperCase();
         return action(`[SPOTIFY_${type}: ${name}]`, `Finding ${name} on Spotify…`);
+      }
+      // A quoted title, explicit artist or Spotify destination supplies a
+      // concrete search. Leave recommendations and unspecific playback to
+      // interpretation; "start Chrome" must still mean opening the app.
+      if (/^(?:play|put on|listen to)\s/i.test(text) &&
+          (/^["“].+["”]$/.test(target) || /\S\s+by\s+\S/i.test(target) || /\s+(?:on|in|using)\s+spotify$/i.test(text)) &&
+          !/^(?:(?:a|an|some|any|random|my|your)\s|something\b|anything\b|music\b|songs?\b|tracks?\b|albums?\b|artists?\b|playlists?\b)/i.test(target)) {
+        const name = unquote(target.replace(/^["“](.+?)["”](\s+by\s+.+)$/i, '$1$2'));
+        if (name && name.length <= 300) return action(`[SPOTIFY_SONG: ${name}]`, `Finding ${name} on Spotify…`);
       }
     }
     if ((match = /^(?:open|launch|start)\s+(.+)$/i.exec(text))) {
@@ -257,5 +266,5 @@
     return complete && FREE_TEXT_COMMAND.test(complete.command) ? [complete] : null;
   }
   const isDismissal = text => typeof text === 'string' && text.trim().length > 0 && text.length <= 200 && single(text.trim(), {})?.command === '[DISMISS]';
-  return { parse, duration, clockTime, isDismissal, isLikedSongs: text => likedSongs.test(String(text).trim()) };
+  return { parse, duration, clockTime, isDismissal, clauses, isLikedSongs: text => likedSongs.test(String(text).trim()) };
 });

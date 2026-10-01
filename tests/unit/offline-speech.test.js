@@ -289,7 +289,7 @@ function microphoneFixture(options = {}) {
   }
   const context = {
     window: {}, console: { log() {}, error() {}, warn() {} }, navigator: { mediaDevices: { getUserMedia() { calls.requests++; return options.streamPromise || Promise.resolve(stream); } } },
-    AudioContext, Float32Array, Blob, micStream: null, audioContext: null, analyser: null, scriptNode: null, voskRecognizer: null,
+    AudioContext, Float32Array, Blob, setTimeout, clearTimeout, micStream: null, audioContext: null, analyser: null, scriptNode: null, voskRecognizer: null,
     voskModel: { ready: true, KaldiRecognizer: class {
       constructor() { calls.recognizers++; this.handlers = {}; calls.instances.push(this); }
       setWords() {} on(name, callback) { this.handlers[name] = callback; } remove() { calls.removed++; }

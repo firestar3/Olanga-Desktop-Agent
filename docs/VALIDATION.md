@@ -1,3 +1,92 @@
+# 1.5.0 release checks — September 30, 2026
+
+The stable 1.5.0 source includes the Workspace, voice, media, work tools, optional integrations and manual-update changes described in the [release notes](releases/1.5.0.md). The following checks were rerun for the stable version and its local Windows installer. The tag workflow independently builds the published installer and its verification files from the release commit.
+
+| Check | Result |
+| --- | --- |
+| Combined unit suite | **710 passed**, zero failures or skips |
+| Syntax, assets and version | **71 JavaScript files passed**, version **1.5.0** |
+| Workspace and Work tools | **12 checks passed** with production renderer/preload, selected-file operations and isolated data |
+| Manual update UI and shared theme | **11 scenarios passed** |
+| Renderer races and storage recovery | **11 checks passed** |
+| Package contents | **91 source files**, native helpers, offline model, companion files and version matched the final source |
+| Packaged startup | **13 checks passed** using a hidden disposable profile |
+| Packaged profile compatibility | **35 checks passed** across actual 1.4.1 and 1.5.0 executables using one disposable profile |
+| Windows installer | NSIS build passed; installer and application both verified **unsigned** |
+
+Release testing found and corrected two test synchronization defects without changing product behavior or weakening its assertions. The Spotify startup fixture had replaced sleeps with no-ops while retaining a shortened wall-clock deadline; CPU load could exhaust it before the next fake session appeared. It now uses a deterministic clock with the production deadlines. The file Undo smoke had treated the first appearance of the original path as completion, although Undo was still verifying and removing a temporary hard link. It now waits for the verified completion receipt, checks the final single-link state, and waits for a fresh picker result before the next operation. The final complete unit and UI checks passed.
+
+The compatibility test preserved timer identities/deadlines, completed and pending tasks, aliases, explicit memories, routines, activity/timing records, secure preferences and shortcuts. It made no provider calls, captured no real microphone and used no installed user data. This verifies data compatibility between packaged applications; it is not an NSIS upgrade, UAC or rollback test. Beta 2 was installed and restarted locally in an earlier step; the stable 1.5.0 installer was built and checked separately.
+
+The release remains explicit about unverified live paths. **Live playback of the corrected “Play Spotify and raise the volume to 75%” request has not been verified.** Its routing and native-function fixtures pass, but the earlier live observation used **Open Spotify**, and did not pass its sustained-volume assertion. Physical microphone behavior, real browser/VS Code extension hosts, phone setup, Gemini Live and external MCP/local model/speech servers require testing with the intended hardware and accounts. No publisher certificate was supplied. Updates remain manual, with no automatic installation or rollback.
+
+Generated installers, profiles, recordings, screenshots and logs remain in ignored `dist/` and `build/` directories. The GitHub release contains the installer, `SHA256SUMS`, `RELEASE-METADATA.json` and release notes as downloadable assets; these binaries and diagnostic outputs are not committed to source history.
+
+# 1.5.0-beta.2 corrections — September 30, 2026
+
+This unsigned, unpublished local build removes Quick ask, makes Workspace the main top-bar button, and fixes the specific request **“Play Spotify and raise the volume to 75%.”** The installed beta 1 was not replaced during this correction.
+
+The failure had two causes: Play only looked for an existing media session, and a failed playback step discarded the following volume adjustment. Spotify-scoped Play now opens the app when necessary and waits for its session. Its accessible Play fallback requires one visible, enabled control whose identity is checked again before invocation. A playing track is required for a success receipt. If playback remains unavailable, the explicitly requested independent volume action still runs, and the final reply includes both outcomes. Recognized local requests receive contextual acknowledgments; acknowledgments while transcription is pending vary without guessing the unheard request.
+
+| Check | Result |
+| --- | --- |
+| Combined unit suite | **710 passed**, zero failures or skips |
+| Syntax, assets and version | **71 JavaScript files passed**, version **1.5.0-beta.2** |
+| Workspace and Work tools UI | **12 checks passed**, including removal of Quick ask and its shortcut, Workspace focus, and existing theme/font consistency |
+| Media controller | **18 tests passed** within the combined suite, including 16 cold-start scenarios executed against production PowerShell functions with controlled session/UI fixtures |
+| Native status fixtures | Both Spotify-only and current-player scopes covered for Playing, Paused and confirmed no-session states |
+| Live-test cleanup fixtures | **7 tests passed** within the combined suite for unknown baselines, pre-existing playback, failed reads, delayed playback and verified restoration |
+| Package contents | **91 source files**, native helpers, offline model, companion files and version matched the final source |
+| Packaged startup | **13 checks passed** using a hidden disposable profile, with no provider, microphone or real media actions |
+| Installer signing | Installer and application verified **unsigned**, as expected without a publisher certificate |
+
+The routing regressions exercise successful and failed playback followed by volume, native exceptions, cancellation, complete paraphrases, omitted or changed volume proposals, and contextual acknowledgment speech. The first complete run exposed an overly restrictive new compound guard: a fully grounded paraphrase unnecessarily took another model call. That guard was corrected, retaining the existing action assertions and rejection of incomplete or unrelated proposals. The final complete suite passed.
+
+`npm run smoke:spotify` is prepared for a separate opt-in live check through the production typed-command path. It requires actual Spotify playback and sustained native volume evidence. It rejects unknown initial playback state before dispatch, preserves pre-existing playback, checks a bounded period for delayed playback during cleanup, and records unverified restoration as failure. Natural song boundaries do not count as playback failure. Generated reports and installers remain under ignored `build/` and `dist/` directories.
+
+**Live playback is not verified for beta 2.** Computer Use was stopped with the physical Escape key, so no further Spotify controls, real volume changes, live transcription or installation were performed. Fixture and packaged-startup results above do not establish that the corrected request succeeds against the user's current Spotify session. The earlier beta 1 live observation below exercised **Open Spotify**, not **Play Spotify**, and is retained as historical evidence.
+
+# 1.5.0-beta.1 source preview — September 30, 2026
+
+This is an unpublished, unsigned local prerelease. It retains the 1.4.1 theme and manual update policy and adds the work tools described in [the implementation record](NEXT-LEVEL.md).
+
+| Check | Result |
+| --- | --- |
+| Combined unit suite | **688 passed**, zero failures or skips |
+| Syntax, assets and version | **71 JavaScript files passed**, version **1.5.0-beta.1** |
+| New Work tools UI | **12 checks passed** with the production renderer/preload and isolated profile |
+| Existing Workspace UI | **16 checks passed** |
+| Renderer races and storage recovery | **11 checks passed** |
+| Manual update UI and theme | **11 scenarios passed** |
+| Original startup/settings/persistence smoke | **Passed** |
+| Native window sessions | **10 checks passed** against a disposable real Windows fixture, including normal and minimized geometry restore |
+| Phone protocol | **12 real HTTPS fixture tests passed** within the unit suite; certificate verification enabled |
+| Phone renderer dispatch | Busy/refusal, one-use claims, cancellation, exact command matching and persisted timer receipts covered by unit tests and the real UI smoke |
+| Package contents | **91 source files**, native helpers, model and version verified; installable companion files are checked separately against source |
+| Packaged startup | **13 checks passed**, including isolated persistence, inactive optional servers, setup guides and schedule persistence after reload |
+| Profile compatibility | **13 seed checks and 22 transition checks passed** using the actual packaged 1.4.1 and 1.5.0-beta.1 executables with the same disposable profile |
+| Release tooling | **18 tests passed**, including real unsigned Windows fixture signatures/checksums and PowerShell workflow branches for beta/stable publication |
+
+The Work tools UI check performs real selected-file rename and checked Undo, local project indexing/search, local calendar import and reminder creation, and a phone-command handoff through actual IPC/preload to a local timer. Provider, MCP and app/window endpoints are simulated there. It also checks that opening optional pages starts no external service, approvals require separate clicks, changed filenames invalidate previews, closing/reopening rejects late previews, and shared styles fit at 100% and 150% zoom. Screenshots were inspected; remote fonts were blocked, so the shared fallback font was used.
+
+The unit suite covers stale identities, cancellation, filesystem collisions and links, partial file recovery, waveform endpointing and capture gaps, interrupted playback, local/Live protocol races, recurring schedule DST and resume behavior, MCP approval expiry, companion pairing/authorization, stale editor versions, real task exit-code handling, and update cache tampering and publisher-policy checks. Two obsolete media-observer test stubs initially failed after stream-error handling was added; replacing the fake stderr object with a real stream restored the complete suite without weakening production checks.
+
+The profile transition preserved the exact timer identity/deadline, completed and pending tasks, app and playlist aliases, explicit memory, routine, activity/timing records, secure preferences, custom wake groups and quick action. Completed routine steps stayed completed and the interrupted in-flight step stayed uncertain. The new executable and a subsequent reload made no provider calls, opened no microphone, played no audio, started no phone server and left updates unchecked. This checks profile compatibility between packaged executables; it does not execute an NSIS upgrade or touch the installed user profile.
+
+A repeated packaged smoke exposed a reload race in the test: the outgoing page's globals could satisfy the readiness condition before the replacement page finished loading. The harness now requires a new document token and every expected module, checks uncaught renderer errors, and verifies schedules after a second reload. The packaged modules matched source; this was a test synchronization defect.
+
+Final review also found and fixed two production issues. A delayed initial project-list read could replace newer in-memory metadata; all metadata operations now share one queue, with regression coverage for concurrent additions and retry after a failed read. Optional local speech could feed the normal wake recognizer; playback now blocks recognition and discards queued audio at both boundaries. Tests cover pending/rejected playback, old recognizer callbacks, partial worklet batches, stale flush acknowledgements and safe capture fallback when an acknowledgement never arrives. Two existing microphone test fixtures needed standard timer globals for the new cleanup path; their assertions were preserved, and the complete 688-test rerun passed. These are pipeline tests, not acoustic echo measurements.
+
+## Live Spotify observation
+
+Using the previously authorized generated recording of **“Open Spotify and raise the volume to 75%”**, Gemini transcription reached the production assistant and both native actions returned verified receipts: Spotify opened with a process ID, and Windows volume reached **75%, unmuted**. Acknowledgment was dispatched in **47 ms** and the Windows voice start event arrived in **566 ms**. The final reply started at **22.85 seconds** and ended at **27.94 seconds**, after both actions and acknowledgment. These are one-run event timings, not acoustic or general latency claims.
+
+The overall live smoke **did not pass**: a separate Windows sampler observed mute turn on about 2.2 seconds after the successful volume receipt, with no second volume-changing command from the tested Olanga controller. The user was asked whether they muted it manually; the origin of that later change remains unconfirmed. The test restored the original **42.08%, muted** state and verified restoration. The run does establish native action receipts and actual speech start/end events; it does not establish uninterrupted audible playback or sustained unmuted volume. Repeated-mute checks after that failed assertion did not run in this attempt.
+
+No physical microphone, acoustic loopback, wake-word accuracy, phone/browser trust setup, installed browser/VS Code extension-host session, live Gemini Live session, live MCP server, or real local model/speech server was exercised in this preview validation. Those paths have fixtures and explicit setup requirements. Signed artifacts cannot be tested without a publisher certificate. NSIS installation, UAC, antivirus and automatic rollback are not claimed as validated by launching the unpacked executable.
+
+Generated recordings, screenshots, profiles, reports and installers stay in ignored `build/` and `dist/` directories. They are not source-control inputs.
+
 # 1.4.1 validation — September 26, 2026
 
 This release restores Workspace's shared app theme and adds manual in-app update downloads and installation. It also includes the four follow-up fixes described in the 1.4.0 record below.

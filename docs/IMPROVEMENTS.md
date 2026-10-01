@@ -74,7 +74,7 @@ Diagnostics now record **first audio**, the time from submission to the start of
 1. **Streamed replies.** Stream Gemini text and speak it sentence by sentence to cut time to first word. Action markers must never be spoken, and receipts remain the final word on actions.
 2. **Natural offline voice.** Offer Kokoro-82M through kokoro-js as an opt-in download of roughly 80–300 MB. The Windows voice remains the fallback, and no audio leaves the device.
 3. **Semantic end of turn and wake pre-roll.** Evaluate a small turn detector (such as Smart Turn v3) with voice-activity detection, and keep audio from just before the wake word. Validate with physical microphones before changing defaults.
-4. **Quick-ask bar and command protocol.** A small input bar and an `olanga://` link for Stream Deck or scripts, limited to the local command set.
+4. **Workspace access.** Keep Workspace as the main top-bar entry point for tools, with requests entered in the existing command box.
 5. **Scheduled briefing.** An opt-in daily briefing at a chosen time or on the first wake of the day.
 
 **Intelligence and extensibility**

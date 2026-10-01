@@ -110,7 +110,7 @@ The separate topmost window retains one native focusability style and uses nativ
 
 ## Further engineering work
 
-1. Add IntelliJ/VS Code document adapters with reviewed diffs, exact changed ranges, undo checkpoints and separately approved test execution. Screenshot verification cannot replace compiler/test evidence.
+1. Broaden the optional VS Code companion's native host coverage and add other editor adapters. Screenshot verification cannot replace compiler/test evidence.
 2. Maintain Electron/dependency upgrades with Windows integration coverage across scaling and accessibility providers.
 3. Configure signing credentials, validate real signed artifacts and test recovery before introducing an automatic update channel.
 4. Split remaining global renderer scripts into modules while preserving the provider and action boundaries.
@@ -119,3 +119,24 @@ The separate topmost window retains one native focusability style and uses nativ
 These are maintenance and product investments; the current build does not claim universal app compatibility or flawless autonomous execution.
 
 See the [improvement plan](IMPROVEMENTS.md) for implemented capabilities, remaining work and the behavior each must preserve.
+
+## 1.5.0 work tools and request handling
+
+`desktop/workbench.js` registers its named channels through the same trusted-main-frame IPC wrapper as the existing app. The renderer has no Node access or general filesystem/network bridge. Native pickers establish project, file and TLS identities in the main process. Optional services remain inactive until explicitly requested.
+
+| Module | Boundary |
+| --- | --- |
+| `shared/turn-lifecycle.js`, `shared/turn-corrections.js` | Distinguish action completion, playback and terminal outcomes. Corrections can change undispatched steps; completed steps are never silently replayed. |
+| `js/audio-capture-worklet.js`, `shared/voice-endpoint.js` | Capture and endpoint against the sample clock, bound queued audio, retain the legacy fallback, and cancel damaged capture instead of uploading partial speech. |
+| `desktop/workspace-service.js` | Main-owned capture and preview IDs, fresh process/window identity checks, monitor-clamped geometry, native readback and per-window receipts. |
+| `desktop/file-workflows.js` | Selected-file rename/move, identity and hash checks, a persisted journal, no overwrite, checked undo and explicit partial-failure receipts. |
+| `desktop/project-knowledge.js` | Explicit folder scope, bounded in-memory text indexes, stale-source exclusion and source-line citations. Optional cloud answers receive reviewed excerpts only. |
+| `desktop/conversation-backends.js` | Loopback-only local chat/WAV speech and an explicit, bounded Gemini Live socket. Neither conversation backend receives action tools. |
+| `shared/schedules.js` | Persist occurrence consumption before delivering silent notifications. Follow local calendar time, handle DST and group catch-up after resume. No OS scheduler is installed. |
+| `desktop/calendar-service.js` | Local `.ics` snapshot with supported one-off events only. No account connection, recurrence expansion or background fetch. |
+| `desktop/companion-bridge.js`, `extensions/` | Explicit loopback pairing, origin-bound tokens and one-use reviewed commands. Clients reauthorize before effects, validate tab/document identity and report observed results. |
+| `desktop/integration-client.js` | Configured remote HTTPS MCP transport with bounded JSON/SSE responses, per-call approval and no automatic replay of uncertain calls. Tool text never enters the assistant's action dispatcher. |
+| `desktop/phone-remote.js`, `desktop/phone-dispatch.js` | Explicit private-interface HTTPS, expiring pairing, CSRF checks, UUID deduplication and a one-use renderer claim. Only allowlisted local commands run while the assistant is idle. |
+| `desktop/signing-policy.js` | Optional packaged publisher-certificate pin for signed builds. Unsigned builds remain explicitly unsigned. Manual update recovery trusts fresh release metadata and rehashed bytes, not saved cache metadata. |
+
+File receipts and saved window sessions stay in the local profile. Project text, imported calendar events, MCP credentials, companion pairing credentials and phone sessions stay in memory. The browser/editor session lists contain only items the user selected to save. Reload/crash cleanup cancels outstanding service work; an already delivered native action may still require inspection before retrying.

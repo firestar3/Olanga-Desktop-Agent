@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Olanga companion</title><link rel="stylesheet" href="panel.css"></head>
+<body><main><h1>Olanga companion</h1><p>Keep this window open while connected. Sharing stays on this computer until you explicitly ask Olanga to use a cloud model.</p>
+<form id="pair-form"><label>Local endpoint<input id="endpoint" placeholder="http://127.0.0.1:12345" autocomplete="off" required></label><label>One-time pairing code<input id="code" type="password" autocomplete="off" required></label><button>Connect</button></form>
+<p id="status" role="status" aria-live="polite">Not connected.</p><button id="disconnect" disabled>Disconnect</button>
+<section><h2>Share with Olanga</h2><p>Private tabs are excluded. Tab sharing is optional; selected text uses access granted when you invoke the extension.</p><button id="share-tabs" disabled>Share current tab list</button><button id="share-selection" disabled>Share selected page text</button></section>
+<section id="review" hidden><h2>Review request</h2><pre id="request"></pre><button id="approve">Approve this request</button><button id="decline">Decline</button></section>
+</main><script src="core.js"></script><script src="panel.js"></script></body></html>

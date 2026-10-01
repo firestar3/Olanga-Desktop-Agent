@@ -4551,4 +4551,16 @@ input:checked + .slider:before {
   }
 }
 .timer-when { font-size: 11px; color: var(--text-secondary); letter-spacing: .5px; }
+.workbench-dialog { width: min(820px, calc(100vw - 40px)); }
+.workbench-dialog nav { flex-wrap: wrap; }
+.workbench-dialog > section > label { display: block; margin: 12px 0; }
+.workbench-dialog .workspace-check { display: flex; align-items: center; gap: 10px; }
+.workbench-dialog .workspace-check input { width: auto; }
+.workbench-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; font: 12px/1.6 var(--font); color: var(--text-secondary); background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px; margin: 10px 0; user-select: text; }
+.workbench-source { margin: 14px 0; }
+.workbench-task-card { color: var(--text-secondary); background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px; margin-top: 10px; font: 12px/1.6 var(--font); }
+.workbench-task-card button { font: inherit; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 6px 10px; margin-top: 6px; }
+.workbench-dialog nav { display: flex; gap: 8px; margin: 12px 0; }
+.workbench-dialog nav [aria-pressed="true"] { color: var(--accent-light); border-color: var(--accent); }
+.workbench-dialog fieldset { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px; }
 .setup-local-btn { margin-top: 10px; background: transparent; border: 1px solid #736082; }

@@ -69,6 +69,24 @@ test('opening Spotify and setting an absolute volume produces both ordered actio
   assert.deepEqual(parse('set volume to 75% and open Spotify').map(action => action.command), ['[VOLUME_SET: 75]', '[OPEN_APP: Spotify]']);
 });
 
+test('playing Spotify preserves both playback and the requested volume', () => {
+  for (const phrase of ['Play Spotify and raise the volume to 75%', 'Play Spotify and raise the volume to75%', 'resume Spotify then raise volume']) {
+    assert.deepEqual(parse(phrase)?.map(action => action.command), ['[MEDIA_PLAY]', phrase.endsWith('raise volume') ? '[VOLUME_UP]' : '[VOLUME_SET: 75]'], phrase);
+  }
+});
+
+test('concrete song searches avoid model routing without losing the artist or following action', () => {
+  for (const [phrase, title] of [
+    ['play Shape of You by Ed Sheeran and set volume to 75%', 'Shape of You by Ed Sheeran'],
+    ['play The Scientist by Coldplay and set volume to 75%', 'The Scientist by Coldplay'],
+    ['play "Shape of You" by Ed Sheeran and set volume to 75%', 'Shape of You by Ed Sheeran'],
+    ['play "Now and Then" and set volume to 75%', 'Now and Then'],
+    ['put on Billie Jean on Spotify and set volume to 75%', 'Billie Jean'],
+  ]) assert.deepEqual(parse(phrase)?.map(action => action.command), [`[SPOTIFY_SONG: ${title}]`, '[VOLUME_SET: 75]'], phrase);
+  for (const phrase of ['play some music I would like on Spotify', 'play my favorite band on Spotify', 'play a song by Ed Sheeran', 'play Shape of You by Ed Sheeran and delete files', 'play Rock and Roll by Led Zeppelin and set volume to 75%']) assert.equal(parse(phrase), null, phrase);
+  assert.equal(parse('start Chrome')[0].command, '[OPEN_APP: Chrome]');
+});
+
 test('absolute volume accepts spoken bounds and rejects invalid or relative targets', () => {
   for (const [phrase, level] of [
     ['set the volume to zero percent', 0],

@@ -1,3 +1,4 @@
+param([switch]$Library)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -235,6 +236,7 @@ function Invoke-SearchFallback($Request) {
     return @{ ok = $true; verified = $false; status = 'dispatched'; dispatched = $true; source = 'windows-search'; message = 'I requested ' + $name + ' to open through Windows Search, but could not verify its window.' }
 }
 
+if ($Library) { return }
 $request = $null
 try {
     $line = [Console]::ReadLine()

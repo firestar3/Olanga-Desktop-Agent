@@ -56,6 +56,7 @@
   panel.querySelector('#workspaceClose').addEventListener('click', () => panel.close());
   panel.querySelectorAll('[data-workspace-tab]').forEach(node => node.addEventListener('click', () => open(node.dataset.workspaceTab)));
   const launch = button('Workspace', () => open()); launch.className = 'workspace-launch'; launch.id = 'workspaceOpen';
+  launch.setAttribute('aria-haspopup', 'dialog'); launch.setAttribute('aria-controls', panel.id);
   document.querySelector('.top-bar')?.append(launch);
   const peek = el('div', undefined, 'activity-peek'); peek.id = 'activityPeek'; peek.setAttribute('aria-live', 'polite');
   document.getElementById('transcriptArea')?.append(peek);

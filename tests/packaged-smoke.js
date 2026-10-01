@@ -5,14 +5,15 @@ const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { isDeepStrictEqual } = require('node:util');
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'build', 'qa');
 fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, 'packaged-profile-'));
-const executable = path.join(root, 'dist', 'win-unpacked', 'Olanga.exe');
+const executable = path.join(path.resolve(root, process.env.OLANGA_BUILD_DIR || 'dist'), 'win-unpacked', 'Olanga.exe');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const report = { passed: false, version: require('../package.json').version, isolatedProfile: profile,
-  coverage: { builtExecutable: true, packagedRenderer: true, packagedPreload: true, localSetup: true, localPersistence: true, microphone: false, providerCalls: false }, checks: [] };
+  coverage: { builtExecutable: true, packagedRenderer: true, packagedPreload: true, localSetup: true, localPersistence: true, microphone: false, providerCalls: false }, checks: [], rendererErrors: [] };
 let child, socket, log = '';
 const pending = new Map();
 let sequence = 0;
@@ -36,6 +37,34 @@ async function evaluate(expression) {
   const result = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
   return result.result?.value;
+}
+async function waitForRenderer(previousDocument = null) {
+  let state, lastError;
+  for (let attempt = 0; attempt < 120; attempt++) {
+    try {
+      state = await evaluate(`({
+        document: window.__packagedSmokeDocument || null,
+        readyState: document.readyState,
+        assistant: typeof processTextCommandWithGemini === 'function',
+        preferences: document.querySelectorAll('#quickActionsEditor fieldset').length === 5,
+        workspace: !!window.OlangaWorkspace,
+        workbench: typeof window.OlangaWorkbench?.addPage === 'function',
+        schedules: typeof window.OlangaScheduleStore?.add === 'function'
+      })`);
+      if ((!previousDocument || state.document !== previousDocument) && state.readyState === 'complete' &&
+          state.assistant && state.preferences && state.workspace && state.workbench && state.schedules) return state;
+    } catch (error) { lastError = error.message; /* A reload may replace the execution context. */ }
+    await pause(100);
+  }
+  throw new Error('Packaged renderer did not finish initialization: ' + JSON.stringify({ state, lastError }));
+}
+async function reloadRenderer() {
+  // Page.reload returns before navigation. Old timer/task globals can still be
+  // readable until the replacement document starts parsing its scripts.
+  const token = 'packaged-document-' + Date.now() + '-' + Math.random();
+  await evaluate(`window.__packagedSmokeDocument = ${JSON.stringify(token)}`);
+  await send('Page.reload');
+  await waitForRenderer(token);
 }
 async function stop() {
   if (socket?.readyState === WebSocket.OPEN) socket.close();
@@ -70,17 +99,21 @@ async function stop() {
       socket = new WebSocket(target.webSocketDebuggerUrl);
       await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
       socket.addEventListener('message', event => {
-        const message = JSON.parse(String(event.data)); const item = pending.get(message.id);
+        const message = JSON.parse(String(event.data));
+        if (message.method === 'Runtime.exceptionThrown') {
+          const details = message.params.exceptionDetails;
+          report.rendererErrors.push(details.exception?.description || details.text);
+        }
+        const item = pending.get(message.id);
         if (!item) return; pending.delete(message.id);
         message.error ? item.reject(new Error(message.error.message)) : item.resolve(message.result);
       });
+      await send('Runtime.enable'); await send('Page.enable');
       await send('Network.enable'); await send('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
-      for (let attempt = 0; attempt < 80; attempt++) {
-        if (await evaluate(`typeof processTextCommandWithGemini === 'function' && document.querySelectorAll('#quickActionsEditor fieldset').length === 5 && !!window.OlangaWorkspace`)) break;
-        await pause(100);
-      }
-      const boot = await evaluate(`({ node: typeof process, require: typeof require, offline: typeof window.OlangaOfflineSpeech?.transcribe, provider: typeof window.electronAPI?.providerGenerate, undo: typeof window.electronAPI?.undoDesktopEdit, apps: typeof window.electronAPI?.listAppCapabilities })`);
-      check('Packaged preload exposes new capabilities with renderer isolation', boot.node === 'undefined' && boot.require === 'undefined' && [boot.offline, boot.provider, boot.undo, boot.apps].every(value => value === 'function'));
+      await waitForRenderer();
+      check('Packaged renderer finishes loading settings, workbench and schedules', true);
+      const boot = await evaluate(`({ node: typeof process, require: typeof require, offline: typeof window.OlangaOfflineSpeech?.transcribe, provider: typeof window.electronAPI?.providerGenerate, undo: typeof window.electronAPI?.undoDesktopEdit, apps: typeof window.electronAPI?.listAppCapabilities, workbench: typeof window.openOlangaWorkbench, sessions: typeof window.electronAPI?.workSessionCapture, phone: typeof window.electronAPI?.phoneStatus })`);
+      check('Packaged preload exposes new capabilities with renderer isolation', boot.node === 'undefined' && boot.require === 'undefined' && [boot.offline, boot.provider, boot.undo, boot.apps, boot.workbench, boot.sessions, boot.phone].every(value => value === 'function'));
       await evaluate(`document.getElementById('startLocalBtn').click(); void 0`);
       const local = await evaluate(`({ visible: !document.getElementById('mainScreen').classList.contains('hidden'), key: !!apiKey, mic: !!micStream, input: OlangaWorkspace.snapshot().speechInput })`);
       check('Keyless startup works without opening a microphone', local.visible && !local.key && !local.mic && local.input === 'cloud');
@@ -88,7 +121,7 @@ async function stop() {
       check('Packaged updater starts idle with no automatic download or install', update.phase === 'idle' && update.status === 'not-checked' && update.installedVersion === report.version && !update.canDownload && !update.canInstall && update.bytesReceived === 0 && update.automaticUpdatesEnabled === false);
       const created = await evaluate(`(() => { const timer = createTimer(1800, 'Packaged fixture'); const task = addTask('Packaged fixture'); return timer.ok && task.ok; })()`);
       check('Packaged local timer and task save successfully', created);
-      await send('Page.reload');
+      await reloadRenderer();
       let restored;
       for (let attempt = 0; attempt < 80; attempt++) {
         try { restored = await evaluate(`({ timer: activeTimers.some(item => item.label === 'Packaged fixture'), task: activeTasks.some(item => item.text === 'Packaged fixture'), visible: !document.getElementById('mainScreen').classList.contains('hidden'), mic: !!micStream })`); } catch (_) { /* New renderer globals are still loading. */ }
@@ -98,6 +131,14 @@ async function stop() {
       check('Packaged reload restores local setup, timers and tasks', restored?.timer && restored?.task && restored?.visible && !restored?.mic);
       const provider = await evaluate('window.electronAPI.providerStatus()');
       check('No saved credential or provider request in test profile', !provider.configured && provider.totals.requests === 0);
+      const optional = await evaluate(`(async () => ({ phone: await electronAPI.phoneStatus(), companions: await electronAPI.companionList(), phoneGuide: await electronAPI.workbenchGuide('phone'), companionGuide: await electronAPI.workbenchGuide('companions') }))()`);
+      check('Optional servers stay off and packaged setup guides are available', !optional.phone.active && !optional.companions.running && optional.phoneGuide.includes('HTTPS') && optional.companionGuide.includes('VS Code'));
+      const schedules = await evaluate(`(() => { window.OlangaScheduleStore.add({title:'Packaged schedule',kind:'reminder',repeat:'once',onceAt:Date.now()+3600000}); return window.OlangaScheduleStore.snapshot().items; })()`);
+      check('Packaged schedule saves through its bounded store', schedules.length === 1);
+      await reloadRenderer();
+      const restoredSchedules = await evaluate('window.OlangaScheduleStore.snapshot().items');
+      check('Packaged schedule keeps its ID and deadline after a complete renderer reload', isDeepStrictEqual(restoredSchedules, schedules));
+      check('Packaged startup and reloads have no uncaught renderer errors', report.rendererErrors.length === 0);
       report.passed = true;
     };
     await Promise.race([work(), new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('Packaged smoke exceeded 45 seconds')), 45000); })]);
@@ -106,6 +147,7 @@ async function stop() {
     clearTimeout(deadline); await stop();
     for (const item of pending.values()) item.reject(new Error('Test ended')); pending.clear();
     report.finishedAt = new Date().toISOString();
+    fs.writeFileSync(path.join(output, 'packaged-smoke.log'), log);
     const filename = path.join(output, 'packaged-smoke.json'); fs.writeFileSync(filename, JSON.stringify(report, null, 2));
     console.log(`Packaged smoke ${report.passed ? 'passed' : 'failed'}: ${filename}`);
     if (report.error) console.error(report.error);

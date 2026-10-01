@@ -4,14 +4,17 @@
 // each model. Spends roughly 50 Gemini requests, paced under the key's
 // per-minute limit. Speech is replaced by timing probes, so nothing is spoken,
 // and native app, media, volume, screen and terminal channels are blocked in
-// the main process. Runs that hit a Gemini 429 or 503 are reported but left
-// out of the medians.
+// the main process. Every attempt, including 429/503, cancellation and unknown
+// outcomes, stays in the completion-rate denominator. Conditional latency
+// percentiles are explicitly labeled successful-only; none measure acoustic
+// latency because real synthesis and playback are replaced with probes.
 // Run: npm run bench:latency
 // Parts: BENCH_PARTS=scenarios,specialist,cache (cache is off by default).
 const { app, BrowserWindow, ipcMain, session, safeStorage } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { percentile, summarizeRuns, matchesCommands } = require('./helpers/latency-stats');
 
 const output = path.resolve(__dirname, '../build/qa');
 const reportPath = path.join(output, 'latency-benchmark.json');
@@ -136,7 +139,7 @@ function installProbes() {
     } catch (caught) { error = caught.message; }
     const run = bench.run; bench.run = null; observer.disconnect();
     const total = Math.round(performance.now() - run.started);
-    return { marks: run.marks, total, error, transcript: kind === 'spoken' ? userText.textContent : null, answer: aiText.textContent.slice(0, 160), calls: await callsSince(epoch) };
+    return { marks: run.marks, total, error, outcome: window.OlangaTurns?.snapshot?.()?.outcome || null, transcript: kind === 'spoken' ? userText.textContent : null, answer: aiText.textContent.slice(0, 160), calls: await callsSince(epoch) };
   };
   // Runs the real specialist step on a fixed router proposal. The plan is
   // captured instead of dispatched, and the grounded shortcut is disabled.
@@ -178,16 +181,17 @@ function installProbes() {
   return true;
 }
 
-const median = values => { const sorted = values.filter(Number.isFinite).sort((a, b) => a - b); return sorted.length ? sorted[Math.floor((sorted.length - 1) / 2)] : null; };
+const median = values => percentile(values, .5);
 function summarize() {
+  report.summary = [];
   for (const scenario of SCENARIOS) {
     const row = { scenario: scenario.name };
     for (const mode of ['classic', 'streamed']) {
-      const runs = report.runs.filter(run => run.scenario === scenario.name && run.mode === mode && !run.error);
-      const at = type => median(runs.map(run => run.marks.find(item => item.type === type)?.at));
-      row[mode] = { runs: runs.length, firstSpeechMs: at('speech'), transcriptMs: at('transcript'), totalMs: median(runs.map(run => run.total)), providerCalls: median(runs.map(run => run.calls.length)) };
+      const runs = report.runs.filter(run => run.scenario === scenario.name && run.mode === mode);
+      row[mode] = summarizeRuns(runs);
     }
-    if (row.classic.firstSpeechMs && row.streamed.firstSpeechMs) row.firstSpeechSavedMs = row.classic.firstSpeechMs - row.streamed.firstSpeechMs;
+    const classic = row.classic.successfulOnly.firstSentenceReadyMs.p50, streamed = row.streamed.successfulOnly.firstSentenceReadyMs.p50;
+    if (Number.isFinite(classic) && Number.isFinite(streamed)) row.successfulOnlyFirstSentenceSavedMs = classic - streamed;
     report.summary.push(row);
   }
   const cache = variant => report.cache.filter(item => item.variant === variant);
@@ -209,7 +213,7 @@ app.whenReady().then(async () => {
     const wav = await questionWav();
     await run('warmProviderConnection()');
     await pause(1500);
-    for (const scenario of SCENARIOS) {
+    if (PARTS.has('scenarios')) for (const scenario of SCENARIOS) {
       for (let rep = 0; rep < REPS; rep++) {
         for (const mode of rep % 2 ? ['streamed', 'classic'] : ['classic', 'streamed']) {
           const result = await run(`window.__benchTurn(${JSON.stringify({ mode, kind: scenario.kind, goal: scenario.goal, rough: scenario.rough || '', wav: scenario.kind === 'spoken' ? wav : '' })})`);
@@ -219,7 +223,17 @@ app.whenReady().then(async () => {
         }
       }
     }
-    for (let round = 0; round < CACHE_ROUNDS; round++) {
+    if (PARTS.has('specialist')) for (const variant of SPECIALIST_VARIANTS) {
+      for (const goal of SPECIALIST_GOALS) for (let rep = 0; rep < SPECIALIST_REPS; rep++) {
+        try {
+          const result = await run(`window.__benchSpecialist(${JSON.stringify({ ...variant, goal: goal.goal, routed: goal.routed })})`);
+          report.specialist.push({ ...variant, goal: goal.goal, rep, ...result, expected: goal.expected, matchesExpected: matchesCommands(result.plan?.commands, goal.expected) });
+        }
+        catch (error) { report.specialist.push({ ...variant, goal: goal.goal, rep, error: redact(error.message) }); }
+        save(); await pause(Math.max(GAP_MS, Math.ceil(60000 / CALLS_PER_MINUTE)));
+      }
+    }
+    if (PARTS.has('cache')) for (let round = 0; round < CACHE_ROUNDS; round++) {
       for (const variant of ['legacy', 'current']) {
         try { report.cache.push(await run(`window.__benchCache(${JSON.stringify(variant)})`)); }
         catch (error) { report.cache.push({ variant, error: redact(error.message) }); }
@@ -228,7 +242,8 @@ app.whenReady().then(async () => {
       }
     }
     summarize();
-    report.passed = report.runs.every(item => !item.error || /blocked in the latency benchmark/i.test(item.error)) && report.runs.length === SCENARIOS.length * REPS * 2;
+    report.measurementComplete = (!PARTS.has('scenarios') || report.runs.length === SCENARIOS.length * REPS * 2) && (!PARTS.has('specialist') || report.specialist.length === SPECIALIST_VARIANTS.length * SPECIALIST_GOALS.length * SPECIALIST_REPS) && (!PARTS.has('cache') || report.cache.length === CACHE_ROUNDS * 2);
+    report.passed = report.measurementComplete && report.runs.every(item => item.outcome === 'completed') && report.specialist.every(item => !item.error && item.matchesExpected) && report.cache.every(item => !item.error);
   } catch (error) {
     report.error = redact(error.stack || error.message);
   } finally {

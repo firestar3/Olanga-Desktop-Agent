@@ -10,6 +10,7 @@ function harness() {
   const node = () => ({ textContent: '', classList: { add() {}, remove() {} } });
   const context = {
     AbortController, DOMException, setTimeout, clearTimeout, OlangaGemini: require('../../shared/gemini-request'),
+    OlangaTurnLifecycle: require('../../shared/turn-lifecycle'), OlangaTurnCorrections: require('../../shared/turn-corrections'),
     console: { log() {}, warn() {}, error() {} },
     window: { electronAPI: { mediaControl: command => calls.media.push(command), openApp: name => calls.opened.push(name), requestScreenshot: async () => 'data:image/png;base64,abc' }, OlangaDesktop: { cancel() {}, open: goal => calls.desktop.push(goal) } },
     apiKey: 'test-key', apiKeys: ['test-key'], apiKeyRotation: false, nvidiaApiKey: 'nvidia-test',
@@ -70,6 +71,19 @@ function loadWorkspace(context) {
   context.OlangaIntents = require('../../shared/fast-intents');
   return store;
 }
+
+test('a normal request stops Live conversation before beginning desktop or provider work', () => {
+  const { context } = harness(); let stopped = 0;
+  context.window.OlangaLiveConversation = { isActive: () => true, stop: () => { stopped++; return Promise.resolve(); } };
+  const request = context.beginAssistantRequest(); assert.equal(stopped, 1); assert.equal(request.signal.aborted, false);
+});
+
+test('normal request start and cancellation synchronously stop optional local speech', () => {
+  const { context } = harness(); let stops = 0;
+  context.window.OlangaLocalSpeech = { stop: () => { stops++; } };
+  const request = context.beginAssistantRequest(); assert.equal(stops, 1); assert.equal(request.signal.aborted, false);
+  context.cancelAssistantRequest(); assert.equal(stops, 2); assert.equal(request.signal.aborted, true);
+});
 
 test('on-device transcription waits for review and executes only the approved text without a provider', async () => {
   const { context, calls } = harness();
@@ -276,7 +290,7 @@ test('Spotify and exact volume run in order without a model and finish after ack
   };
   context.sendTextToGemini = context.callGeminiSpecialist = () => { throw new Error('No model needed'); };
   const pending = context.processTextCommandWithGemini('Open Spotify and raise the volume to 75%');
-  assert.deepEqual(events, ['On it.', 'open:Spotify']);
+  assert.deepEqual(events, ["I'll open Spotify and set the volume to 75 percent.", 'open:Spotify']);
   assert.deepEqual(calls.spoken, []);
   opened({ ok: true, verified: true, source: 'spotify', message: 'Spotify is open.' });
   await new Promise(resolve => setImmediate(resolve));
@@ -308,13 +322,141 @@ test('voice acknowledgment starts before encoding and transcription, then both a
   assert.deepEqual(calls.spoken, ['Spotify is open. System volume is 75%.']);
 });
 
+test('Play Spotify requests Spotify playback and volume once in order without a provider', async () => {
+  const { context, calls } = harness(); const store = loadWorkspace(context);
+  context.apiKey = '';
+  const events = [];
+  context.speakAssistantAcknowledgement = async text => { events.push(['ack', text]); };
+  context.sendTextToGemini = context.callGeminiSpecialist = () => { throw new Error('No model needed'); };
+  context.window.electronAPI.mediaControl = async (command, spotifyOnly, level) => {
+    events.push([command, spotifyOnly, level]);
+    return { ok: true, verified: true, source: 'spotify', message: command === 'MEDIA_PLAY' ? 'Spotify is playing.' : 'System volume is 75%.' };
+  };
+  await context.processTextCommandWithGemini('Play Spotify and raise the volume to 75%');
+  assert.deepEqual(events, [['ack', "I'll start Spotify and set the volume to 75 percent."], ['MEDIA_PLAY', true, undefined], ['VOLUME_SET', true, 75]]);
+  assert.deepEqual(calls.spoken, ['Spotify is playing. System volume is 75%.']);
+  assert.deepEqual(store.snapshot().activity.at(-1).steps.map(step => step.state), ['completed', 'completed']);
+});
+
+test('failed Spotify playback still runs explicitly requested independent volume and reports both results', async () => {
+  for (const throws of [false, true]) {
+    const { context, calls } = harness(); const store = loadWorkspace(context);
+    const commands = [];
+    context.window.electronAPI.mediaControl = async (command, spotifyOnly, level) => {
+      commands.push([command, spotifyOnly, level]);
+      if (command === 'MEDIA_PLAY') {
+        if (throws) throw new Error('Spotify could not start playback.');
+        return { ok: false, verified: false, message: 'Spotify could not start playback.' };
+      }
+      return { ok: true, verified: true, volume: 75, message: 'System volume is 75%.' };
+    };
+    await context.processTextCommandWithGemini('Play Spotify and raise the volume to 75%');
+    assert.deepEqual(commands, [['MEDIA_PLAY', true, undefined], ['VOLUME_SET', true, 75]]);
+    const entry = store.snapshot().activity.at(-1);
+    assert.equal(entry.state, 'failed');
+    assert.deepEqual(entry.steps.map(step => step.state), ['failed', 'completed']);
+    assert.match(calls.spoken[0], /Spotify could not start playback\. System volume is 75%\.$/);
+    assert.doesNotMatch(calls.spoken[0], /remaining steps|Spotify is playing/);
+  }
+});
+
+test('failed Spotify playback does not continue into dependent playback or unrelated actions', async () => {
+  for (const suffix of ['skip this song', 'open Chrome', 'set a timer for 5 minutes']) {
+    const { context, calls } = harness(); const store = loadWorkspace(context);
+    context.window.electronAPI.mediaControl = async command => { calls.media.push(command); return { ok: false, message: 'Spotify could not start playback.' }; };
+    await context.processTextCommandWithGemini(`Play Spotify and ${suffix}`);
+    assert.deepEqual(calls.media, ['MEDIA_PLAY']); assert.deepEqual(calls.opened, []);
+    assert.deepEqual(store.snapshot().activity.at(-1).steps.map(step => step.state), ['failed', 'skipped']);
+    assert.match(calls.spoken[0], /remaining steps did not run/);
+  }
+});
+
+test('provider-routed playback failure also retains independent volume without replaying playback', async () => {
+  const { context, calls } = harness(); const store = loadWorkspace(context);
+  context.sendTextToGemini = async () => 'RESPONSE: [SPOTIFY_SONG: Rock and Roll by Led Zeppelin] [VOLUME_SET: 75]';
+  context.callGeminiSpecialist = async () => JSON.stringify({ kind: 'commands', commands: ['[SPOTIFY_SONG: Rock and Roll by Led Zeppelin]', '[VOLUME_SET: 75]'] });
+  const played = [];
+  context.window.electronAPI.playSpotify = async (kind, term) => { played.push([kind, term]); return { ok: false, message: 'Spotify needs you to sign in.' }; };
+  context.window.electronAPI.mediaControl = async (command, _, level) => { calls.media.push([command, level]); return { ok: true, verified: true, message: 'System volume is 75%.' }; };
+  await context.processTextCommandWithGemini('Play Rock and Roll by Led Zeppelin and raise the volume to 75%');
+  assert.deepEqual(played, [['SONG', 'Rock and Roll by Led Zeppelin']]);
+  assert.deepEqual(calls.media, [['VOLUME_SET', 75]]);
+  assert.deepEqual(calls.spoken, ['Spotify needs you to sign in. System volume is 75%.']);
+  assert.equal(store.snapshot().activity.at(-1).state, 'failed');
+});
+
+test('a song-only router proposal cannot bypass compound completeness review', () => {
+  const { context } = harness(); loadWorkspace(context);
+  assert.equal(context.groundedRouterCommands('[SPOTIFY_SONG: Billie Jean]', 'Play Billie Jean and raise the volume to 75%'), null);
+  assert.equal(context.groundedRouterCommands('[SPOTIFY_SONG: Shape of You by Ed Sheeran]', 'Play Shape of You by Ed Sheeran and raise the volume to 75%'), null);
+  assert.equal(context.groundedRouterCommands('[SPOTIFY_SONG: Billie Jean] [VOLUME_SET: 75]', 'Play Billie Jean and email 75 people'), null);
+  assert.equal(context.groundedRouterCommands('[SPOTIFY_SONG: Billie Jean] [VOLUME_SET: 75]', 'Play Billie Jean and set the volume to 30%'), null);
+  assert.deepEqual(Array.from(context.groundedRouterCommands('[SPOTIFY_SONG: Shape of You by Ed Sheeran] [VOLUME_SET: 75]', 'Play Shape of You by Ed Sheeran and raise the volume to 75%')), ['[SPOTIFY_SONG: Shape of You by Ed Sheeran]', '[VOLUME_SET: 75]']);
+});
+
+test('an omitted volume clause is repaired before any provider-routed song dispatch', async () => {
+  const { context, calls } = harness(); loadWorkspace(context);
+  const events = [];
+  context.sendTextToGemini = async () => 'RESPONSE: [SPOTIFY_SONG: Billie Jean]';
+  let proposals = 0;
+  context.callGeminiSpecialist = async (purpose, messages) => {
+    assert.equal(purpose, 'reasoning');
+    const original = JSON.parse(messages[1].content);
+    assert.deepEqual(original.allowedNames, ['SPOTIFY_SONG', 'VOLUME_SET']);
+    assert.deepEqual(original.requiredCommands, ['[VOLUME_SET: 75]']);
+    assert.deepEqual(events, [], 'No partial plan may execute before repair');
+    return JSON.stringify({ kind: 'commands', commands: ++proposals === 1 ? ['[SPOTIFY_SONG: Billie Jean]'] : ['[SPOTIFY_SONG: Billie Jean]', '[VOLUME_SET: 75]'] });
+  };
+  context.window.electronAPI.playSpotify = async (kind, term) => { events.push([kind, term]); return { ok: true, verified: true, message: 'Billie Jean is playing.' }; };
+  context.window.electronAPI.mediaControl = async (command, _, level) => { events.push([command, level]); return { ok: true, verified: true, message: 'System volume is 75%.' }; };
+  await context.processTextCommandWithGemini('Play Billie Jean and raise the volume to 75%');
+  assert.equal(proposals, 2);
+  assert.deepEqual(events, [['SONG', 'Billie Jean'], ['VOLUME_SET', 75]]);
+  assert.deepEqual(calls.spoken, ['Billie Jean is playing. System volume is 75%.']);
+});
+
+test('a repeatedly incomplete song plan dispatches nothing and cannot report success', async () => {
+  const { context, calls } = harness(); loadWorkspace(context);
+  context.sendTextToGemini = async () => 'RESPONSE: [SPOTIFY_SONG: Billie Jean]';
+  let proposals = 0, plays = 0;
+  context.callGeminiSpecialist = async () => { proposals++; return '{"kind":"commands","commands":["[SPOTIFY_SONG: Billie Jean]"]}'; };
+  context.window.electronAPI.playSpotify = async () => { plays++; };
+  await context.processTextCommandWithGemini('Play Billie Jean and raise the volume to 75%');
+  assert.equal(proposals, 2); assert.equal(plays, 0); assert.deepEqual(calls.media, []);
+  assert.match(calls.spoken[0], /omitted or changed an explicitly requested volume action/);
+});
+
+test('song arguments reach native playback intact and missing verification cannot claim playing', async () => {
+  const { context, calls } = harness(); const store = loadWorkspace(context);
+  context.apiKey = '';
+  context.sendTextToGemini = context.callGeminiSpecialist = () => { throw new Error('No model needed'); };
+  const played = [];
+  context.window.electronAPI.playSpotify = async (kind, term) => { played.push([kind, term]); };
+  context.window.electronAPI.mediaControl = async () => ({ ok: true, verified: true, message: 'System volume is 75%.' });
+  await context.processTextCommandWithGemini('Play "Now and Then" and raise the volume to 75%');
+  assert.deepEqual(played, [['SONG', 'Now and Then']]);
+  assert.equal(store.snapshot().activity.at(-1).state, 'unverified');
+  assert.deepEqual(calls.spoken, ['The Spotify request was sent, but playback could not be verified. System volume is 75%.']);
+});
+
+test('acknowledgments vary locally, express intent and never wait for a model', () => {
+  const { context } = harness(); loadWorkspace(context);
+  context.sendTextToGemini = context.callGeminiSpecialist = () => { throw new Error('No model needed'); };
+  const replies = Array.from({ length: 3 }, () => context.assistantAcknowledgment('Play Spotify and raise the volume to 75%'));
+  assert.equal(new Set(replies).size, 3);
+  for (const reply of replies) { assert.match(reply, /(?:I'll|Let me) start Spotify and set the volume to 75 percent/); assert.doesNotMatch(reply, /is playing|volume is|success|done/); }
+  const neutral = Array.from({ length: 3 }, () => context.assistantAcknowledgment());
+  assert.equal(new Set(neutral).size, 3); assert.ok(neutral.every(reply => reply.length < 35));
+  assert.match(context.assistantAcknowledgment('set a timer for five minutes'), /set your timer/);
+});
+
 test('a failed second step preserves the completed first step and gives a final failure', async () => {
   const { context, calls } = harness();
   context.OlangaIntents = require('../../shared/fast-intents');
   context.window.electronAPI.openApp = async () => ({ ok: true, verified: true, message: 'Spotify is open.' });
   context.window.electronAPI.mediaControl = async () => { throw new Error('No audio output device.'); };
   await context.processTextCommandWithGemini('Open Spotify and raise the volume to 75%');
-  assert.deepEqual(calls.spoken, ["Spotify is open. I couldn't complete that request. No audio output device."]);
+  assert.deepEqual(calls.spoken, ["Spotify is open. I couldn't complete that step. No audio output device."]);
 });
 
 test('transcription failure produces a spoken final response instead of silence', async () => {
@@ -981,4 +1123,78 @@ test('authentication and quota failures do not rotate reasoning models', async (
     await assert.rejects(context.callGeminiSpecialist('reasoning', [{ role: 'user', content: 'Plan' }]), /rejected/);
     assert.equal(calls, 1);
   }
+});
+
+
+test('terminal completion waits for speech and first audio waits for actual playback', async () => {
+  const { context } = harness(); const store = loadWorkspace(context); store.preference('diagnostics', true);
+  context.window.electronAPI.mediaControl = async () => ({ ok: true, verified: true, message: 'Volume is 75%.' });
+  let finish, onStart;
+  context.speakResponse = (_text, options) => { onStart = options.onStart; return new Promise(resolve => { finish = resolve; }); };
+  const pending = context.processTextCommandWithGemini('set volume to 75%');
+  await new Promise(resolve => setImmediate(resolve));
+  let state = context.window.OlangaTurns.snapshot();
+  assert.equal(state.outcome, null); assert.ok(state.actionsFinishedAt); assert.equal(state.playbackStartedAt, null);
+  assert.equal(store.snapshot().activity.at(-1).state, 'working');
+  assert.equal(store.snapshot().timings.filter(row => row.phase === 'first-audio').length, 0);
+  onStart(); onStart(); finish({ status: 'completed' }); await pending;
+  state = context.window.OlangaTurns.snapshot();
+  assert.equal(state.outcome, 'completed'); assert.ok(state.playbackFinishedAt);
+  assert.equal(store.snapshot().timings.filter(row => row.phase === 'first-audio').length, 1);
+});
+
+test('speech failure is terminal but retains completed action receipts and visible result', async () => {
+  const { context, calls } = harness(); const store = loadWorkspace(context);
+  context.window.electronAPI.mediaControl = async () => ({ ok: true, verified: true, message: 'Volume is 75%.' });
+  context.speakResponse = async () => ({ status: 'failed' });
+  await context.processTextCommandWithGemini('set volume to 75%');
+  assert.equal(context.window.OlangaTurns.snapshot().outcome, 'failed');
+  assert.equal(context.window.OlangaTurns.snapshot().steps[0].state, 'completed');
+  assert.equal(store.snapshot().activity.at(-1).steps[0].state, 'completed');
+  assert.equal(context.aiText.textContent, 'Volume is 75%.'); assert.match(calls.errors[0], /spoken reply/);
+});
+
+test('late speech completion cannot replace a cancelled outcome or mutate a newer turn', async () => {
+  const { context } = harness(); loadWorkspace(context);
+  context.window.electronAPI.mediaControl = async () => ({ ok: true, verified: true, message: 'Done.' });
+  let finish, onset;
+  context.speakResponse = (_text, options) => { onset = options.onStart; return new Promise(resolve => { finish = resolve; }); };
+  const pending = context.processTextCommandWithGemini('set volume to 75%'); await new Promise(resolve => setImmediate(resolve));
+  context.cancelAssistantRequest(); onset(); finish({ status: 'completed' }); await pending;
+  assert.equal(context.window.OlangaTurns.snapshot().outcome, 'cancelled');
+  assert.equal(context.window.OlangaTurns.snapshot().playbackStartedAt, null);
+});
+
+test('a correction amends only a pending volume step without replaying or cancelling the running launch', async () => {
+  const { context, calls } = harness(); loadWorkspace(context);
+  let opened; const levels = [];
+  context.window.electronAPI.openApp = name => { calls.opened.push(name); return new Promise(resolve => { opened = resolve; }); };
+  context.window.electronAPI.mediaControl = async (_command, _spotify, level) => { levels.push(level); return { ok: true, verified: true, message: 'Volume changed.' }; };
+  const pending = context.processTextCommandWithGemini('open Spotify and set volume to 75%');
+  await context.processTextCommandWithGemini('actually 30');
+  opened({ ok: true, verified: true, message: 'Spotify is open.' }); await pending;
+  assert.deepEqual(calls.opened, ['Spotify']); assert.deepEqual(levels, [30]);
+  assert.equal(context.window.OlangaTurns.snapshot().steps[0].state, 'completed');
+  await context.processTextCommandWithGemini('actually 20%');
+  assert.deepEqual(calls.opened, ['Spotify']); assert.deepEqual(levels, [30, 20]);
+});
+
+test('selective cancellation leaves the completed launch and skips only the pending timer', async () => {
+  const { context, calls } = harness(); loadWorkspace(context); loadLocalActions(context);
+  let opened;
+  context.window.electronAPI.openApp = name => { calls.opened.push(name); return new Promise(resolve => { opened = resolve; }); };
+  const pending = context.processTextCommandWithGemini('open Spotify and set a timer for 5 minutes');
+  await context.processTextCommandWithGemini('Keep Spotify open, but cancel the timer');
+  opened({ ok: true, verified: true, message: 'Spotify is open.' }); await pending;
+  assert.deepEqual(calls.opened, ['Spotify']); assert.equal(context.activeTimers.length, 0);
+  const steps = context.window.OlangaTurns.snapshot().steps;
+  assert.equal(steps[0].state, 'completed'); assert.equal(steps[1].state, 'cancelled');
+  assert.match(calls.spoken.at(-1), /Spotify is open.*timer step was cancelled/);
+});
+
+test('ambiguous contextual correction asks for explicit setting and performs no action', async () => {
+  const { context, calls } = harness(); loadWorkspace(context);
+  context.sendTextToGemini = () => { throw new Error('Ambiguous correction must not reach a model action route'); };
+  await context.processTextCommandWithGemini('actually 30');
+  assert.deepEqual(calls.media, []); assert.match(calls.spoken[0], /Which setting/);
 });

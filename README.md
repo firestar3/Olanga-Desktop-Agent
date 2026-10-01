@@ -26,7 +26,9 @@ Olanga is an open-source Windows assistant for the things you do throughout the 
 
 Common commands run directly through local controls, with no API key required for typed requests. Choose cloud transcription or optional on-device English recognition. Gemini handles questions and requests that need interpretation. A small corner orb keeps Olanga within reach while you work in other apps.
 
-**Olanga 1.4.1** brings these tools together: reviewed routines, activity receipts, saved app and playlist names, reminders and alarms, memories you explicitly save, a spoken daily briefing and a local health check. Streamed conversational replies, configurable push-to-talk and wake-word interruption sit alongside optional on-device transcription and local commands that work without a key. Workspace shares Olanga's familiar controls and includes manual downloads and installation of updates.
+**Olanga 1.5.0** brings more of your daily work into **Workspace**: save app layouts, review file changes, search a project, schedule reminders and connect optional browser, editor and phone companions. It also improves request progress, spoken acknowledgments and Spotify startup, while keeping the existing controls, colors and typography. [What's new in 1.5.0](docs/releases/1.5.0.md).
+
+Local commands, reviewed routines, action results, saved names, memories, spoken briefings and manual in-app updates remain part of the core experience. Optional integrations start only when you choose to use them.
 
 ## See it in action
 
@@ -34,16 +36,18 @@ https://github.com/user-attachments/assets/d76c1174-1269-4949-855f-a5e954b14844
 
 > **You:** Open Spotify and raise the volume to 75%.
 >
-> **Olanga:** On it.
+> **Olanga:** I'll open Spotify and set the volume to 75 percent.
 >
 > **Olanga:** Spotify is open. System volume is 75%.
 
-One request, two actions: Olanga opens Spotify, sets the system volume and verifies both results before confirming. If an action fails or cannot be verified, the final reply explains what happened. [See the validation evidence.](docs/VALIDATION.md)
+This example shows a supported two-action request: open Spotify and set the system volume. Olanga checks each action before confirming it. If an action fails or cannot be verified, the final reply explains what happened. [See the validation evidence.](docs/VALIDATION.md)
 
 | Say this | What Olanga does |
 | --- | --- |
+| “Play Spotify and raise the volume to 75%.” | Opens Spotify when needed, tries to resume playback, sets the volume and reports both results. If Spotify cannot play, the explicit volume adjustment still runs. |
 | “Play my liked songs on Spotify.” | Opens your personal Liked Songs collection and checks playback before confirming. |
 | “Play my playlist Road Trip.” | Looks for the named playlist in your Spotify library. |
+| “Play Yellow by Coldplay on Spotify.” | Searches for the requested track and checks the playback result. |
 | “Pause it.” / “Resume.” / “What's playing?” | Controls playback or checks the current track; recent Spotify context carries into follow-ups. |
 | “Set the volume to seventy-five percent.” | Sets the Windows system volume to 75% and verifies the result. |
 | “Turn the volume down, then play my liked songs.” | Runs the supported steps in order, stopping and explaining if one fails. |
@@ -68,24 +72,28 @@ Ask questions, request current information through Google Search, or use the opt
 
 ## Built for quick responses
 
-Common app, music, volume, timer, reminder, memory and checklist commands use a local intent matcher. Supported typed requests on this path need **zero model calls**. The cloud transcription path can execute a recognized local command after **one transcription call**; reviewed on-device commands need no transcription provider. Commands receive a short local acknowledgment while work starts, followed by the actual action results.
+Common app, music, volume, timer, reminder, memory and checklist commands use a local intent matcher. Supported typed requests on this path need **zero model calls**. The cloud transcription path can execute a recognized local command after **one transcription call**; reviewed on-device commands need no transcription provider. Commands receive a short local acknowledgment while work starts, followed by the actual action results. Known local requests get a brief description of the intended action; voice acknowledgments vary while transcription is still pending.
 
 **Streamed replies**, on by default in **Settings → Voice Settings**, speak conversational answers sentence by sentence while the rest is being generated. Eligible spoken questions can receive their transcript and answer in one Gemini call. Requests for actions or current information return to the appropriate command or Google Search path; they can require additional calls. Screen tasks and pending clarifications retain their existing review and conversation flow.
 
 Olanga also tracks a rough transcript locally while you speak. When it recognizes a complete supported command, it can shorten the end-of-speech pause. That rough transcript does not authorize execution: cloud recognition or the editable offline review still determines the submitted request.
 
-Response time varies with hardware, network, voice engine and app startup. The [validation report](docs/VALIDATION.md) records individual native command tests and their limitations, including measurements taken before the newer streaming path. No live latency benchmark for that streaming path is claimed. Optional **Workspace → Diagnostics** records local timings; its **first audio** marker records the start of speech processing, not an acoustic measurement.
+Response time varies with hardware, network, voice engine and app startup. The [validation report](docs/VALIDATION.md) records individual native command tests and their limitations. **Workspace → Diagnostics → first audio** comes from the voice engine's playback-start event. It does not measure sound at a microphone or speaker. Benchmarks retain failed attempts and report their failure rate separately from successful-response timings.
+
+Each request tracks actions and speech separately. A completed action stays completed if speech fails. Pending-step corrections such as “actually, make it 30 percent” change the remaining volume target; correcting an already completed volume change creates a new volume action without reopening the app.
 
 ## Get started
 
-1. Download **Olanga-Setup-1.4.1.exe** from [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases) and run it. It adds desktop and Start-menu shortcuts.
+1. Download [**Olanga-Setup-1.5.0.exe**](https://github.com/firestar3/Olanga-Desktop-Agent/releases/download/v1.5.0/Olanga-Setup-1.5.0.exe) from the [1.5.0 release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.5.0) and run it. It adds desktop and Start-menu shortcuts.
 2. Choose **Use local commands without a key**, or add your own [Google Gemini API key](https://aistudio.google.com/apikey) for cloud transcription, conversation, screen understanding, planning, and Notes/News AI.
 3. Use the built-in **Windows voice**, or choose **NVIDIA Magpie** in Settings and add a separate [NVIDIA hosted API key](https://build.nvidia.com/settings/api-keys). Use **Save & Test** to verify Magpie synthesis.
 4. Type a request, or enable voice input and say **“Hey Olanga”**, wait for the listening orb, and give your request. **Settings → Speech recognition** offers cloud and on-device modes; on-device modes ask you to review the transcript before sending it. You can also enable a push-to-talk shortcut in Settings.
 
-**Requirements:** Windows 10/11 x64; a microphone for voice input; internet and available Gemini quota for cloud features. Spotify commands require the Spotify desktop app, signed in. Its collection controls currently depend on English accessible labels. Builds made without configured Windows signing credentials are unsigned; check the release's signing notice.
+**Requirements:** Windows 10/11 x64; a microphone for voice input; internet and available Gemini quota for cloud features. Spotify commands require the Spotify desktop app, signed in. Its collection controls currently depend on English accessible labels. The 1.5.0 installer is **unsigned**; its checksum and signing status are included with the release.
 
 NVIDIA is optional and used only for Magpie speech; it requires its own key. Volume commands change the Windows output volume, and a nonzero target also unmutes it.
+
+The Spotify startup and playback corrections have automated fixture coverage. The corrected “Play Spotify” request still needs a live playback check; see the [validation record](docs/VALIDATION.md) for this and other device-dependent limits.
 
 ## Your workspace
 
@@ -100,6 +108,29 @@ Open **Workspace** from the top bar:
 - **Health** reports microphone, wake-word, speech recognition, voice, Gemini, storage, internet and shortcut status, with suggested fixes. Checking status does not call a model. The separate **Test Gemini connection** button sends a short Gemini request.
 
 Routines and their recovery records are saved on this device, including the commands you chose. They never run automatically on startup. Timers, reminders, alarms and checklist entries also persist. Overdue timers and reminders ring when Olanga reopens; they cannot alert while the app is closed or Windows is asleep. Relative reminders support up to 24 hours; clock-time reminders and alarms support today or tomorrow. They are not recurring schedules.
+
+## Work tools
+
+Open **Workspace → Apps & updates → Work tools**. These tools use the existing theme and start only when you choose an operation.
+
+| Tool | What you can do |
+| --- | --- |
+| **Working sessions** | Save selected supported app windows and their layout. Preview a restore, reuse a verified window or open a missing app, and check each result. Ambiguous window matches require a fresh selection. |
+| **Files** | Choose up to 50 local files, preview renames or moves on the same volume, and apply them without overwriting another file. Checked undo refuses a file that changed after the move. |
+| **Projects** | Index a folder you select, search its text locally, and inspect source paths and line references. A separate button sends only the displayed excerpts and question to Gemini for a cited answer. |
+| **Selected content** | Ask about text you paste or explicitly share from a companion. Review the text before sending it to Gemini. Generated answers do not edit the source. |
+| **Schedules** | Save once, daily or weekly reminders and briefings. Notifications work while Olanga is open or in the tray. Missed occurrences are grouped once; online briefing additions require their own opt-in. |
+| **Calendar** | Import an `.ics` snapshot of upcoming one-off events, add a preparation reminder, or explicitly ask Gemini for a checklist. Recurrence rules and live account synchronization are not supported. |
+| **Browser & editor** | Pair the optional companions to share selected text, save chosen tabs or documents, restore them after review, and review version-checked edits or existing VS Code tasks. [Companion setup](extensions/README.md). |
+| **Conversation** | Ask a model running on a loopback server, use a separately configured local speech server, or explicitly start Gemini Live conversation. These optional answer paths do not execute desktop tools. |
+| **MCP tools** | Connect a trusted HTTPS MCP endpoint, inspect its tool schema, and approve the exact arguments for each call. Credentials stay in memory. OAuth and local command servers are not supported. |
+| **Phone remote** | Start a temporary HTTPS session, pair a phone, and send a single app, volume or timer command. Setup requires a local TLS certificate and phone trust; access can be revoked immediately. [Phone setup](docs/PHONE_REMOTE.md). |
+
+**Workspace** is the main button in the top bar. The request card shows progress, completed steps and cancellation.
+
+Project indexes stay in memory and require an explicit refresh after restart. Indexing is bounded to 400 text files and 8 MB; hidden files, common credential filenames and generated folders are excluded. Review the excerpts before sharing: filename filters cannot identify every secret. Window sessions save app layouts; browser tabs and editor documents use their separate companion sessions.
+
+Local conversation requires an OpenAI-compatible chat endpoint on this computer; local speech requires a compatible WAV speech endpoint. Gemini Live is an optional preview with a ten-minute session limit and needs a supported model, API access, and an already enabled microphone. Opening Work tools never starts microphone capture or an external connection. Physical microphone, mobile-browser and live companion compatibility still need validation on the devices you intend to use.
 
 ## Optional on-device speech
 
@@ -159,6 +190,9 @@ For supported full-field text replacements, the result includes **Before**, **Af
 | **NVIDIA Magpie — optional** | Response text for cloud speech synthesis when selected. |
 | **Google News (RSS)** | Headlines for the News panel and spoken briefings, using your saved location. |
 | **Windows voice and native controls** | Local acknowledgment/speech, supported app and media actions, approved desktop input and timer notifications. |
+| **Optional local model/speech server** | Explicit questions or answer text sent only to a configured loopback endpoint on this computer. |
+| **Optional Gemini Live** | Microphone audio sent during an explicitly started Live session; stopping, muting or losing the microphone ends the session. |
+| **Optional companions and MCP** | Only content or calls you explicitly share or approve. Companion pairing is local; an MCP call goes to the server you configure. |
 
 API keys are encrypted locally with Windows-backed credential protection. Gemini requests retrieve saved credentials in the main process, with bounded requests, cancellation and redacted error reporting. Conversation context, desktop captures, plans and temporary undo checkpoints stay in memory. The separate Windows Snipping Tool used for selected-area diagnosis may retain captures according to its own settings.
 
@@ -180,9 +214,11 @@ Gemini **3.5 Flash-Lite** handles transcription, routing and responses; **3.5 Fl
 
 Use **Workspace → Apps & updates → Check for updates** to compare your version with the latest stable GitHub release. Choose **Download update** to download it inside Olanga, with progress and cancellation. Once the download is verified, **Install & restart** updates the existing installation and reopens Olanga, preserving your settings and saved data. Checks, downloads and installation happen only when you choose them; nothing installs on ordinary quit.
 
-Olanga verifies the downloaded installer's SHA-256 against the release checksum and checks the file again before installation. The release also records its signing status. A matching checksum confirms file bytes, not publisher identity; releases without a configured Windows certificate remain unsigned. Automatic updates and rollback remain disabled.
+Olanga verifies the downloaded installer's SHA-256 against the release checksum and checks the file again before installation. An explicit update check can recover a complete cached installer after a restart, using fresh release metadata and a new hash check. Interrupted partial downloads restart when you choose Download again.
 
-Versions through 1.4.0 have a release-page link only. Install 1.4.1 once from [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases) to get the in-app update flow for future versions.
+The 1.5.0 installer is **unsigned**. A checksum confirms file bytes, not publisher identity. Signing support is prepared for a future publisher certificate. Automatic updates and automatic rollback remain disabled.
+
+Versions through 1.4.0 have a release-page link only. Install 1.5.0 from [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.5.0) to get the in-app update flow for future versions.
 
 ## Run from source
 
@@ -195,7 +231,7 @@ npm ci
 npm start
 ```
 
-See [validation](docs/VALIDATION.md) for reproducible checks and measured coverage, and [architecture](docs/ARCHITECTURE.md) for the native and provider boundaries.
+See [validation](docs/VALIDATION.md) for reproducible checks and measured coverage, [architecture](docs/ARCHITECTURE.md) for the native and provider boundaries, and the [maintainer release guide](docs/RELEASING.md) for packaging and publication.
 
 ---
 
@@ -215,4 +251,4 @@ See [validation](docs/VALIDATION.md) for reproducible checks and measured covera
 
 ---
 
-[Architecture](docs/ARCHITECTURE.md) · [Validation](docs/VALIDATION.md) · [MIT license](LICENSE)
+[Release notes](docs/releases/1.5.0.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](docs/VALIDATION.md) · [MIT license](LICENSE)

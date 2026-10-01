@@ -17,7 +17,7 @@ function normalizeMediaRequest(payload) {
   return request;
 }
 
-function createMediaController({ spawnProcess = spawn, platform = process.platform, timeoutMs = 22000 } = {}) {
+function createMediaController({ spawnProcess = spawn, platform = process.platform, timeoutMs } = {}) {
   let child = null;
   let pending = null;
   let sequence = 0;
@@ -70,7 +70,11 @@ function createMediaController({ spawnProcess = spawn, platform = process.platfo
     const disconnected = () => { if (child === worker) stop('Windows media control disconnected.'); };
     worker.on('error', disconnected);
     worker.on('exit', disconnected);
+    worker.on('close', disconnected);
     worker.stdin.on('error', disconnected);
+    worker.stdout.on('error', disconnected);
+    worker.stderr.on('error', disconnected);
+    worker.stdout.on('end', disconnected);
   }
   return {
     async execute(payload) {
@@ -81,7 +85,11 @@ function createMediaController({ spawnProcess = spawn, platform = process.platfo
       connect();
       return new Promise((resolve, reject) => {
         const id = ++sequence;
-        const timer = setTimeout(() => stop('Windows media control took too long to respond. The requested change could not be verified.'), timeoutMs);
+        // Spotify may need to launch and publish a media session before an
+        // explicit resume can be verified. Other media actions keep their
+        // existing deadline; a caller-supplied deadline still wins.
+        const budget = timeoutMs ?? (request.action === 'PLAY' && request.spotifyOnly ? 35000 : 22000);
+        const timer = setTimeout(() => stop('Windows media control took too long to respond. The requested change could not be verified.'), budget);
         pending = { id, timer, resolve, reject };
         try { child.stdin.write(JSON.stringify({ ...request, id }) + '\n'); }
         catch { stop('Windows media control disconnected.'); }

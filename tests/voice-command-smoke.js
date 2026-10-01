@@ -7,11 +7,13 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { observeMediaControllerFactory } = require('./helpers/media-smoke-observer');
+const { playbackState, restoreSpotifyPlayback } = require('./helpers/spotify-smoke-state');
 
-const command = 'Open Spotify and raise the volume to 75%';
+const playSpotify = process.argv.includes('--play-spotify');
+const command = playSpotify ? 'Play Spotify and raise the volume to 75%' : 'Open Spotify and raise the volume to 75%';
 const liveAudio = process.argv.includes('--live-audio');
 const output = path.resolve(__dirname, '../build/qa');
-const basename = liveAudio ? 'voice-command-audio-smoke' : 'voice-command-smoke';
+const basename = `${playSpotify ? 'spotify-resume' : 'voice-command'}${liveAudio ? '-audio' : ''}-smoke`;
 const reportPath = path.join(output, `${basename}.json`);
 const screenshotPath = path.join(output, `${basename}.png`);
 const normalProfile = path.join(app.getPath('appData'), 'olanga-control');
@@ -38,6 +40,8 @@ const saveReport = () => fs.writeFileSync(reportPath, JSON.stringify(report, nul
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 let main;
 let originalVolume;
+let originalPlayback;
+let assistantCommandStarted = false;
 let cleanupFinished = false;
 let verificationAborted = false;
 let credentialSetupError;
@@ -70,7 +74,7 @@ $volumeSamplerReads = 0
 $volumeSamplerReleased = 0
 $volumeSamplerReason = 'deadline'
 try {
-  while ($volumeSamplerWatch.ElapsedMilliseconds -lt 55000) {
+  while ($volumeSamplerWatch.ElapsedMilliseconds -lt 240000) {
     if ([IO.File]::Exists(${quote(stopPath)})) { $volumeSamplerReason = 'requested'; break }
     $volumeSamplerParent.Refresh()
     if ($volumeSamplerParent.HasExited) { $volumeSamplerReason = 'parent-exited'; break }
@@ -280,6 +284,7 @@ function installRendererObservers() {
   };
   const acknowledge = speakAssistantAcknowledgement;
   speakAssistantAcknowledgement = function (text, signal) {
+    data.acknowledgementText = text;
     event('acknowledgement-called', { text });
     return acknowledge(text, signal).then(completed => {
       event('acknowledgement-settled', { completed });
@@ -303,15 +308,15 @@ function installRendererObservers() {
     }
   };
   const respond = speakResponse;
-  speakResponse = function (text) {
+  speakResponse = function (text, options) {
     event('final-response-called', { text });
     data.finalText = text;
-    return respond(text);
+    return respond(text, options);
   };
   const nativeSpeak = synthesis.speak.bind(synthesis);
   synthesis.speak = function (utterance) {
     const speech = {
-      role: utterance.text === 'On it.' ? 'acknowledgement' : 'final', text: utterance.text,
+      role: utterance.text === data.acknowledgementText && !data.speeches.some(item => item.role === 'acknowledgement') ? 'acknowledgement' : 'final', text: utterance.text,
       queuedAt: performance.now(), voice: utterance.voice?.name || 'platform default',
       lang: utterance.lang, volume: utterance.volume,
     };
@@ -384,6 +389,12 @@ async function runVerification() {
   assertVerificationActive();
   report.originalVolume = originalVolume;
   check('Original system volume and mute state read', originalVolume.ok && originalVolume.verified && Number.isFinite(originalVolume.volume) && typeof originalVolume.muted === 'boolean', originalVolume);
+  if (playSpotify) {
+    originalPlayback = await main.webContents.executeJavaScript(`window.electronAPI.mediaControl('MEDIA_STATUS', true)`);
+    assertVerificationActive();
+    report.originalPlayback = originalPlayback;
+    check('Original Spotify playback state is confirmed before any action', playbackState(originalPlayback) !== 'unknown', originalPlayback);
+  }
   volumePhase = 'baseline';
   await startVolumeSampler();
   assertVerificationActive();
@@ -392,6 +403,7 @@ async function runVerification() {
   report.voice = await main.webContents.executeJavaScript(`(${installRendererObservers.toString()})()`);
   assertVerificationActive();
   volumePhase = 'assistant-request';
+  assistantCommandStarted = true;
   await main.webContents.executeJavaScript(`void window.__voiceCommandSmoke.start(${JSON.stringify(command)}, ${JSON.stringify(wavBase64)});`, true);
   assertVerificationActive();
   for (;;) {
@@ -419,18 +431,24 @@ async function runVerification() {
     finalSpeechEndedMs: finalSpeech?.endedAt - turn.startedAt,
   };
   check('Acknowledgement called within 100ms', ack && ack.at - turn.startedAt <= 100, report.timings);
-  check('Both ordered actions executed', turn.actions.length === 2 && /^\[OPEN_APP: spotify\]$/i.test(turn.actions[0].command) && turn.actions[1].command === '[VOLUME_SET: 75]', turn.actions);
+  check('Both ordered actions executed', turn.actions.length === 2 && (playSpotify ? turn.actions[0].command === '[MEDIA_PLAY]' : /^\[OPEN_APP: spotify\]$/i.test(turn.actions[0].command)) && turn.actions[1].command === '[VOLUME_SET: 75]', turn.actions);
   check('Acknowledgement queued before app launch', ackSpeech && ack.at <= ackSpeech.queuedAt && ackSpeech.queuedAt <= turn.actions[0].startedAt);
   check('Both actions returned verified native receipts', turn.actions.every(action => action.results?.length === 1 && action.results[0].ok === true && action.results[0].verified === true), turn.actions);
   const spotify = turn.actions[0].results[0];
-  check('Spotify window receipt includes its process ID', spotify.source === 'spotify' && Number.isInteger(spotify.processId) && spotify.processId > 0, spotify);
+  if (playSpotify) {
+    check('Spotify playback is verified with a playing track, not just an opened window', spotify.source === 'spotify' && spotify.status === 'Playing' && typeof spotify.title === 'string' && !!spotify.title.trim(), spotify);
+    report.playbackReadback = await main.webContents.executeJavaScript(`window.electronAPI.mediaControl('MEDIA_STATUS', true)`);
+    assertVerificationActive();
+    check('Fresh Spotify session readback confirms a track is still playing', playbackState(report.playbackReadback) === 'playing', report.playbackReadback);
+    report.trackChangedDuringTurn = report.playbackReadback.title !== spotify.title;
+  } else check('Spotify window receipt includes its process ID', spotify.source === 'spotify' && Number.isInteger(spotify.processId) && spotify.processId > 0, spotify);
   check('Windows acknowledgement actually started and ended', ackSpeech?.startedAt && ackSpeech?.endedAt && !ackSpeech.error, ackSpeech);
   // The production onend handler resolves its promise before this smoke's
   // later end listener runs. Promise settlement proves semantic completion;
   // native speech start/end events separately prove the audio did not overlap.
   check('Final response waited for acknowledgement completion and all actions', finalCall && ackSettled && finalCall.at >= ackSettled.at && turn.actions.every(action => finalCall.at >= action.completedAt));
   check('Final audio started after acknowledgement audio ended', finalSpeech?.startedAt >= ackSpeech.endedAt);
-  check('Final response includes both concrete outcomes', /spotify/i.test(turn.finalText) && /75\s*%/.test(turn.finalText), turn.finalText);
+  check('Final response includes both concrete outcomes', (playSpotify ? /playing|resumed/i.test(turn.finalText) : /spotify/i.test(turn.finalText)) && /75\s*%/.test(turn.finalText), turn.finalText);
   check('Final Windows speech actually started and ended without interruption', finalSpeech?.startedAt && finalSpeech?.endedAt && !finalSpeech.error && turn.speeches.length === 2, turn.speeches);
   const volumeCommands = report.nativeMediaCommands.filter(entry => entry.phase === 'assistant-request' && entry.command.action.startsWith('VOLUME_') && entry.command.action !== 'VOLUME_STATUS');
   check('Native helper received exactly one volume change during the assistant turn', volumeCommands.length === 1 && volumeCommands[0].command.action === 'VOLUME_SET' && volumeCommands[0].command.level === 75, volumeCommands);
@@ -466,10 +484,13 @@ async function runVerification() {
 
 async function restoreVolume() {
   volumePhase = 'restoration';
-  if (!main || main.isDestroyed()) return;
+  if (!main || main.isDestroyed()) {
+    if (assistantCommandStarted) throw new Error('The test window closed before system volume could be restored.');
+    return;
+  }
   await main.webContents.executeJavaScript(`cancelAssistantRequest(); apiKey = ''; apiKeys = []; void 0;`);
   if (liveAudio) await main.webContents.executeJavaScript(`window.electronAPI.secureStoreSet('gemini_api_keys', null)`);
-  if (!originalVolume?.ok || !originalVolume.verified) return;
+  if (!assistantCommandStarted || !originalVolume?.ok || !originalVolume.verified) return;
   report.restoration.attempted = true;
   report.restoration.set = await main.webContents.executeJavaScript(`window.electronAPI.mediaControl('VOLUME_SET', false, ${JSON.stringify(originalVolume.volume)})`);
   let status = await main.webContents.executeJavaScript(`window.electronAPI.mediaControl('VOLUME_STATUS')`);
@@ -481,9 +502,23 @@ async function restoreVolume() {
   check('Original system volume and mute state restored', status.ok && status.verified && Math.abs(status.volume - originalVolume.volume) <= 0.5 && status.muted === originalVolume.muted, status);
 }
 
+async function restorePlayback() {
+  if (!playSpotify) return;
+  if (!main || main.isDestroyed()) {
+    if (assistantCommandStarted && playbackState(originalPlayback) === 'not-playing') throw new Error('The test window closed before Spotify playback could be restored.');
+    return;
+  }
+  report.playbackRestoration = await restoreSpotifyPlayback({
+    baseline: originalPlayback, commandStarted: assistantCommandStarted, settleMs: 5000,
+    control: action => main.webContents.executeJavaScript(`window.electronAPI.mediaControl(${JSON.stringify(action)}, true)`),
+  });
+  if (assistantCommandStarted && playbackState(originalPlayback) === 'not-playing')
+    check('Test playback stopped when Spotify was not originally playing', report.playbackRestoration.verified, report.playbackRestoration);
+}
+
 saveReport();
-const hardTimeout = setTimeout(() => {
-  report.error ||= 'Live smoke exceeded its 60-second deadline.';
+function exitOnDeadline(message) {
+  report.error ||= message;
   report.passed = false;
   report.cleanupFinished = cleanupFinished;
   report.finishedAt = new Date().toISOString();
@@ -492,7 +527,8 @@ const hardTimeout = setTimeout(() => {
   saveReport();
   console.error(`Voice command smoke timed out. Report: ${reportPath}`);
   app.exit(1);
-}, 60000);
+}
+let hardTimeout = setTimeout(() => exitOnDeadline('Live smoke exceeded its startup/verification deadline.'), 60000);
 hardTimeout.unref();
 
 const stopObservingFactory = observeMediaControllerFactory(require('../desktop/media-controller'), spawn, command => {
@@ -520,6 +556,16 @@ app.whenReady().then(async () => {
     // Fence the losing verification promise before cancelling its production
     // request, so no delayed await can dispatch another action during cleanup.
     verificationAborted = true;
+    // Cleanup gets a separate bounded budget for sequential native calls;
+    // it must not inherit only the tail of the verification deadline.
+    clearTimeout(hardTimeout);
+    hardTimeout = setTimeout(() => exitOnDeadline('Live smoke cleanup exceeded 180 seconds; restoration is incomplete.'), 180000);
+    hardTimeout.unref();
+    try { if (main && !main.isDestroyed()) await main.webContents.executeJavaScript('cancelAssistantRequest(); void 0'); } catch (_) { /* Both restoration paths still run. */ }
+    try { await restorePlayback(); } catch (error) {
+      report.playbackRestorationError = redact(error.message);
+      report.passed = false;
+    }
     try { await restoreVolume(); } catch (error) {
       report.restoration.error = redact(error.message);
       report.passed = false;

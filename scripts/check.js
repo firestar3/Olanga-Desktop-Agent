@@ -10,10 +10,11 @@ const required = ['main.js', 'preload.js', 'index.html', 'styles.css', 'desktop-
 for (const file of required) {
   if (!fs.existsSync(path.join(root, file))) throw new Error('Missing application asset: ' + file);
 }
-for (const file of ['status-indicator.js', 'status-indicator.css', 'desktop-workflows.css', 'desktop/**/*']) {
+for (const file of ['status-indicator.js', 'status-indicator.css', 'desktop-workflows.css', 'desktop/**/*', 'extensions/**/*', 'docs/PHONE_REMOTE.md']) {
   if (!pkg.build.files.includes(file)) throw new Error('Missing packaged asset: ' + file);
 }
 if (!pkg.build.asarUnpack.includes('desktop/*.ps1')) throw new Error('Native helper must be outside ASAR');
+if (!pkg.build.extraResources.some(item => item.from === 'extensions' && item.to === 'extensions')) throw new Error('Companions must be accessible outside ASAR for installation');
 const modelHeader = Buffer.alloc(2);
 const modelFile = fs.openSync(path.join(root, 'vosk-model-v2.tar.gz'), 'r');
 fs.readSync(modelFile, modelHeader, 0, 2, 0);
@@ -33,5 +34,5 @@ function checkFile(file) {
   count++;
 }
 for (const file of ['main.js', 'preload.js', 'status-indicator.js', 'status-indicator-preload.js']) checkFile(file);
-for (const dir of ['js', 'shared', 'desktop']) checkDirectory(dir);
+for (const dir of ['js', 'shared', 'desktop', 'extensions']) checkDirectory(dir);
 console.log('Checked ' + count + ' JavaScript files, release version and installer assets.');

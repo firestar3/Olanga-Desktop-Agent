@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Olanga · Phone control</title>
+  <link rel="stylesheet" href="/phone-client.css">
+</head>
+<body>
+  <main>
+    <header><span class="orb" aria-hidden="true"></span><div><h1>Olanga</h1><p>Phone control</p></div></header>
+    <p id="status" role="status" aria-live="polite">Checking this phone’s session…</p>
+    <section id="pairing">
+      <h2>Pair with your computer</h2>
+      <p>Open Work tools → Phone remote in Olanga. Check that the HTTPS certificate fingerprint matches the one shown there before trusting this connection.</p>
+      <form id="pairForm">
+        <label for="code">Six-digit pairing code</label>
+        <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+        <button type="submit">Pair this phone</button>
+      </form>
+      <p class="help">The code works once and expires in five minutes. Five incorrect attempts lock pairing until you restart phone control on the computer.</p>
+    </section>
+    <section id="controls" hidden>
+      <h2>Ask Olanga</h2>
+      <p>Send one app launch, volume change, or timer. Olanga shows the result after the action finishes.</p>
+      <form id="commandForm">
+        <label for="command">Command</label>
+        <textarea id="command" name="command" rows="3" maxlength="300" placeholder="Set volume to 30 percent" required></textarea>
+        <div class="actions"><button id="send" type="submit">Send command</button><button id="dictate" type="button" class="secondary">Dictate</button></div>
+      </form>
+      <p id="dictationHelp" class="help">Typing is the default. Dictation uses your phone browser’s speech service, which may send microphone audio to its provider. Review the transcript, then press Send command. Your keyboard’s dictation also works.</p>
+      <div class="examples" aria-label="Example commands"><button type="button" data-example="Open Spotify">Open Spotify</button><button type="button" data-example="Set volume to 30 percent">Volume 30%</button><button type="button" data-example="Set a timer for 5 minutes">5-minute timer</button></div>
+      <p id="result" aria-live="polite"></p>
+      <button id="retry" type="button" class="secondary" hidden>Check the same request again</button>
+      <p id="expiry" class="help"></p>
+      <button id="disconnect" type="button" class="secondary">Unpair this phone</button>
+      <p class="help">Phone control cannot run shell commands, close apps, browse files, or call a model. Stop it from Olanga whenever you’re done. It stops automatically after one hour.</p>
+    </section>
+    <noscript>This remote needs JavaScript to pair and send reviewed commands.</noscript>
+  </main>
+  <script src="/phone-client.js"></script>
+</body>
+</html>

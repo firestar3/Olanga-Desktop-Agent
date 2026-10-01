@@ -1,13 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
 const { observeMediaControllerFactory } = require('../helpers/media-smoke-observer');
 const { createMediaController } = require('../../desktop/media-controller');
 
 for (const failObservation of [false, true]) test(`native smoke observation preserves helper behavior${failObservation ? ' when reporting throws' : ''}`, async () => {
   const media = { createMediaController };
   const sent = [], observed = [];
-  const worker = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: { resume() {} }, stdin: new EventEmitter(), kill() {} });
+  const worker = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new PassThrough(), stdin: new EventEmitter(), kill() {} });
   worker.stdout.setEncoding = () => {};
   worker.stdin.write = function (text) {
     assert.equal(this, worker.stdin);

@@ -1394,6 +1394,12 @@ trustedMainIpc.handle('provider-status', () => {
 });
 app.on('before-quit', () => providerService.dispose());
 
+require('./desktop/workbench').registerWorkbench({
+  ipc: trustedMainIpc, app, dialog, shell, getWindow: () => mainWindow,
+  appController, fetchImpl: providerFetch,
+  getGeminiKey: () => getGeminiProviderCredentials().keys[0] || ''
+});
+
 trustedMainIpc.handle('secure-store-get', async (event, key) => {
   validateStoreKey(key);
   const storePath = getSecureStorePath();

@@ -3,6 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { Readable } = require('node:stream');
 const { RELEASES_URL, MAX_INSTALLER_BYTES, MAX_CHECKSUM_BYTES, compareVersions, parseVersion } = require('./release-service');
+const { normalizeThumbprint, configuredPublisher, verifyInstallerSignature, validateInstallerSignature } = require('./signing-policy');
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const DOWNLOAD_HOSTS = new Set(['release-assets.githubusercontent.com', 'objects.githubusercontent.com']);
@@ -173,9 +174,12 @@ function createManualUpdater({
   canInstall: installationSupported = true,
   timeoutMs = 15 * 60 * 1000,
   idleTimeoutMs = 30 * 1000,
+  expectedPublisherThumbprint = configuredPublisher(),
+  verifySignature = verifyInstallerSignature,
 } = {}) {
   if (!releaseService || !path.isAbsolute(updatesDir || '')) throw new Error('Manual updater requires a release service and absolute updates directory.');
   const root = path.resolve(updatesDir);
+  const publisher = normalizeThumbprint(expectedPublisherThumbprint);
   let candidate = null, ready = null, active = null, disposed = false;
   let state = {
     ok: true, phase: 'idle', status: 'not-checked', installedVersion: String(getInstalledVersion()),
@@ -207,9 +211,78 @@ function createManualUpdater({
     // Only this instance's mkdtemp directory is removed, never the updates root.
     await fs.promises.rm(resolved, { recursive: true, force: true }).catch(() => {});
   }
+  async function checkedDirectory(directory) {
+    const stat = await fs.promises.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('invalid-update-path');
+    return fs.promises.realpath(directory);
+  }
+  async function expectedChecksum(release, signal) {
+    const response = await fetchAsset(fetchImpl, release.checksums, signal, idleTimeoutMs);
+    const chunks = [];
+    await readAsset(response, release.checksums, signal, idleTimeoutMs, chunk => chunks.push(Buffer.from(chunk)));
+    const hash = parseChecksum(Buffer.concat(chunks).toString('utf8'), release.installer.name);
+    if (release.installer.sha256 && hash !== release.installer.sha256) throw new Error('checksum-mismatch');
+    return hash;
+  }
+  async function cacheReadyFile(file, release) {
+    const record = { schema: 1, complete: true, release, hash: file.hash };
+    const metadata = path.join(file.directory, 'cache.json');
+    const serialized = JSON.stringify(record);
+    if (Buffer.byteLength(serialized) > 8192) throw new Error('invalid-download');
+    await fs.promises.writeFile(metadata + '.part', serialized, { flag: 'wx', mode: 0o600 });
+    await fs.promises.rename(metadata + '.part', metadata);
+  }
+  async function verifyPublisher(filePath) {
+    if (!publisher) return false;
+    try { return validateInstallerSignature(await verifySignature(filePath), publisher); }
+    catch (_) { throw new Error('publisher-unverified'); }
+  }
+  async function recoverCachedFile(release, signal) {
+    // Discovery happens only during an explicit Check, after fresh release
+    // metadata. Cache metadata is an index, never authority for executable bytes.
+    let entries;
+    try { await checkedDirectory(root); entries = await fs.promises.opendir(root); } catch (_) { return null; }
+    const directories = [];
+    let scanned = 0;
+    for await (const entry of entries) {
+      if (++scanned > 64) break;
+      if (entry.isDirectory() && entry.name.startsWith(`update-${release.version}-`) && /^update-.+-[a-z\d]{6}$/i.test(entry.name)) directories.push(path.join(root, entry.name));
+      if (directories.length >= 8) break;
+    }
+    let hash = null;
+    for (const directory of directories) {
+      if (signal.aborted || disposed) return null;
+      try {
+        const realRoot = await checkedDirectory(root), realDirectory = await checkedDirectory(directory);
+        if (path.dirname(realDirectory) !== realRoot) continue;
+        const metadataPath = path.join(directory, 'cache.json'), stat = await fs.promises.lstat(metadataPath);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8192 || stat.size < 2) continue;
+        const handle = await fs.promises.open(metadataPath, 'r');
+        let content;
+        try {
+          const current = await handle.stat(); if (!current.isFile() || current.size !== stat.size || current.ino !== stat.ino) continue;
+          const buffer = Buffer.alloc(8193), read = await handle.read(buffer, 0, buffer.length, 0);
+          if (read.bytesRead > 8192 || read.bytesRead !== stat.size) continue;
+          content = buffer.subarray(0, read.bytesRead).toString('utf8');
+        }
+        finally { await handle.close(); }
+        if (Buffer.byteLength(content) > 8192) continue;
+        const record = JSON.parse(content);
+        if (record.schema !== 1 || record.complete !== true || !sameCandidate(record.release, release) || !/^[a-f\d]{64}$/.test(record.hash)) continue;
+        // Even when GitHub supplies a digest, refresh the published manifest so
+        // old or edited local metadata cannot invent the expected hash.
+        if (!hash) hash = await expectedChecksum(release, signal);
+        if (record.hash !== hash) continue;
+        const file = { directory, filePath: path.join(directory, release.installer.name), hash, size: release.installer.size, version: release.version };
+        await verifyReadyFile(file, signal);
+        return file;
+      } catch (_) { /* Damaged, incomplete, or stale caches cannot become ready. */ }
+    }
+    return null;
+  }
   async function cleanAbandonedDownloads() {
-    // This is called only by an explicit Download. A previous session may have
-    // closed after downloading; its unremembered files should not accumulate.
+    // Explicit Download removes abandoned partials. Complete indexed downloads
+    // are preserved for explicit Check to verify after a restart.
     const entries = await fs.promises.readdir(root, { withFileTypes: true });
     for (const entry of entries) {
       const match = /^update-(.+)-[a-z\d]{6}$/i.exec(entry.name);
@@ -218,7 +291,7 @@ function createManualUpdater({
       if (ready?.directory === directory) continue;
       const names = await fs.promises.readdir(directory).catch(() => null);
       const expected = `Olanga-Setup-${match[1]}.exe`;
-      if (names && names.every(name => name === expected || name === expected + '.part')) await removeOwnedDirectory(directory);
+      if (names && !names.includes('cache.json') && names.every(name => name === expected || name === expected + '.part' || name === 'cache.json.part')) await removeOwnedDirectory(directory);
     }
   }
   function run(kind, work) {
@@ -249,7 +322,7 @@ function createManualUpdater({
 
   function check({ force = true } = {}) {
     if (state.phase === 'installing') return Promise.resolve(getState());
-    return run('check', async () => {
+    return run('check', async operation => {
       const oldCandidate = candidate;
       publish({ phase: 'checking', message: 'Checking GitHub for the latest stable release…' });
       try {
@@ -265,16 +338,24 @@ function createManualUpdater({
         }
         const proposed = result.ok && result.updateAvailable ? releaseService.getDownloadCandidate() : null;
         candidate = proposed && validCandidate(proposed) ? proposed : null;
-        const keepReady = ready && sameCandidate(oldCandidate, candidate);
+        let keepReady = ready && sameCandidate(oldCandidate, candidate);
         if (ready && !keepReady) { await removeOwnedDirectory(ready.directory); ready = null; }
+        if (!ready && candidate) {
+          ready = await recoverCachedFile(candidate, operation.controller.signal);
+          keepReady = !!ready;
+        }
         return publish({
           ...result, phase: keepReady ? 'ready' : result.ok ? 'available' : 'error',
           downloaded: !!keepReady, assetVerification: keepReady ? 'sha256-verified' : 'not-performed',
-          signingVerified: false, bytesReceived: keepReady ? candidate.installer.size : 0,
+          signingVerified: !!(keepReady && ready.signingVerified), bytesReceived: keepReady ? candidate.installer.size : 0,
           totalBytes: candidate?.installer.size || 0, progress: keepReady ? 100 : 0,
           ...(keepReady ? { message: `Olanga ${candidate.version} is downloaded and its SHA-256 checksum is verified. Install & restart when you are ready.` } : {}),
         });
       } catch {
+        if (ready && oldCandidate) {
+          candidate = oldCandidate;
+          return publish({ ok: false, phase: 'ready', message: `Olanga could not check for updates. The verified Olanga ${ready.version} download is still ready to install.` });
+        }
         candidate = null;
         if (ready) { await removeOwnedDirectory(ready.directory); ready = null; }
         return publish({ ok: false, phase: 'error', downloaded: false, assetVerification: 'not-performed', message: 'Olanga could not validate the update. Check again or open GitHub Releases.' });
@@ -289,16 +370,13 @@ function createManualUpdater({
       const signal = operation.controller.signal;
       let directory = null, handle = null;
       const timer = setTimeout(() => operation.controller.abort('timeout'), timeoutMs);
-      publish({ ok: true, phase: 'downloading', message: `Downloading Olanga ${release.version}…`, downloaded: false, assetVerification: 'not-performed', bytesReceived: 0, totalBytes: release.installer.size, progress: 0 });
+      publish({ ok: true, phase: 'downloading', message: `Downloading Olanga ${release.version}…`, downloaded: false, assetVerification: 'not-performed', signingVerified: false, bytesReceived: 0, totalBytes: release.installer.size, progress: 0 });
       try {
         if (!validCandidate(release)) throw new Error('untrusted-download');
-        const checksumResponse = await fetchAsset(fetchImpl, release.checksums, signal, idleTimeoutMs);
-        const checksumChunks = [];
-        await readAsset(checksumResponse, release.checksums, signal, idleTimeoutMs, chunk => checksumChunks.push(Buffer.from(chunk)));
-        const expectedHash = parseChecksum(Buffer.concat(checksumChunks).toString('utf8'), release.installer.name);
-        if (release.installer.sha256 && expectedHash !== release.installer.sha256) throw new Error('checksum-mismatch');
+        const expectedHash = await expectedChecksum(release, signal);
         if (signal.aborted) throw new Error('cancelled');
         await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+        await checkedDirectory(root);
         await cleanAbandonedDownloads();
         if (signal.aborted) throw new Error('cancelled');
         directory = await fs.promises.mkdtemp(path.join(root, `update-${release.version}-`));
@@ -327,18 +405,24 @@ function createManualUpdater({
         if (signal.aborted) throw new Error('cancelled');
         await fs.promises.rename(partialPath, filePath);
         if (signal.aborted) throw new Error('cancelled');
-        ready = { directory, filePath, hash: expectedHash, size: release.installer.size, version: release.version };
+        const completed = { directory, filePath, hash: expectedHash, size: release.installer.size, version: release.version, signingVerified: false };
+        completed.signingVerified = await verifyPublisher(filePath);
+        if (signal.aborted) throw new Error('cancelled');
+        await cacheReadyFile(completed, release);
+        if (signal.aborted) throw new Error('cancelled');
+        ready = completed;
         directory = null;
-        return publish({ ok: true, phase: 'ready', downloaded: true, assetVerification: 'sha256-verified', progress: 100, bytesReceived: release.installer.size, message: `Olanga ${release.version} is downloaded and its SHA-256 checksum is verified. Install & restart when you are ready.` });
+        return publish({ ok: true, phase: 'ready', downloaded: true, assetVerification: 'sha256-verified', signingVerified: ready.signingVerified, progress: 100, bytesReceived: release.installer.size, message: `Olanga ${release.version} is downloaded and its SHA-256 checksum is verified. Install & restart when you are ready.` });
       } catch (error) {
         const cancelled = signal.aborted && signal.reason !== 'timeout';
         const code = signal.reason === 'timeout' ? 'timeout' : error.message;
         const message = cancelled ? 'Download cancelled. You can download the update again when you are ready.'
           : code === 'checksum-mismatch' ? 'The installer did not match its published SHA-256 checksum. It was discarded; check again before retrying.'
+            : code === 'publisher-unverified' ? 'The installer signature could not be verified against the expected publisher. It was discarded; nothing was installed.'
             : code === 'timeout' ? 'The update download timed out. Try again when the connection is stable.'
               : ['invalid-checksums', 'untrusted-download', 'invalid-download', 'download-size'].includes(code) ? 'The update files could not be validated. Nothing was installed. Check again or open GitHub Releases.'
                 : 'Olanga could not download the update. Check your connection and free disk space, then try again.';
-        return publish({ ok: false, phase: cancelled ? 'cancelled' : 'error', downloaded: false, assetVerification: 'not-performed', message });
+        return publish({ ok: false, phase: cancelled ? 'cancelled' : 'error', downloaded: false, assetVerification: 'not-performed', signingVerified: false, message });
       } finally {
         clearTimeout(timer);
         operation.controller.abort();
@@ -348,20 +432,22 @@ function createManualUpdater({
     });
   }
 
-  async function verifyReadyFile(file) {
+  async function verifyReadyFile(file, signal) {
+    if (compareVersions(file.version, String(getInstalledVersion())) <= 0) throw new Error('stale-version');
     if (path.dirname(file.directory) !== root || path.dirname(file.filePath) !== file.directory || path.basename(file.filePath) !== `Olanga-Setup-${file.version}.exe`) throw new Error('invalid-update-path');
     const stat = await fs.promises.lstat(file.filePath);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== file.size) throw new Error('checksum-mismatch');
-    const [realRoot, realDirectory, realFile] = await Promise.all([fs.promises.realpath(root), fs.promises.realpath(file.directory), fs.promises.realpath(file.filePath)]);
+    const [realRoot, realDirectory, realFile] = await Promise.all([checkedDirectory(root), checkedDirectory(file.directory), fs.promises.realpath(file.filePath)]);
     if (path.dirname(realDirectory) !== realRoot || path.dirname(realFile) !== realDirectory) throw new Error('invalid-update-path');
     const hash = crypto.createHash('sha256');
-    let bytes = 0;
+    let bytes = 0; const deadline = Date.now() + timeoutMs;
     for await (const chunk of fs.createReadStream(file.filePath)) {
       bytes += chunk.length;
-      if (bytes > file.size || disposed) throw new Error('checksum-mismatch');
+      if (bytes > file.size || disposed || signal?.aborted || Date.now() > deadline) throw new Error('checksum-mismatch');
       hash.update(chunk);
     }
     if (bytes !== file.size || hash.digest('hex') !== file.hash) throw new Error('checksum-mismatch');
+    file.signingVerified = await verifyPublisher(file.filePath);
   }
 
   function install() {
@@ -370,10 +456,11 @@ function createManualUpdater({
       const file = ready;
       publish({ phase: 'verifying', message: 'Rechecking the installer before updating…' });
       try { await verifyReadyFile(file); }
-      catch {
+      catch (error) {
         ready = null;
         await removeOwnedDirectory(file.directory);
-        return publish({ ok: false, phase: 'error', downloaded: false, assetVerification: 'not-performed', message: 'The saved installer changed or is missing. Download the update again before installing.' });
+        return publish({ ok: false, phase: 'error', downloaded: false, assetVerification: 'not-performed', signingVerified: false,
+          message: error.message === 'publisher-unverified' ? 'The saved installer signature could not be verified against the expected publisher. Download the update again before installing.' : 'The saved installer changed or is missing. Download the update again before installing.' });
       }
       if (disposed) return getState();
       publish({ phase: 'installing', message: `Installing Olanga ${file.version}. Olanga will close and restart…` });
@@ -394,7 +481,7 @@ function createManualUpdater({
   }
   async function dispose() {
     disposed = true;
-    if (active?.kind === 'download') active.controller.abort('cancelled');
+    if (active) active.controller.abort('cancelled');
     if (active) await active.promise.catch(() => {});
   }
   return { check, getState, download, cancel, install, dispose };

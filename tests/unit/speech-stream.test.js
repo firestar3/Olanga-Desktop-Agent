@@ -21,8 +21,8 @@ function fixture({ engine = 'windows', synthesize = async () => ({ audioBase64: 
     context.__cancel = () => resolve(false);
     if (hold) pending.push(finish); else setImmediate(finish);
   });
-  vm.runInContext('speakWithWindowsTts = text => { const running = __spoken(text); cancelAssistantPlayback = () => __cancel(); return running; };', context);
-  context.playSpeechChunk = async blob => { played.push(blob); return true; };
+  vm.runInContext('speakWithWindowsTts = (text, callback, options) => { const running = __spoken(text); options?.onStart?.(); cancelAssistantPlayback = () => __cancel(); return running; };', context);
+  context.playSpeechChunk = async (blob, options) => { played.push(blob); options?.onStart?.(); return true; };
   return { context, spoken, played, states, pending };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));

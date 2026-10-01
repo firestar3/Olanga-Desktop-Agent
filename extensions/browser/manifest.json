@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Olanga Browser Companion",
+  "description": "Explicitly share selected text and tabs with Olanga, then review each requested browser action.",
+  "version": "0.1.0",
+  "permissions": ["activeTab", "scripting"],
+  "optional_permissions": ["tabs"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Open Olanga companion" },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:*" }
+}

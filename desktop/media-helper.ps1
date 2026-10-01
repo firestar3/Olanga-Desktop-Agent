@@ -126,6 +126,38 @@ function Open-Spotify {
     return @{ ok = $false; verified = $false; message = 'I sent the launch request, but Spotify did not show a window. Check that it is installed and can open.' }
 }
 
+function Wait-SpotifySession([int]$TimeoutMs = 5000) {
+    $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(1, [Math]::Min(5000, $TimeoutMs)))
+    $playInvoked = $false
+    do {
+        $session = Get-MediaSession $true
+        if ($session) { return @{ session = $session; playInvoked = $playInvoked } }
+        if (-not $playInvoked) {
+            # Spotify can expose its media session only after its first Play.
+            # Never choose a named search result or guess among Play buttons.
+            $control = $null
+            try {
+                $root = Get-SpotifyRoot
+                $candidates = @(Get-SpotifyButtons $root | Where-Object { $_.Current.Name -eq 'Play' })
+                if ($candidates.Count -gt 1) { return @{ session = $null; playInvoked = $false; ambiguous = $true } }
+                if ($candidates.Count -eq 1) {
+                    $identity = [string]::Join(',', $candidates[0].GetRuntimeId())
+                    $freshRoot = Get-SpotifyRoot
+                    $fresh = @(Get-SpotifyButtons $freshRoot | Where-Object { $_.Current.Name -eq 'Play' })
+                    if ($fresh.Count -eq 1 -and $identity -and $identity -eq [string]::Join(',', $fresh[0].GetRuntimeId())) { $control = $fresh[0] }
+                }
+            } catch { $control = $null } # A changing UI is re-observed before any action.
+            if ($control) {
+                # Do not retry this invocation, even if playback readback fails.
+                $playInvoked = $true
+                Invoke-SpotifyControl $control
+            }
+        }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return @{ session = $null; playInvoked = $playInvoked }
+}
+
 function Invoke-VolumeRequest($Request) {
     $audio = [OlangaSystemAudio]::new()
     try {
@@ -188,7 +220,8 @@ function Wait-Playback([bool]$SpotifyOnly, [string]$Expected, [string]$PreviousT
         $state = Get-MediaState $observed
         if ($Expected -eq 'TrackChanged') {
             if ($state.title -and $state.status -in @('Playing', 'Paused') -and ($state.title -ne $PreviousTitle -or $state.artist -ne $PreviousArtist)) { return $state }
-        } elseif ($state.status -eq $Expected -and (-not $PreviousTitle -or $state.title -ne $PreviousTitle)) { return $state }
+        } elseif ($state.status -eq $Expected -and (-not $PreviousTitle -or $state.title -ne $PreviousTitle) -and
+            (-not $SpotifyOnly -or $Expected -ne 'Playing' -or -not [string]::IsNullOrWhiteSpace($state.title))) { return $state }
         Start-Sleep -Milliseconds 120
     } while ([DateTime]::UtcNow -lt $deadline)
     return $null
@@ -239,6 +272,7 @@ function Play-SpotifyCollection($Request) {
 }
 
 function Invoke-MediaRequest($Request) {
+    $nativePlayInvoked = $false
     if ($Request.action -eq 'OPEN') { return Open-Spotify }
     if ($Request.action -in @('LIKED', 'SONG', 'ALBUM', 'PLAYLIST', 'ARTIST', 'LIBRARY')) { return Play-SpotifyCollection $Request }
     if ($Request.action -in @('VOLUME_SET', 'VOLUME_STATUS', 'VOLUME_UP', 'VOLUME_DOWN', 'VOLUME_MUTE', 'VOLUME_MUTE_ON', 'VOLUME_MUTE_OFF')) { return Invoke-VolumeRequest $Request }
@@ -254,22 +288,51 @@ function Invoke-MediaRequest($Request) {
             Start-Sleep -Milliseconds 150
         } while ([DateTime]::UtcNow -lt $deadline)
     } else { $session = Get-MediaSession ([bool]$Request.spotifyOnly) }
-    if (-not $session) { return @{ ok = $false; message = 'No active music player is available. Open Spotify, sign in, and choose a song first.' } }
+    if (-not $session -and $Request.action -eq 'PLAY' -and $Request.spotifyOnly -eq $true) {
+        # "Play Spotify" also works when the app is closed or has not yet
+        # published its media session. Opening a window is not playback proof.
+        $opened = Open-Spotify
+        if (-not $opened.ok) { return $opened }
+        $prepared = Wait-SpotifySession
+        $session = $prepared.session
+        $nativePlayInvoked = $prepared.playInvoked
+        if (-not $session) {
+            return @{ ok = $false; verified = $false; source = 'spotify'; message = 'Spotify is open, but it has no playable session yet. Sign in or choose a song in Spotify, then ask me to play it.' }
+        }
+    }
+    if (-not $session) {
+        $message = 'No active music player is available. Open Spotify, sign in, and choose a song first.'
+        if ($Request.action -eq 'STATUS') {
+            $source = if ($Request.spotifyOnly) { 'spotify' } else { 'media' }
+            return @{ ok = $false; verified = $true; status = 'Closed'; source = $source; reason = 'no-session'; message = $message }
+        }
+        return @{ ok = $false; message = $message }
+    }
+    if ($nativePlayInvoked) {
+        $confirmed = Wait-Playback $true 'Playing' '' $session
+        if (-not $confirmed) { return @{ ok = $false; verified = $false; source = 'spotify'; message = 'Spotify did not confirm playback after Play. Choose a song or check for a sign-in prompt in Spotify.' } }
+        return @{ ok = $true; verified = $true; message = 'Playing ' + $confirmed.title + '.'; title = $confirmed.title; artist = $confirmed.artist; status = $confirmed.status; source = 'spotify' }
+    }
     $state = Get-MediaState $session
     if ($Request.action -eq 'STATUS') {
         if (-not $state.title) { return @{ ok = $false; message = 'The player is not reporting a song right now.' } }
         $message = $state.title
         if ($state.artist) { $message += ' by ' + $state.artist }
         if ($state.status -eq 'Playing') { $message = 'Playing ' + $message + '.' } else { $message += ' is paused.' }
-        return @{ ok = $true; verified = $true; message = $message; title = $state.title; artist = $state.artist }
+        $source = if ($Request.spotifyOnly) { 'spotify' } else { 'media' }
+        return @{ ok = $true; verified = $true; message = $message; title = $state.title; artist = $state.artist; status = $state.status; source = $source }
     }
     $expected = 'Playing'
     $previousTitle = ''
     $previousArtist = ''
     if (($Request.action -eq 'PAUSE' -and $state.status -eq 'Paused') -or ($Request.action -eq 'PLAY' -and $state.status -eq 'Playing')) {
+        if ($Request.action -eq 'PLAY' -and $Request.spotifyOnly -eq $true -and [string]::IsNullOrWhiteSpace($state.title)) {
+            return @{ ok = $false; verified = $false; source = 'spotify'; message = 'Spotify is not reporting a playable song yet. Choose a song in Spotify, then ask me to play it.' }
+        }
         $message = 'Playback is already paused.'
         if ($state.status -eq 'Playing') { $message = 'Music is already playing.' }
-        return @{ ok = $true; verified = $true; message = $message; title = $state.title; artist = $state.artist }
+        $source = if ($Request.spotifyOnly) { 'spotify' } else { 'media' }
+        return @{ ok = $true; verified = $true; message = $message; title = $state.title; artist = $state.artist; status = $state.status; source = $source }
     }
     switch ($Request.action) {
         'PAUSE' { $operation = $session.TryPauseAsync(); $expected = 'Paused' }
@@ -287,7 +350,8 @@ function Invoke-MediaRequest($Request) {
     if ($expected -eq 'Paused') { $message = 'Playback paused.' }
     elseif ($confirmed.status -eq 'Paused') { $message = 'Selected ' + $confirmed.title + '. Playback is paused.' }
     elseif ($confirmed.title) { $message = 'Playing ' + $confirmed.title + '.' }
-    return @{ ok = $true; verified = $true; message = $message; title = $confirmed.title; artist = $confirmed.artist }
+    $source = if ($Request.spotifyOnly) { 'spotify' } else { 'media' }
+    return @{ ok = $true; verified = $true; message = $message; title = $confirmed.title; artist = $confirmed.artist; status = $confirmed.status; source = $source }
 }
 
 while ($null -ne ($line = [Console]::ReadLine())) {

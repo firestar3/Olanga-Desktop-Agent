@@ -210,7 +210,7 @@ function armSpeakingWatchdog(ms = 60000, onTimeout) {
 // Plays one synthesized chunk. Resolves true when it finished on its own and
 // false when it was interrupted. Playback failures reject, so the queue can
 // recover the unsaid reply instead of treating a broken player as cancellation.
-function playSpeechChunk(blob, { isFinal, onFinal }) {
+function playSpeechChunk(blob, { isFinal, onFinal, onStart }) {
   return new Promise((resolve, reject) => {
     const audioUrl = URL.createObjectURL(blob);
     let audio;
@@ -252,7 +252,11 @@ function playSpeechChunk(blob, { isFinal, onFinal }) {
     };
     cancelAssistantPlayback = cancel;
 
-    listen('playing', () => { playbackStarted = true; });
+    listen('playing', () => {
+      if (finished || playbackStarted) return;
+      playbackStarted = true;
+      try { onStart?.(); } catch (_) {}
+    });
     listen('ended', () => finish(false));
     listen('error', (error) => {
       console.error('[Olanga] TTS playback error:', error);
@@ -400,13 +404,16 @@ function speakAssistantAcknowledgement(text, signal) {
       utterance = new SpeechSynthesisUtterance(message);
       const voice = pickWindowsVoice();
       if (voice) utterance.voice = voice;
-      utterance.rate = Number.isFinite(ttsRate) ? ttsRate : 1;
+      utterance.rate = Number.isFinite(ttsRate) && ttsRate > 0 ? ttsRate : 1;
       utterance.volume = currentVolume;
       utterance.onend = () => finish(true);
       utterance.onerror = () => finish(false);
-      // A short acknowledgement must never hold the completed reply hostage
-      // if the platform drops its end/error event.
-      watchdog = setTimeout(interrupt, 5000);
+      // Contextual acknowledgments need room for two short actions at the
+      // selected speech rate. Still release the reply if Windows loses its
+      // completion event; this does not delay synthesis or action dispatch.
+      const words = message.split(/\s+/).length;
+      const acknowledgementMs = Math.min(12000, Math.max(5000, Math.ceil(words * 450 / utterance.rate + 2000)));
+      watchdog = setTimeout(interrupt, acknowledgementMs);
       if (signal?.aborted) { interrupt(); return; }
       // The platform default voice can speak while getVoices() is still empty.
       synthesis.speak(utterance);
@@ -442,7 +449,7 @@ function prepareAssistantSpeech(text) {
   getMagpieAudio(text, getSelectedNvidiaVoiceConfig()).catch(() => {});
 }
 
-async function speakWithNvidiaTts(text, callback) {
+async function speakWithNvidiaTts(text, callback, { onStart } = {}) {
   if (!nvidiaApiKey) {
     throw new Error('NVIDIA API key is missing');
   }
@@ -471,12 +478,12 @@ async function speakWithNvidiaTts(text, callback) {
   };
 
   let finished = false;
-  const finishSpeaking = () => {
+  const finishSpeaking = (completed = true) => {
     if (!isCurrent() || finished) return;
     finished = true;
     clearSpeakingWatchdog();
     console.log('[Olanga] Done speaking (Magpie TTS)');
-    if (callback) callback();
+    if (callback) callback(completed);
     else setState(State.IDLE);
   };
 
@@ -493,7 +500,7 @@ async function speakWithNvidiaTts(text, callback) {
       try { synthesis.cancel(); } catch (_) {}
       finishSpeaking();
     });
-    await speakWithWindowsTts(notice + chunks.slice(index).join(' '), finishSpeaking);
+    await speakWithWindowsTts(notice + chunks.slice(index).join(' '), finishSpeaking, { onStart });
     return false; // Preserve the Magpie cooldown after recovery.
   };
 
@@ -524,7 +531,8 @@ async function speakWithNvidiaTts(text, callback) {
     try {
       completed = await playSpeechChunk(blob, {
         isFinal: index === chunks.length - 1,
-        onFinal: finishSpeaking
+        onFinal: finishSpeaking,
+        onStart
       });
     } catch (error) {
       abandon(pending);
@@ -566,13 +574,14 @@ function pickWindowsVoice() {
   return voices.find(v => (v.lang || '').toLowerCase().startsWith('en')) || voices[0];
 }
 
-function speakWithWindowsTts(text, callback) {
+function speakWithWindowsTts(text, callback, { onStart } = {}) {
   const sequence = speechRequestSequence;
   return new Promise((resolve) => {
     let utterance;
     let voiceTimer;
     let voiceListener;
     let settled = false;
+    let playbackStarted = false;
     const cleanup = () => {
       clearTimeout(voiceTimer);
       if (voiceListener) synthesis.removeEventListener('voiceschanged', voiceListener);
@@ -584,6 +593,7 @@ function speakWithWindowsTts(text, callback) {
       settled = true;
       cleanup();
       if (utterance) {
+        utterance.onstart = null;
         utterance.onend = null;
         utterance.onerror = null;
       }
@@ -593,7 +603,7 @@ function speakWithWindowsTts(text, callback) {
       }
       try {
         if (notify && sequence === speechRequestSequence) {
-          if (callback) callback();
+          if (callback) callback(completed);
           else setState(State.IDLE);
         }
       } finally { resolve(completed); }
@@ -616,6 +626,11 @@ function speakWithWindowsTts(text, callback) {
       if (voice) utterance.voice = voice;
       utterance.rate = Number.isFinite(ttsRate) ? ttsRate : 1;
       utterance.volume = isMuted ? 0 : currentVolume;
+      utterance.onstart = () => {
+        if (settled || playbackStarted || sequence !== speechRequestSequence) return;
+        playbackStarted = true;
+        try { onStart?.(); } catch (_) {}
+      };
       utterance.onend = () => {
         console.log('[Olanga] Done speaking (Windows TTS)');
         finish();
@@ -658,23 +673,25 @@ function speakWithWindowsTts(text, callback) {
 const MAGPIE_COOLDOWN_MS = 5 * 60 * 1000;
 let magpieUnavailableUntil = 0;
 
-async function speakWithSelectedEngine(text, callback) {
+async function speakWithSelectedEngine(text, callback, { onStart } = {}) {
   const sequence = speechRequestSequence;
-  const finish = () => { if (sequence === speechRequestSequence && callback) callback(); };
+  let completed = false;
+  const finish = (ok = true) => { completed = ok; if (sequence === speechRequestSequence && callback) callback(ok); };
+  const options = { onStart: () => { if (sequence === speechRequestSequence) onStart?.(); } };
   if (ttsEngine === 'magpie') {
     if (!nvidiaApiKey) {
       throw new Error('Add an NVIDIA API key in Settings to use Magpie TTS, or switch to Windows voice.');
     }
 
     if (Date.now() < magpieUnavailableUntil) {
-      await speakWithWindowsTts(text, finish);
-      return;
+      const result = await speakWithWindowsTts(text, finish, options);
+      return result === true;
     }
 
     try {
-      const completedWithMagpie = await speakWithNvidiaTts(text, finish);
+      const completedWithMagpie = await speakWithNvidiaTts(text, finish, options);
       if (sequence === speechRequestSequence && completedWithMagpie) magpieUnavailableUntil = 0;
-      return;
+      return completed && sequence === speechRequestSequence;
     } catch (err) {
       if (sequence !== speechRequestSequence) return;
       magpieUnavailableUntil = Date.now() + MAGPIE_COOLDOWN_MS;
@@ -685,34 +702,35 @@ async function speakWithSelectedEngine(text, callback) {
       if (typeof showError === 'function') {
         showError('Magpie voice unavailable — using the Windows voice for now');
       }
-      await speakWithWindowsTts(text, finish);
-      return;
+      const result = await speakWithWindowsTts(text, finish, options);
+      return result === true;
     }
   }
 
-  await speakWithWindowsTts(text, finish);
+  return speakWithWindowsTts(text, finish, options);
 }
 
 // Speaks a response then fires a callback once done
-async function speakResponseAndThen(text, callback) {
+async function speakResponseAndThen(text, callback, { onStart } = {}) {
   stopAssistantSpeech();
   const sequence = speechRequestSequence;
   if (isTtsMuted) {
     clearSpeakingWatchdog();
     if (callback) callback();
     else setState(State.IDLE);
-    return;
+    return { status: 'muted' };
   }
 
   setState(State.SPEAKING);
   armSpeakingWatchdog(60000);
   try {
-    await speakWithSelectedEngine(text, () => {
+    const completed = await speakWithSelectedEngine(text, () => {
       if (sequence !== speechRequestSequence) return;
       clearSpeakingWatchdog();
       if (callback) callback();
       else setState(State.IDLE);
-    });
+    }, { onStart });
+    return { status: sequence !== speechRequestSequence ? 'cancelled' : completed ? 'completed' : 'failed' };
   } catch (err) {
     if (sequence !== speechRequestSequence) return;
     console.error('[Olanga] TTS failed:', err.message);
@@ -720,32 +738,35 @@ async function speakResponseAndThen(text, callback) {
     showError(err.message || 'TTS failed');
     if (callback) callback();
     else setState(State.IDLE);
+    return { status: 'failed' };
   }
 }
 
-async function speakResponse(text) {
+async function speakResponse(text, { onStart } = {}) {
   stopAssistantSpeech();
   const sequence = speechRequestSequence;
   if (isTtsMuted) {
     clearSpeakingWatchdog();
     setState(State.IDLE);
-    return;
+    return { status: 'muted' };
   }
 
   setState(State.SPEAKING);
   armSpeakingWatchdog(60000);
   try {
-    await speakWithSelectedEngine(text, () => {
+    const completed = await speakWithSelectedEngine(text, () => {
       if (sequence !== speechRequestSequence) return;
       clearSpeakingWatchdog();
       setState(State.IDLE);
-    });
+    }, { onStart });
+    return { status: sequence !== speechRequestSequence ? 'cancelled' : completed ? 'completed' : 'failed' };
   } catch (e) {
     if (sequence !== speechRequestSequence) return;
     console.error('[Olanga] TTS failed:', e.message);
     clearSpeakingWatchdog();
     showError(e.message || 'TTS failed');
     setState(State.IDLE);
+    return { status: 'failed' };
   }
 }
 
@@ -767,6 +788,11 @@ function createSpeechStream({ onStart } = {}) {
   let resolveDone;
   const done = new Promise(resolve => { resolveDone = resolve; });
   const current = () => sequence === speechRequestSequence;
+  const playbackStart = () => {
+    if (!current() || started) return;
+    started = true;
+    try { onStart?.(); } catch (_) {}
+  };
   const settle = value => { if (!settled) { settled = true; resolveDone(value); } };
 
   const enqueue = sentences => {
@@ -783,12 +809,12 @@ function createSpeechStream({ onStart } = {}) {
 
   async function speakItem(item) {
     if (isTtsMuted) return true;
-    if (!started) { started = true; setState(State.SPEAKING); try { onStart?.(); } catch (_) {} }
+    if (!started) setState(State.SPEAKING);
     if (!useWindows && item.audio) {
       try {
         const blob = await item.audio;
         if (!current()) return false;
-        return await playSpeechChunk(blob, { isFinal: false, onFinal() {} });
+        return await playSpeechChunk(blob, { isFinal: false, onFinal() {}, onStart: playbackStart });
       } catch (error) {
         if (!current()) return false;
         useWindows = true;
@@ -801,7 +827,7 @@ function createSpeechStream({ onStart } = {}) {
       if (cancelAssistantPlayback) cancelAssistantPlayback();
       try { synthesis.cancel(); } catch (_) {}
     });
-    try { return await speakWithWindowsTts(item.text, () => {}); }
+    try { return await speakWithWindowsTts(item.text, () => {}, { onStart: playbackStart }); }
     finally { clearSpeakingWatchdog(); }
   }
 

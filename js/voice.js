@@ -77,6 +77,90 @@ let microphoneResources = null;
 let microphoneMonitorFrame = null;
 const MAX_RECORDING_SECONDS = 60;
 let recordingSampleCount = 0;
+let microphoneRecoveryNeeded = false;
+let microphoneDeviceListenerInstalled = false;
+
+function installMicrophoneDeviceRecovery() {
+  if (microphoneDeviceListenerInstalled || !navigator.mediaDevices?.addEventListener) return;
+  microphoneDeviceListenerInstalled = true;
+  navigator.mediaDevices.addEventListener('devicechange', () => {
+    // Only recover a graph the user already enabled. Never turn voice on, change
+    // the selected recognizer, or unmute because a new device appeared.
+    if (!microphoneRecoveryNeeded || isMicMuted || microphoneInitPromise || microphoneResources) return;
+    microphoneRecoveryNeeded = false;
+    initMicrophone().then(ok => { if (!ok) microphoneRecoveryNeeded = true; });
+  });
+}
+
+function receiveMicrophoneSamples(resources, inputData) {
+  if (microphoneResources !== resources || isMicMuted || !(inputData instanceof Float32Array)) return;
+  resources.frame += inputData.length;
+  if (resources.captureBarrier) { resources.preRoll?.clear(); return; }
+  const recordingAtEntry = isRecording;
+  const live = window.OlangaLiveConversation;
+  if (live?.isActive?.()) { resources.preRoll?.clear(); live.acceptSamples(inputData, resources.context.sampleRate); return; }
+  if (window.OlangaLocalSpeech?.isActive?.()) { resources.preRoll?.clear(); return; }
+  if (currentState === State.IDLE && !isWakeWordCapturing) resources.preRoll?.push(inputData, resources.frame);
+  else if (!isRecording) resources.preRoll?.clear();
+  if (((currentState === State.IDLE && !isWakeWordCapturing) || isWakeWordCapturing ||
+      (currentState === State.SPEAKING && isBargeInEnabled()) || (currentState === State.LISTENING && isRecording)) && resources.recognizer && isVoskReady) {
+    try { resources.recognizer.acceptWaveformFloat(inputData, resources.context.sampleRate); }
+    catch (_) { failMicrophoneRecognition(resources); }
+  }
+  if (isRecording && recordingAtEntry) {
+    const remaining = Math.max(0, MAX_RECORDING_SECONDS * resources.context.sampleRate - recordingSampleCount);
+    const chunk = new Float32Array(inputData.subarray(0, remaining));
+    if (chunk.length) { pcmChunks.push(chunk); recordingSampleCount += chunk.length; }
+  }
+  if (resources.endpoint) {
+    const result = resources.endpoint.process(inputData, { recording: isRecording,
+      endDelay: isRecording ? endOfSpeechDelay() : 1500,
+      waitMs: typeof followUpTimer !== 'undefined' && followUpTimer ? 12000 : 4000 });
+    currentRMS = result.rms * 100;
+    if (isRecording && result.speech && !hasSpokenDuringRecording) {
+      hasSpokenDuringRecording = true;
+      if (typeof followUpTimer !== 'undefined' && followUpTimer) { clearTimeout(followUpTimer); followUpTimer = null; }
+    }
+    if (isRecording && result.cancel) { cancelRecording(); setState(State.IDLE); }
+    else if (isRecording && result.stop) stopRecording();
+  }
+  if (isRecording && recordingSampleCount >= MAX_RECORDING_SECONDS * resources.context.sampleRate) stopRecording();
+}
+
+function useLegacyMicrophoneProcessor(resources) {
+  const processor = resources.context.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = event => { if (resources.processor === processor) receiveMicrophoneSamples(resources, event.inputBuffer.getChannelData(0)); };
+  return processor;
+}
+
+function replaceCaptureWithLegacy(resources) {
+  const previous = resources.processor, replacement = useLegacyMicrophoneProcessor(resources);
+  resources.source.disconnect(previous); previous.disconnect();
+  previous.onaudioprocess = null; previous.onprocessorerror = null;
+  if (previous.port) previous.port.onmessage = null;
+  resources.processor = replacement; scriptNode = replacement;
+  resources.source.connect(replacement); replacement.connect(resources.gain);
+  clearTimeout(resources.captureFlushTimer); resources.captureFlushTimer = null; resources.captureBarrier = null;
+}
+
+// Drop speaker-era buffers and queued recognizer callbacks at both ends of
+// local playback. This never changes the microphone or interruption settings.
+function discardLocalSpeechCapture() {
+  const resources = microphoneResources;
+  if (!resources) return;
+  resetMicrophoneRecognition();
+  const recover = () => {
+    if (microphoneResources !== resources) return;
+    try { replaceCaptureWithLegacy(resources); resetMicrophoneRecognition(); }
+    catch (_) { microphoneRecoveryNeeded = true; releaseMicrophoneResources(resources); showError('Audio capture stopped. Select your speech input again.'); }
+  };
+  if (!resources.processor?.port) { recover(); return; }
+  const id = (resources.captureFlushSequence || 0) + 1; resources.captureFlushSequence = id; resources.captureBarrier = id;
+  clearTimeout(resources.captureFlushTimer);
+  // A failed worklet must not leave voice blocked behind an unanswered flush.
+  resources.captureFlushTimer = setTimeout(() => { if (resources.captureBarrier === id) recover(); }, 500);
+  try { resources.processor.port.postMessage({ type: 'flush', id }); } catch (_) { recover(); }
+}
 
 // While recording, the on-device recognizer keeps a rough transcript. It only
 // shortens the pause after a complete local command and helps choose a reply
@@ -109,6 +193,7 @@ function liveCommandComplete() {
 
 function releaseMicrophoneResources(resources) {
   if (!resources) return;
+  clearTimeout(resources.captureFlushTimer); resources.captureBarrier = null;
   if (microphoneResources === resources) {
     microphoneResources = null;
     if (microphoneMonitorFrame !== null) cancelAnimationFrame(microphoneMonitorFrame);
@@ -116,7 +201,8 @@ function releaseMicrophoneResources(resources) {
     cancelRecording();
   }
   for (const [track, listener] of resources.trackListeners || []) track.removeEventListener?.('ended', listener);
-  if (resources.processor) resources.processor.onaudioprocess = null;
+  if (resources.processor) { resources.processor.onaudioprocess = null; resources.processor.onprocessorerror = null; if (resources.processor.port) resources.processor.port.onmessage = null; }
+  resources.preRoll?.clear();
   for (const node of [resources.source, resources.processor, resources.gain, resources.analyser]) {
     try { node?.disconnect(); } catch (_) {}
   }
@@ -134,12 +220,13 @@ function attachMicrophoneRecognizer(resources) {
   if (isMicMuted || !voskModel?.ready || (resources.recognizer && resources.model === voskModel)) return;
   try { resources.recognizer?.remove(); } catch (_) {}
   resources.recognizer = new voskModel.KaldiRecognizer(resources.context.sampleRate);
+  resources.recognizerStartFrame = resources.frame || 0;
   resources.model = voskModel;
   const recognizer = resources.recognizer;
   const current = () => microphoneResources === resources && resources.recognizer === recognizer;
   resources.recognizer.setWords(true);
   resources.recognizer.on('result', message => {
-    if (current() && !isMicMuted) handleVoskResult(message?.result?.text, true);
+    if (current() && !isMicMuted) handleVoskResult(message?.result?.text, true, message?.result?.result);
   });
   resources.recognizer.on('partialresult', message => {
     if (current() && !isMicMuted) handleVoskResult(message?.result?.partial, false);
@@ -162,6 +249,8 @@ function failMicrophoneRecognition(resources, message = 'Wake word recognition s
 function resetMicrophoneRecognition() {
   const resources = microphoneResources;
   if (!resources) return;
+  resources.preRoll?.clear();
+  if (isMicMuted && window.OlangaLiveConversation?.isActive?.()) window.OlangaLiveConversation.stop();
   const recognizer = resources.recognizer;
   resources.recognizer = null;
   resources.model = null;
@@ -174,6 +263,7 @@ function resetMicrophoneRecognition() {
 }
 
 async function initMicrophone() {
+  installMicrophoneDeviceRecovery();
   if (microphoneInitPromise) return microphoneInitPromise;
   if (microphoneResources && microphoneResources.stream.active !== false && microphoneResources.context.state !== 'closed') {
     attachMicrophoneRecognizer(microphoneResources);
@@ -185,7 +275,7 @@ async function initMicrophone() {
 }
 
 async function initializeMicrophoneResources() {
-  const resources = {};
+  const resources = { frame: 0 };
   try {
     resources.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -202,9 +292,11 @@ async function initializeMicrophoneResources() {
       const ended = () => {
         if (microphoneResources !== resources) return;
         const wasListening = currentState === State.LISTENING;
+        microphoneRecoveryNeeded = true;
+        window.OlangaLiveConversation?.stop?.();
         releaseMicrophoneResources(resources);
         if (wasListening) setState(State.IDLE);
-        showError('The microphone disconnected. Reconnect it and select your speech input again.');
+        showError('The microphone disconnected. Reconnect it to recover voice input, or select your speech input again.');
       };
       track.addEventListener?.('ended', ended);
       resources.trackListeners.push([track, ended]);
@@ -212,6 +304,9 @@ async function initializeMicrophoneResources() {
 
     resources.context = new AudioContext({ sampleRate: 16000 });
     const sampleRate = resources.context.sampleRate;
+    const endpointAPI = typeof OlangaVoiceEndpoint !== 'undefined' ? OlangaVoiceEndpoint : null;
+    resources.endpoint = endpointAPI?.createEndpoint({ sampleRate });
+    resources.preRoll = endpointAPI?.createPreRoll(sampleRate);
     console.log(`[Olanga] AudioContext sample rate: ${sampleRate}`);
 
     attachMicrophoneRecognizer(resources);
@@ -219,31 +314,44 @@ async function initializeMicrophoneResources() {
     resources.analyser = resources.context.createAnalyser();
     resources.analyser.fftSize = 512;
 
-    resources.processor = resources.context.createScriptProcessor(4096, 1, 1);
-    resources.processor.onaudioprocess = (e) => {
-        if (microphoneResources !== resources || isMicMuted) return;
-
-        const inputData = e.inputBuffer.getChannelData(0);
-
-        // Idle wake-word listen, custom wake-word enrollment, or listening
-        // for the wake word to interrupt a reply.
-        if (
-          ((currentState === State.IDLE && !isWakeWordCapturing) || isWakeWordCapturing || (currentState === State.SPEAKING && isBargeInEnabled()) || (currentState === State.LISTENING && isRecording))
-          && resources.recognizer
-          && isVoskReady
-        ) {
-            try { resources.recognizer.acceptWaveformFloat(inputData, sampleRate); }
-            catch (_) { failMicrophoneRecognition(resources); }
-        }
-
-        // If recording, collect chunks for Gemini
-        if (isRecording) {
-          const remaining = Math.max(0, MAX_RECORDING_SECONDS * sampleRate - recordingSampleCount);
-          const chunk = new Float32Array(inputData.subarray(0, remaining));
-          if (chunk.length) { pcmChunks.push(chunk); recordingSampleCount += chunk.length; }
-          if (recordingSampleCount >= MAX_RECORDING_SECONDS * sampleRate) stopRecording();
-        }
-      };
+    if (resources.context.audioWorklet?.addModule && typeof AudioWorkletNode === 'function') {
+      try {
+        await resources.context.audioWorklet.addModule('js/audio-capture-worklet.js');
+        resources.processor = new AudioWorkletNode(resources.context, 'olanga-capture');
+        const processor = resources.processor;
+        processor.port.onmessage = event => {
+          if (microphoneResources !== resources || resources.processor !== processor) return;
+          if (Number.isSafeInteger(event.data?.flushed)) {
+            if (resources.captureBarrier === event.data.flushed) {
+              clearTimeout(resources.captureFlushTimer); resources.captureFlushTimer = null; resources.captureBarrier = null;
+              resetMicrophoneRecognition();
+            }
+            return;
+          }
+          if (event.data?.gap) {
+            if (resources.captureBarrier || window.OlangaLocalSpeech?.isActive?.()) return;
+            // Dropped audio must never be submitted as a complete command.
+            cancelRecording(); resources.preRoll?.clear();
+            window.OlangaLiveConversation?.stop?.('Audio capture was interrupted. Start again when ready.');
+            if (currentState === State.LISTENING) setState(State.IDLE);
+            resetMicrophoneRecognition();
+            showError('Audio capture was interrupted. Please repeat your request.');
+            return;
+          }
+          try { receiveMicrophoneSamples(resources, event.data?.samples); }
+          finally { processor.port.postMessage('ack'); }
+        };
+        resources.processor.onprocessorerror = () => {
+          if (microphoneResources !== resources) return;
+          cancelRecording();
+          if (currentState === State.LISTENING) setState(State.IDLE);
+          try {
+            replaceCaptureWithLegacy(resources);
+            showError('Audio capture recovered. Please repeat the interrupted request.');
+          } catch (_) { microphoneRecoveryNeeded = true; releaseMicrophoneResources(resources); showError('Audio capture stopped. Select your speech input again.'); }
+        };
+      } catch (_) { resources.processor = useLegacyMicrophoneProcessor(resources); }
+    } else resources.processor = useLegacyMicrophoneProcessor(resources);
 
     resources.source = resources.context.createMediaStreamSource(resources.stream);
 
@@ -259,6 +367,7 @@ async function initializeMicrophoneResources() {
     resources.gain.connect(resources.context.destination);
 
     microphoneResources = resources;
+    microphoneRecoveryNeeded = false;
     micStream = resources.stream;
     audioContext = resources.context;
     analyser = resources.analyser;
@@ -281,7 +390,10 @@ async function initializeMicrophoneResources() {
 // ============================================
 // VOSK RESULT HANDLER
 // ============================================
-function handleVoskResult(text, isFinal = false) {
+function handleVoskResult(text, isFinal = false, words) {
+    if (window.OlangaLiveConversation?.isActive?.()) return;
+    if (window.OlangaLocalSpeech?.isActive?.()) return;
+    if (microphoneResources?.captureBarrier) return;
     if (isMicMuted || typeof text !== 'string' || !text || (wakeCaptureOpen && !isWakeWordCapturing)) return;
 
     if (isWakeWordCapturing) {
@@ -312,7 +424,22 @@ function handleVoskResult(text, isFinal = false) {
         console.log(`[Olanga] Wake word detected locally! Transcript: "${text}"`);
 
         setState(State.LISTENING);
-        if (startRecording() === false) return;
+        // Word timestamps are relative to this recognizer. Reuse only samples
+        // after the detected wake phrase; partials have no trusted boundary and
+        // deliberately get no wake pre-roll rather than repeating its audio.
+        const wakeWords = Array.isArray(words) ? words : [];
+        const normalized = text.trim().split(/\s+/);
+        let wakeEnd = null;
+        for (const phrase of activeWakeWords) {
+          const tokens = phrase.toLowerCase().split(/\s+/);
+          for (let i = 0; i <= normalized.length - tokens.length; i++) {
+            if (tokens.every((token, n) => normalized[i + n] === token) && Number.isFinite(wakeWords[i + tokens.length - 1]?.end)) {
+              const candidate = microphoneResources?.recognizerStartFrame + Math.ceil(wakeWords[i + tokens.length - 1].end * audioContext.sampleRate);
+              if (Number.isFinite(candidate)) wakeEnd = Math.max(wakeEnd ?? 0, candidate);
+            }
+          }
+        }
+        if (startRecording({ afterFrame: wakeEnd }) === false) return;
         if (typeof warmProviderConnection === 'function') warmProviderConnection();
 
         userText.textContent = "Listening...";
@@ -361,6 +488,7 @@ function handleBargeIn(text) {
 // Push-to-talk works like the wake word: it interrupts a reply or a pending
 // request, and a second press while listening sends what was said so far.
 function handlePushToTalk() {
+  if (window.OlangaLiveConversation?.isActive?.()) { window.OlangaLiveConversation.stop(); return; }
   if (wakeCaptureOpen || window.OlangaDesktop?.isBusy?.()) return;
   if (currentState === State.LISTENING && isRecording) {
     if (hasSpokenDuringRecording) stopRecording();
@@ -675,6 +803,13 @@ function monitorAudio() {
 
   updateWaveBars(currentRMS);
 
+  // Capture callbacks own endpointing even when the window is hidden and
+  // animation frames are throttled. The analyser remains visual-only.
+  if (microphoneResources.endpoint) {
+    microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
+    return;
+  }
+
   // VAD logic ONLY for stopping the recording once it has started
   if (currentState === State.LISTENING) {
       if (currentRMS > SPEECH_THRESHOLD) {
@@ -726,20 +861,27 @@ function updateWaveBars(rms) {
 // RECORDING CONTROLS
 // ============================================
 
-function startRecording() {
+function startRecording({ afterFrame = null } = {}) {
+  if (window.OlangaLocalSpeech?.isActive?.()) window.OlangaLocalSpeech.stop();
   if (isRecording) return true;
   if (isMicMuted || !micStream || micStream.active === false || !audioContext || audioContext.state === 'closed') {
     if (currentState === State.LISTENING) setState(State.IDLE);
     return false;
   }
   isRecording = true;
-  pcmChunks = [];
-  recordingSampleCount = 0;
+  pcmChunks = Number.isFinite(afterFrame) ? (microphoneResources?.preRoll?.after(afterFrame) || []) : [];
+  recordingSampleCount = pcmChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  microphoneResources?.preRoll?.clear();
+  microphoneResources?.endpoint?.reset();
   speechStartTime = null;
   silenceStartTime = Date.now(); // Start silence timer immediately for the 5s timeout
   hasSpokenDuringRecording = false;
+  for (const chunk of pcmChunks) {
+    if (microphoneResources?.endpoint?.process(chunk, { recording: true }).speech) hasSpokenDuringRecording = true;
+  }
   resetLiveTranscript();
   try { if (typeof voskRecognizer !== 'undefined') voskRecognizer?.reset(); } catch (_) {}
+  if (microphoneResources) microphoneResources.recognizerStartFrame = microphoneResources.frame;
   console.log('[Olanga] 🎙️ Recording user query started');
   return true;
 }
@@ -795,6 +937,8 @@ function cancelRecording() {
   silenceStartTime = null;
   hasSpokenDuringRecording = false;
   resetLiveTranscript();
+  microphoneResources?.endpoint?.reset();
+  microphoneResources?.preRoll?.clear();
 }
 
 // ============================================

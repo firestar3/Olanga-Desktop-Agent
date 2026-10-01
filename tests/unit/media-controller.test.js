@@ -57,6 +57,17 @@ test('a stalled helper times out and overlapping commands cannot be queued accid
   assert.equal(workers[0].killed, true);
 });
 
+test('Spotify resume preserves caller deadlines and a timed-out helper cannot block a following volume request', async () => {
+  const { controller, workers } = fixture({ timeoutMs: 10 });
+  await assert.rejects(controller.execute({ action: 'PLAY', spotifyOnly: true }), /too long/);
+  assert.equal(workers[0].killed, true);
+  const volume = controller.execute({ action: 'VOLUME_SET', level: 75 });
+  workers[0].stdout.write(JSON.stringify({ id: workers[0].requests[0].id, result: { ok: true, verified: true, message: 'Late playback.' } }) + '\n');
+  workers[1].reply({ ok: true, verified: true, volume: 75, muted: false, message: 'System volume is 75%.' });
+  assert.equal((await volume).volume, 75);
+  controller.dispose();
+});
+
 test('absolute volume accepts numeric percentages only and carries the exact target to Windows', async () => {
   for (const level of [undefined, null, '75', NaN, Infinity, -1, 101]) {
     assert.throws(() => normalizeMediaRequest({ action: 'VOLUME_SET', level }), /between 0 and 100/);
@@ -152,6 +163,20 @@ test('disposed media controllers cannot start or reconnect a native helper', asy
   controller.dispose();
   await assert.rejects(controller.execute({ action: 'PLAY' }), /closing/);
   assert.equal(workers.length, 0);
+});
+test('native output pipe failures settle promptly and stale pipe events cannot stop a replacement helper', async () => {
+  for (const failure of ['stdout-error', 'stderr-error', 'stdout-end', 'process-close']) {
+    const { controller, workers } = fixture(); const pending = controller.execute({ action: 'STATUS' });
+    const rejected = assert.rejects(pending, /disconnected/);
+    assert.doesNotThrow(() => {
+      if (failure === 'process-close') workers[0].emit('close', 1);
+      else if (failure === 'stdout-end') workers[0].stdout.emit('end');
+      else workers[0][failure.split('-')[0]].emit('error', new Error('fixture pipe failure'));
+    });
+    await rejected; assert.equal(workers[0].killed, true);
+    const retry = controller.execute({ action: 'PAUSE' }); workers[0].stdout.emit('error', new Error('late old failure'));
+    workers[1].reply({ ok: true, verified: true, message: 'Playback paused.' }); assert.equal((await retry).verified, true); controller.dispose();
+  }
 });
 
 test('Windows media helper and its Core Audio interop compile without issuing any command', { skip: process.platform !== 'win32' }, () => {
@@ -285,5 +310,149 @@ $results | ConvertTo-Json -Compress -Depth 6
       assert.match(result.receipt.message, /Selected .*Playback is paused/);
       assert.ok(!result.receipt.message.startsWith('Playing'));
     }
+  }
+});
+
+test('Spotify cold resume opens only the requested app, invokes one unambiguous Play once, and requires its song readback', { skip: process.platform !== 'win32' }, () => {
+  const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const helperPath = path.resolve(__dirname, '../../desktop/media-helper.ps1').replace(/'/g, "''");
+  // Execute production dispatch, UI filtering, discovery and readback against
+  // fake elements/sessions. No process launch, media API or real UI is accessed.
+  const script = `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$tokens = $null; $errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('${helperPath}', [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Media helper did not parse' }
+$functions = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in @('Wait-SpotifySession', 'Wait-Playback', 'Get-SpotifyButtons', 'Invoke-MediaRequest') }, $true)
+foreach ($definition in $functions) {
+    $source = $definition.Extent.Text
+    if ($definition.Name -in @('Wait-SpotifySession', 'Wait-Playback')) {
+        # Keep production timeout values and control flow. Only the clock is
+        # virtual: no-op sleeps plus a short wall-clock deadline can expire
+        # during the first UI lookup on a busy runner, before session readback.
+        if ([regex]::Matches($source, '\\[DateTime\\]::UtcNow').Count -ne 2) { throw 'Review the fixture clock for the changed production wait function' }
+        $source = $source.Replace('[DateTime]::UtcNow', '$script:fixtureNow')
+    }
+    Invoke-Expression $source
+}
+function Start-Sleep { param($Milliseconds) $script:fixtureNow = $script:fixtureNow.AddMilliseconds($Milliseconds) }
+function Start-Process { throw 'Fixture must not launch any process' }
+function Await-Media($Operation, [Type]$ResultType) { return [bool]$Operation }
+function Open-Spotify { $script:opens++; return @{ ok = $script:scenario -ne 'launch-failed'; verified = $script:scenario -ne 'launch-failed'; message = 'Fixture launch result.' } }
+function Get-MediaSession([bool]$SpotifyOnly) {
+    $script:reads++; $script:requestedScopes.Add($SpotifyOnly)
+    if ($script:scenario -in @('existing-playing', 'existing-paused', 'playing-empty-title')) { return $script:session }
+    if ($script:scenario -eq 'cold-session' -and $script:opens -gt 0) { return $script:session }
+    if ($script:invokes -gt 0 -and $script:scenario -in @('cold-ui', 'ui-no-playback', 'ui-empty-title')) { return $script:session }
+    # An unrelated player can be playing, but Spotify-scoped lookup is empty.
+    if (-not $SpotifyOnly -and $script:scenario -eq 'other-player') { return [pscustomobject]@{ title = 'Unrelated'; artist = 'Other'; status = 'Playing' } }
+    return $null
+}
+function Get-MediaState($Session) { if (-not $Session) { return @{ title = ''; artist = ''; status = 'Closed' } }; return @{ title = $Session.title; artist = $Session.artist; status = $Session.status } }
+function Get-SpotifyRoot {
+    $script:rootReads++
+    $root = [pscustomobject]@{}
+    $root | Add-Member ScriptMethod FindAll { param($scope, $condition)
+      $count = if ($script:scenario -eq 'ambiguous-ui') { 2 } elseif ($script:scenario -in @('no-ui', 'other-player', 'generic-no-session')) { 0 } else { 1 }
+      $items = @()
+      for ($i = 0; $i -lt $count; $i++) {
+        $identity = if ($script:scenario -eq 'changed-ui') { $script:rootReads } else { $i + 1 }
+        $name = if ($script:scenario -eq 'named-result') { 'Play Another Song by Another Artist' } else { 'Play' }
+        $item = [pscustomobject]@{ identity = $identity; Current = [pscustomobject]@{ Name = $name; IsOffscreen = $script:scenario -eq 'hidden-ui'; IsEnabled = $script:scenario -ne 'disabled-ui' } }
+        $item | Add-Member ScriptMethod GetRuntimeId { return @([int]$this.identity) }
+        $items += $item
+      }
+      return $items
+    }
+    return $root
+}
+function Invoke-SpotifyControl($Control) {
+    $script:invokes++
+    if ($script:scenario -ne 'ui-no-playback') { $script:session.status = 'Playing' }
+    if ($script:scenario -eq 'ui-empty-title') { $script:session.title = '' }
+}
+$results = @()
+foreach ($scenario in @('existing-playing', 'existing-paused', 'cold-session', 'cold-ui', 'ui-no-playback', 'ui-empty-title', 'other-player', 'ambiguous-ui', 'changed-ui', 'hidden-ui', 'disabled-ui', 'named-result', 'no-ui', 'launch-failed', 'generic-no-session', 'playing-empty-title')) {
+    $script:scenario = $scenario; $script:reads = 0; $script:opens = 0; $script:invokes = 0; $script:rootReads = 0
+    $script:fixtureNow = [DateTime]::Parse('2026-01-01T00:00:00Z').ToUniversalTime()
+    $script:requestedScopes = [System.Collections.Generic.List[bool]]::new()
+    $script:session = [pscustomobject]@{ title = 'Queued Song'; artist = 'Fixture Artist'; status = 'Paused'; writes = 0 }
+    if ($scenario -in @('existing-playing', 'playing-empty-title')) { $script:session.status = 'Playing' }
+    if ($scenario -eq 'playing-empty-title') { $script:session.title = '' }
+    $script:session | Add-Member ScriptMethod TryPlayAsync { $this.writes++; $this.status = 'Playing'; return $true }
+    $receipt = Invoke-MediaRequest @{ action = 'PLAY'; spotifyOnly = $scenario -ne 'generic-no-session' }
+    $results += @{ scenario = $scenario; opens = $script:opens; invokes = $script:invokes; transportWrites = $script:session.writes; scopes = $script:requestedScopes.ToArray(); receipt = $receipt }
+}
+$results | ConvertTo-Json -Compress -Depth 7
+`;
+  const output = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 60000, windowsHide: true });
+  const results = JSON.parse(output.trim());
+  assert.equal(results.length, 16);
+  for (const result of results) {
+    const success = ['existing-playing', 'existing-paused', 'cold-session', 'cold-ui'].includes(result.scenario);
+    assert.equal(result.receipt.ok, success, result.scenario + ': ' + JSON.stringify(result));
+    if (success) {
+      assert.equal(result.receipt.verified, true); assert.equal(result.receipt.status, 'Playing');
+      assert.equal(result.receipt.source, 'spotify'); assert.equal(result.receipt.title, 'Queued Song');
+    }
+    const uiAttempt = ['cold-ui', 'ui-no-playback', 'ui-empty-title'].includes(result.scenario);
+    assert.equal(result.invokes, uiAttempt ? 1 : 0, result.scenario + ': only one eligible Play may be invoked');
+    assert.equal(result.transportWrites, ['existing-paused', 'cold-session'].includes(result.scenario) ? 1 : 0, result.scenario + ': UI invocation is never replayed as a transport command');
+    assert.equal(result.opens, ['existing-playing', 'existing-paused', 'playing-empty-title', 'generic-no-session'].includes(result.scenario) ? 0 : 1, result.scenario);
+    assert.ok(result.scopes.length > 0);
+    assert.ok(result.scopes.every(scope => scope === (result.scenario !== 'generic-no-session')), 'Another player cannot verify Spotify playback');
+    if (['no-ui', 'ambiguous-ui', 'other-player', 'changed-ui'].includes(result.scenario)) assert.match(result.receipt.message, /Sign in or choose a song/);
+  }
+});
+
+test('native status receipts include observed playback state and scope without changing either player', { skip: process.platform !== 'win32' }, () => {
+  const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const helperPath = path.resolve(__dirname, '../../desktop/media-helper.ps1').replace(/'/g, "''");
+  const script = `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$tokens = $null; $errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('${helperPath}', [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Media helper did not parse' }
+$definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-MediaRequest' }, $true)
+Invoke-Expression $definition.Extent.Text
+function Get-MediaSession([bool]$SpotifyOnly) { $script:scopes.Add($SpotifyOnly); return $script:session }
+function Get-MediaState($Session) { $script:reads++; return @{ title = $Session.title; artist = $Session.artist; status = $Session.status } }
+function Open-Spotify { throw 'Status must not launch Spotify' }
+function Invoke-SpotifyControl { throw 'Status must not invoke Play' }
+$results = @()
+foreach ($scope in @($true, $false)) {
+  foreach ($state in @('Playing', 'Paused', 'Closed')) {
+    $script:reads = 0; $script:scopes = [System.Collections.Generic.List[bool]]::new()
+    $script:session = $null
+    if ($state -ne 'Closed') {
+      $script:session = [pscustomobject]@{ title = 'Fixture Song'; artist = 'Fixture Artist'; status = $state }
+      $script:session | Add-Member ScriptMethod TryPlayAsync { throw 'Status must not play' }
+      $script:session | Add-Member ScriptMethod TryPauseAsync { throw 'Status must not pause' }
+    }
+    $receipt = Invoke-MediaRequest @{ action = 'STATUS'; spotifyOnly = $scope }
+    $results += @{ scope = $scope; state = $state; reads = $script:reads; scopes = $script:scopes.ToArray(); receipt = $receipt; after = if ($script:session) { $script:session.status } else { 'Closed' } }
+  }
+}
+$results | ConvertTo-Json -Compress -Depth 6
+`;
+  const output = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 60000, windowsHide: true });
+  const results = JSON.parse(output.trim());
+  assert.equal(results.length, 6);
+  for (const result of results) {
+    assert.equal(result.receipt.ok, result.state !== 'Closed'); assert.equal(result.receipt.verified, true);
+    assert.equal(result.receipt.status, result.state);
+    assert.equal(result.receipt.source, result.scope ? 'spotify' : 'media');
+    assert.equal(result.after, result.state); assert.equal(result.reads, result.state === 'Closed' ? 0 : 1); assert.deepEqual(result.scopes, [result.scope]);
+    if (result.state === 'Closed') {
+      assert.equal(result.receipt.reason, 'no-session');
+      assert.equal(result.receipt.message, 'No active music player is available. Open Spotify, sign in, and choose a song first.');
+      assert.equal(result.receipt.title, undefined); continue;
+    }
+    assert.equal(result.receipt.title, 'Fixture Song'); assert.equal(result.receipt.artist, 'Fixture Artist');
+    if (result.state === 'Playing') assert.equal(result.receipt.message, 'Playing Fixture Song by Fixture Artist.');
+    else assert.equal(result.receipt.message, 'Fixture Song by Fixture Artist is paused.');
   }
 });
