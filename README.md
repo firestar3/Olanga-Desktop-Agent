@@ -32,7 +32,7 @@ Local commands, reviewed routines, action results, saved names, memories, spoken
 
 ## See it in action
 
-https://github.com/user-attachments/assets/d76c1174-1269-4949-855f-a5e954b14844
+https://github.com/user-attachments/assets/67067be7-3325-4c5c-af52-1d5e71b19052
 
 > **You:** Open Spotify and raise the volume to 75%.
 >
