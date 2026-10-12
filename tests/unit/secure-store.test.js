@@ -37,7 +37,11 @@ function fixture(options = {}) {
   const main = fs.readFileSync(path.join(__dirname, '../../main.js'), 'utf8');
   vm.runInContext(main.slice(main.indexOf('function getSecureStorePath()'), main.indexOf('// Provider requests retrieve saved credentials')), context);
   vm.runInContext(main.slice(main.indexOf('function getGeminiProviderCredentials()'), main.indexOf("const { createProviderService } = require('./desktop/provider-service');")), context);
-  vm.runInContext(main.slice(main.indexOf("trustedMainIpc.handle('secure-store-get'"), main.indexOf('const terminalSessions = new Map();')), context);
+  const secureHandlersStart = main.indexOf("trustedMainIpc.handle('secure-store-get'");
+  const secureSetStart = main.indexOf("trustedMainIpc.handle('secure-store-set'", secureHandlersStart);
+  const secureHandlersEnd = main.indexOf('\n});', secureSetStart) + 4;
+  assert.ok(secureHandlersStart >= 0 && secureSetStart > secureHandlersStart && secureHandlersEnd > secureSetStart);
+  vm.runInContext(main.slice(secureHandlersStart, secureHandlersEnd), context);
   return {
     calls, raw: () => saved,
     credentials: () => context.getGeminiProviderCredentials(),

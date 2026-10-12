@@ -65,6 +65,7 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
   let lastPointer = null;
   let disposed = false;
   let screenListenersRegistered = false;
+  let lastSnapshot = '';
   const filePath = path.join(basePath, 'status-indicator.html');
   const expectedURL = pathToFileURL(filePath).href;
 
@@ -79,10 +80,29 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
 
   function snapshot() {
     if (!alive() || !ready) return;
-    window.webContents.send(SNAPSHOT_CHANNEL, {
+    const value = {
       state: visibleState(), menuOpen, hovered, geometry: getGeometry(),
+      visible: window.isVisible() && shouldShow(),
       actions: slots.map(({ id, label }) => ({ id, label }))
-    });
+    };
+    const key = JSON.stringify(value);
+    if (key === lastSnapshot) return;
+    lastSnapshot = key;
+    window.webContents.send(SNAPSHOT_CHANNEL, value);
+  }
+
+  function syncPointerPolling() {
+    const needed = alive() && ready && window.isVisible() && shouldShow();
+    if (!needed) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      lastPointer = null;
+    } else if (pollTimer === null) {
+      // Forwarded pointer events handle immediate entry. Keep the native
+      // fallback only while visible, for click-through and monitor changes.
+      pollTimer = setInterval(updatePointer, 50);
+      pollTimer.unref?.();
+    }
   }
 
   function setMouseIgnored(value) {
@@ -122,6 +142,7 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
       setMouseIgnored(true);
       window.hide();
     }
+    syncPointerPolling();
     snapshot();
   }
 
@@ -172,6 +193,7 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
     if (!isTrusted(event) || !action || typeof action !== 'object' || Array.isArray(action)) return;
     if (action.type === 'ready') {
       ready = true;
+      lastSnapshot = '';
       syncVisibility();
       updatePointer();
       return;
@@ -239,7 +261,7 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
       webPreferences: {
         preload: path.join(basePath, 'status-indicator-preload.js'),
         contextIsolation: true, sandbox: true, nodeIntegration: false,
-        backgroundThrottling: false, webSecurity: true,
+        backgroundThrottling: true, webSecurity: true,
         partition: 'olanga-side-light', zoomFactor: 1
       }
     });
@@ -253,6 +275,7 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
       menuOpen = false;
       setMouseIgnored(true);
       if (alive()) window.hide();
+      syncPointerPolling();
     });
     window.on('blur', () => {
       // A queued blur may arrive after a new click has already reactivated us.
@@ -268,8 +291,6 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
     });
     position();
     window.loadFile(filePath);
-    pollTimer = setInterval(updatePointer, 50);
-    pollTimer.unref?.();
     return window;
   }
 

@@ -24,7 +24,7 @@ class Events {
 }
 
 function fixture(options = {}) {
-  const calls = { decoders: 0, closed: 0, modelLoads: 0, recognizers: [], chunks: [], final: 0, removed: 0 };
+  const calls = { decoders: 0, closed: 0, modelLoads: 0, recognizers: [], chunks: [], final: 0, removed: 0, retained: 0, released: 0 };
   const length = options.length || 8193;
   const decoded = options.decoded || { length, duration: length / 16000, sampleRate: 16000, numberOfChannels: 1, getChannelData: () => new Float32Array(length).fill(0.25) };
   const timers = new Map();
@@ -46,6 +46,7 @@ function fixture(options = {}) {
     setTimeout: callback => { timers.set(++nextTimer, callback); return nextTimer; }, clearTimeout: id => timers.delete(id),
     voskModel: model, voskModelLoadPromise: null,
     initVosk: async () => { calls.modelLoads++; return model; },
+    retainVoskModel: () => { calls.retained++; return () => { calls.released++; }; },
     window: { AudioContext: class {
       constructor(config) { assert.equal(config.sampleRate, 16000); calls.decoders++; }
       decodeAudioData() { return options.decodePromise || Promise.resolve(decoded); }
@@ -65,6 +66,7 @@ test('offline transcription joins finalized segments and flushes the tail withou
   assert.ok(calls.chunks.every(chunk => chunk.rate === 16000 && chunk.samples.every(sample => sample === 0.25)));
   assert.equal(calls.final, 1);
   assert.equal(calls.removed, 1);
+  assert.equal(calls.retained, 1); assert.equal(calls.released, 1);
   assert.equal(calls.closed, 1);
   assert.equal(calls.recognizers[0].listenerCount, 0);
   assert.equal(timers.size, 0);

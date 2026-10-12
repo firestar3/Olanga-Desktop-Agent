@@ -41,6 +41,49 @@ let conversationHistory = []; // Session-only; survives idle and microphone time
 let orbCanvasCtx = null;
 let animationFrameId = null;
 
+// Chromium keeps this renderer awake for voice capture. Native window visibility
+// therefore controls visual work independently of microphone and deadline work.
+window.OlangaVisibility = (() => {
+  let nativeVisible = true;
+  let revision = 0;
+  let nativeRevision = -1;
+  let visible = !document.hidden;
+  const listeners = new Set();
+  function refresh() {
+    const next = nativeVisible && !document.hidden;
+    document.body.classList.toggle('app-visuals-paused', !next);
+    if (next === visible) return;
+    visible = next;
+    for (const listener of listeners) {
+      try { listener(visible); } catch (error) { console.warn('[Olanga] Visibility update failed:', error.message); }
+    }
+  }
+  function receive(value) {
+    const next = typeof value === 'boolean' ? value : value?.visible;
+    if (typeof next !== 'boolean') return;
+    if (Number.isSafeInteger(value?.revision)) {
+      if (value.revision < nativeRevision) return;
+      nativeRevision = value.revision;
+    }
+    nativeVisible = next;
+    refresh();
+  }
+  document.addEventListener('visibilitychange', refresh);
+  window.electronAPI?.onAppVisibilityChanged?.(value => { revision++; receive(value); });
+  const requestedAt = revision;
+  try {
+    Promise.resolve(window.electronAPI?.getAppVisibility?.()).then(value => {
+      // A show/hide event received during the initial IPC wins over its reply.
+      if (revision === requestedAt) receive(value);
+    }).catch(() => {});
+  } catch (_) {}
+  refresh();
+  return Object.freeze({
+    isVisible: () => visible,
+    subscribe(listener) { listeners.add(listener); listener(visible); return () => listeners.delete(listener); }
+  });
+})();
+
 // Audio capture
 let audioContext = null;
 let analyser = null;
@@ -255,6 +298,7 @@ function setState(newState, preserveHistory = false) {
 
   document.body.classList.remove('state-idle', 'state-listening', 'state-thinking', 'state-speaking');
   document.body.classList.add(`state-${newState}`);
+  refreshOrbAnimation();
 
   switch (newState) {
     case State.IDLE:
@@ -264,6 +308,7 @@ function setState(newState, preserveHistory = false) {
       hint.classList.remove('hidden');
       if (isMicMuted) hint.textContent = 'Microphone muted. Type a command or unmute to use your voice.';
       else if (!micStream || micStream.active === false) hint.textContent = 'Type a local command, or choose on-device speech in Settings.';
+      else if (!isVoskReady || !voskRecognizer) hint.textContent = 'Wake word is not ready. Press your talk shortcut or type a command.';
       else hint.innerHTML = 'Say <strong>"Hey Olanga"</strong> (or your custom wake word) to start';
       // Reset Vosk recognizer to clear old state
       if (voskRecognizer && !isWakeWordCapturing) {
@@ -297,8 +342,9 @@ async function showMainScreen(options = {}) {
   if (options.voice === false) { hint.textContent = 'Type a local command, or choose on-device speech in Settings.'; return; }
   hint.textContent = "Loading offline wake word model...";
   try {
-    await initVosk();
+    await initVosk({ microphone: true });
     await initMicrophone();
+    if (currentState === State.IDLE) setState(State.IDLE);
   } catch(e) {
     console.error("Init error", e);
     showError("Failed to initialize system: " + e.message);
@@ -309,15 +355,31 @@ async function showMainScreen(options = {}) {
 // ORB CANVAS ANIMATION
 // ============================================
 
+let refreshOrbAnimation = () => {};
+let stopOrbAnimation = () => {};
+
 function startOrbAnimation() {
+  stopOrbAnimation();
   const canvas = orbCanvas;
   const ctx = orbCanvasCtx;
   if (!ctx) return;
 
   let time = 0;
+  let lastFrame = null;
+  let intersecting = true;
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+  function canDraw() {
+    return window.OlangaVisibility.isVisible() && intersecting &&
+      !mainScreen?.classList.contains('hidden') &&
+      (currentState === State.LISTENING || currentState === State.SPEAKING);
+  }
 
-  function draw() {
-    time += 0.02;
+  function draw(timestamp = performance.now()) {
+    animationFrameId = null;
+    if (!canDraw()) { lastFrame = null; return; }
+    // Keep the original speed on both 60 Hz and high-refresh displays.
+    if (lastFrame !== null) time += Math.min(100, timestamp - lastFrame) * 0.0012;
+    lastFrame = timestamp;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const cx = canvas.width / 2;
@@ -343,10 +405,30 @@ function startOrbAnimation() {
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    animationFrameId = requestAnimationFrame(draw);
+    if (!reducedMotion?.matches) animationFrameId = requestAnimationFrame(draw);
   }
 
-  draw();
+  refreshOrbAnimation = () => {
+    if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+    lastFrame = null;
+    if (canDraw()) draw();
+  };
+  const observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+    intersecting = entries.some(entry => entry.isIntersecting);
+    refreshOrbAnimation();
+  }) : null;
+  observer?.observe(canvas);
+  reducedMotion?.addEventListener?.('change', refreshOrbAnimation);
+  const unsubscribe = window.OlangaVisibility.subscribe(refreshOrbAnimation);
+  stopOrbAnimation = () => {
+    if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+    unsubscribe();
+    observer?.disconnect();
+    reducedMotion?.removeEventListener?.('change', refreshOrbAnimation);
+    refreshOrbAnimation = () => {};
+  };
 }
 
 // ============================================
@@ -361,13 +443,31 @@ function updateClock() {
   hours = hours % 12;
   hours = hours ? hours : 12; // the hour '0' should be '12'
   minutes = minutes < 10 ? '0' + minutes : minutes;
-  clockDisplay.textContent = `${hours}:${minutes} ${ampm}`;
+  const clock = `${hours}:${minutes} ${ampm}`;
+  if (clockDisplay.textContent !== clock) clockDisplay.textContent = clock;
 
   // Update date
   if (dateDisplay) {
     const options = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' };
-    dateDisplay.textContent = now.toLocaleDateString('en-US', options);
+    const date = now.toLocaleDateString('en-US', options);
+    if (dateDisplay.textContent !== date) dateDisplay.textContent = date;
   }
+}
+
+let stopClock = () => {};
+function startClock() {
+  stopClock();
+  let timer = null;
+  function refresh(visible = window.OlangaVisibility.isVisible()) {
+    clearTimeout(timer);
+    timer = null;
+    if (!visible) return;
+    updateClock();
+    timer = setTimeout(refresh, 60000 - Date.now() % 60000 + 25);
+  }
+  const unsubscribe = window.OlangaVisibility.subscribe(refresh);
+  const unsubscribeClock = window.electronAPI?.onAppClockChanged?.(() => refresh());
+  stopClock = () => { clearTimeout(timer); unsubscribe(); unsubscribeClock?.(); };
 }
 
 // ============================================
@@ -411,7 +511,7 @@ window.addEventListener('beforeunload', () => {
   try { if (micStream) micStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} }); } catch (_) {}
   try { audioContext?.close()?.catch(() => {}); } catch (_) {}
   try { synthesis.cancel(); } catch (_) {}
-  try { if (animationFrameId) cancelAnimationFrame(animationFrameId); } catch (_) {}
+  try { stopOrbAnimation(); stopClock(); } catch (_) {}
   try { voskModel?.terminate(); } catch (_) {}
 });
 

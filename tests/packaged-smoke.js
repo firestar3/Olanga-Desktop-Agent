@@ -6,14 +6,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { isDeepStrictEqual } = require('node:util');
+const updateLaunchArguments = process.argv.slice(2).filter(value => value.startsWith('--update-launch'));
+assert.ok(updateLaunchArguments.length <= 1 && updateLaunchArguments.every(value => /^--update-launch=(updated|recovery)$/.test(value)), 'Use --update-launch=updated or --update-launch=recovery');
+const updateLaunch = updateLaunchArguments[0]?.split('=')[1] || null;
+const reportName = updateLaunch ? `packaged-smoke-${updateLaunch}` : 'packaged-smoke';
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'build', 'qa');
 fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, 'packaged-profile-'));
 const executable = path.join(path.resolve(root, process.env.OLANGA_BUILD_DIR || 'dist'), 'win-unpacked', 'Olanga.exe');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const report = { passed: false, version: require('../package.json').version, isolatedProfile: profile,
-  coverage: { builtExecutable: true, packagedRenderer: true, packagedPreload: true, localSetup: true, localPersistence: true, microphone: false, providerCalls: false }, checks: [], rendererErrors: [] };
+const report = { passed: false, version: require('../package.json').version, isolatedProfile: profile, launchMode: updateLaunch || 'hidden',
+  coverage: { builtExecutable: true, packagedRenderer: true, packagedPreload: true, launchVisibility: true, localSetup: true, localPersistence: true, terminalRemoved: true, microphone: false, providerCalls: false }, checks: [], rendererErrors: [] };
 let child, socket, log = '';
 const pending = new Map();
 let sequence = 0;
@@ -83,7 +87,8 @@ async function stop() {
     assert.equal(process.platform, 'win32'); assert.ok(fs.existsSync(executable), 'Build the app before running this smoke');
     const port = await freePort();
     const environment = { ...process.env }; delete environment.ELECTRON_RUN_AS_NODE;
-    child = spawn(executable, ['--hidden', '--disable-gpu', '--user-data-dir=' + profile, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=' + port], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: environment });
+    const updateArguments = updateLaunch ? [updateLaunch === 'updated' ? '--updated' : '--update-recovery'] : [];
+    child = spawn(executable, ['--hidden', ...updateArguments, '--disable-gpu', '--user-data-dir=' + profile, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=' + port], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: environment });
     child.stdout.on('data', value => { log += value; }); child.stderr.on('data', value => { log += value; });
     child.on('error', error => { report.launchError = error.message; });
     const work = async () => {
@@ -112,8 +117,26 @@ async function stop() {
       await send('Network.enable'); await send('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
       await waitForRenderer();
       check('Packaged renderer finishes loading settings, workbench and schedules', true);
+      let visibility;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        visibility = await evaluate('window.electronAPI.getAppVisibility()');
+        if (visibility?.visible === !!updateLaunch) break;
+        await pause(50);
+      }
+      report.initialVisibility = visibility;
+      check(updateLaunch ? `Packaged ${updateArguments[0]} launch overrides --hidden and shows the app` : 'Ordinary packaged --hidden launch stays in the tray', visibility?.visible === !!updateLaunch);
       const boot = await evaluate(`({ node: typeof process, require: typeof require, offline: typeof window.OlangaOfflineSpeech?.transcribe, provider: typeof window.electronAPI?.providerGenerate, undo: typeof window.electronAPI?.undoDesktopEdit, apps: typeof window.electronAPI?.listAppCapabilities, workbench: typeof window.openOlangaWorkbench, sessions: typeof window.electronAPI?.workSessionCapture, phone: typeof window.electronAPI?.phoneStatus })`);
       check('Packaged preload exposes new capabilities with renderer isolation', boot.node === 'undefined' && boot.require === 'undefined' && [boot.offline, boot.provider, boot.undo, boot.apps, boot.workbench, boot.sessions, boot.phone].every(value => value === 'function'));
+      const terminal = await evaluate(`({
+        panel: !!document.getElementById('terminalScreen'),
+        controls: document.querySelectorAll('[data-feature="terminalScreen"], [data-screen="terminalScreen"]').length,
+        optional: OlangaPrefs.OPTIONAL_FEATURES.includes('terminalScreen'),
+        script: [...document.scripts].some(script => /[\\/]terminal\\.js(?:[?#]|$)/i.test(script.src)),
+        renderer: [typeof initializeTerminal, typeof executeTerminalCommand, typeof terminalTabsData],
+        preload: Object.keys(window.electronAPI).filter(key => /terminal/i.test(key) || key === 'executeCommand')
+      })`);
+      check('Packaged renderer has no Terminal panel, setting, script or command implementation', !terminal.panel && terminal.controls === 0 && !terminal.optional && !terminal.script && terminal.renderer.every(value => value === 'undefined'));
+      check('Packaged preload exposes no Terminal session API', terminal.preload.length === 0);
       await evaluate(`document.getElementById('startLocalBtn').click(); void 0`);
       const local = await evaluate(`({ visible: !document.getElementById('mainScreen').classList.contains('hidden'), key: !!apiKey, mic: !!micStream, input: OlangaWorkspace.snapshot().speechInput })`);
       check('Keyless startup works without opening a microphone', local.visible && !local.key && !local.mic && local.input === 'cloud');
@@ -147,8 +170,8 @@ async function stop() {
     clearTimeout(deadline); await stop();
     for (const item of pending.values()) item.reject(new Error('Test ended')); pending.clear();
     report.finishedAt = new Date().toISOString();
-    fs.writeFileSync(path.join(output, 'packaged-smoke.log'), log);
-    const filename = path.join(output, 'packaged-smoke.json'); fs.writeFileSync(filename, JSON.stringify(report, null, 2));
+    fs.writeFileSync(path.join(output, reportName + '.log'), log);
+    const filename = path.join(output, reportName + '.json'); fs.writeFileSync(filename, JSON.stringify(report, null, 2));
     console.log(`Packaged smoke ${report.passed ? 'passed' : 'failed'}: ${filename}`);
     if (report.error) console.error(report.error);
     process.exitCode = report.passed ? 0 : 1;

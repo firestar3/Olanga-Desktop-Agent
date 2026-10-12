@@ -10,7 +10,7 @@ function fixture(options = {}) {
     const key = name + event; callbacks.set(key, [...(callbacks.get(key) || []), callback]);
   } });
   const context = vm.createContext({
-    console: { log() {}, warn() {} }, window: {},
+    console: { log() {}, warn() {} }, window: {}, setTimeout, clearTimeout, voskModel: null,
     localStorage: {
       getItem(key) { if (options.readFails) throw new Error('Storage blocked'); return options.saved?.[key] ?? null; },
       setItem() { if (options.writeFails) throw new Error('Storage full'); }
@@ -54,4 +54,11 @@ test('saved audio mute settings load without requiring a startup write', () => {
   context.initAudioControls();
   assert.equal(context.isMicMuted, true); assert.equal(context.isTtsMuted, true);
   assert.equal(errors.length, 0);
+});
+
+test('speech mute stops local playback and pending local synthesis immediately even after a quick unmute', () => {
+  const { context } = fixture(); let stops = 0;
+  context.window.OlangaLocalSpeech = { stop() { stops++; } };
+  context.muteTts(); context.unmuteTts();
+  assert.equal(stops, 1); assert.equal(context.isTtsMuted, false);
 });

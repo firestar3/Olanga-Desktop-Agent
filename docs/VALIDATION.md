@@ -1,3 +1,49 @@
+# 1.5.2 release checks — October 12, 2026
+
+This patch targets update completion and avoidable CPU/memory work. The recognition model, command vocabulary, theme and manual-update policy are unchanged. The built-in Terminal, its shell sessions and freeform command endpoints are removed.
+
+| Check | Result |
+| --- | --- |
+| Combined unit suite | **743 passed**, zero failures or skips |
+| Syntax, assets and version | **70 JavaScript files passed**, version **1.5.2** |
+| Manual update UI and shared theme | **11 scenarios passed** |
+| Work tools | **12 production renderer/preload checks passed** with isolated files and simulated providers |
+| Renderer races, storage recovery and Terminal removal | **12 checks passed** |
+| Native visibility and deadlines | **7 checks passed**, including hidden/minimized reload and exact pixel equality for the opaque window |
+| Package contents | **93 packaged source files**, native helpers, offline model, version and embedded app/installer/uninstaller icons matched source |
+| Packaged startup and profile compatibility | **16 checks in each of hidden, updated and recovery launch modes**, plus **44 compatibility checks**, passed using disposable profiles |
+| Native updater | **6 real Windows process cases passed**, including visible progress and orphan-process rejection |
+| Installed Windows upgrade | **1.5.1 → 1.5.2 passed** using the exact legacy launcher and real NSIS installer; installed payload matched and Olanga reopened visibly |
+| Offline recognition | Bundled model matched expected actions for **7/7 synthetic command recordings**; cancellation/cleanup passed; no real microphone or desktop actions |
+
+The profile upgrade also seeds a retired Terminal preference and saved command history. Only the obsolete runtime/local feature flag is filtered out. Other settings and saved records stay intact, and Terminal history is neither read by the new renderer during observed startup nor executed.
+
+Native updater checks use compiled disposable Windows executables and the production PowerShell supervisor. They exercise process survival after the parent exits, a visibly displayed progress window, installation failure, unchanged-version rejection, tamper refusal, and rejection of an orphan background process as a successful restart. They do not use the installed user profile. Existing 1.5.1 builds still use their earlier launcher during the first upgrade; the new supervisor takes over subsequent updates.
+
+The real installed upgrade was also exercised separately. A disposable Electron driver loaded the exact launcher from the installed 1.5.1 archive and used its original `--updated /S --force-run` invocation. The real NSIS installer replaced the existing installation; both the Windows executable and packaged application reported 1.5.2, and the installed archive's SHA-256 matched the candidate. The restarted main process used the exact installed path with `--updated`, in the current Windows session, with a visible native window on two observations. Confirmation took about 92 seconds from driver startup. The installer was SHA-256 `1a2e39d06435f8acf0e1f414d3d97d4be38fe88b0083434f80e89f764f763f29`. This local build is unsigned; the release workflow builds and hashes its own artifact from the release commit.
+
+The test did not click or download through the old Apps & updates UI, exercise the old application's shutdown cleanup, or test a future real NSIS upgrade initiated by the new supervisor. Those UI and supervisor paths have the separate checks above. The driver used disposable data; the installer reopened the normal app without the test driver reading or changing its profile. The leftover old app process was stopped before the test, after the user's quit confirmation. Evidence is retained in ignored `build/qa/installed-update-acceptance-EHmPWl/report.json`.
+The paired resource run used actual **1.5.1 → 1.5.2** Windows packages on one machine with **8 logical processors**, baseline first and candidate second. Both runs used separate disposable profiles, GPU acceleration and the same synthetic silent microphone input. Each state records 20 process-counter snapshots at a requested one-second interval; CPU is recomputed from successive snapshots, leaving 19 measured intervals. The table reports mean CPU relative to **one logical core** (100% means one full core), summed over processes matching the selected executable. For example, 40.89% of one core is approximately 5.11% of this machine's total CPU capacity.
+
+Resident private RAM excludes shared pages. It is the sum of a complete per-process `Win32_PerfRawData_PerfProc_Process.WorkingSetPrivate` snapshot taken after each state's CPU samples, not a median or peak. The counter query runs outside the measured CPU interval. Reductions below are calculated from unrounded measurements.
+
+| State | CPU, one-core %: 1.5.1 → 1.5.2 | CPU reduction | Private resident MiB: 1.5.1 → 1.5.2 | RAM reduction |
+| --- | ---: | ---: | ---: | ---: |
+| Visible, idle without microphone | 40.89 → 18.70 | 54.3% | 243.9 → 226.2 | 7.3% |
+| Tray, idle without microphone | 40.72 → 0.22 | 99.4% | 244.9 → 228.8 | 6.6% |
+| Visible, voice ready | 107.93 → 98.28 | 8.9% | 527.4 → 519.6 | 1.5% |
+| Tray, voice ready | 106.54 → 69.16 | 35.1% | 535.8 → 523.4 | 2.3% |
+| Tray, sustained microphone mute | 52.60 → 6.75 | 87.2% | 511.4 → 304.2 | 40.5% |
+| Visible, sustained microphone mute | 52.66 → 30.04 | 43.0% | 527.6 → 292.0 | 44.7% |
+
+Private committed memory and total working-set medians are retained separately in the reports. They measure different things: commit is not resident RAM, and summing total working sets can count shared pages more than once. For example, visible-muted private commit fell from **665.5 to 416.8 MiB**, while its total working-set sum fell from **1,023.4 to 792.3 MiB**.
+
+Releasing the unused recognition model after sustained mute saves memory but adds a reload: full wake readiness after unmute measured **19 ms → 2,659 ms** in this pair. The retained microphone graph resumes concurrently with model loading so capture can restart before wake recognition is ready; the idle hint reflects that readiness. This benchmark measures full readiness, not first-word capture latency. The bundled model, vocabulary and recognition thresholds are unchanged.
+
+These results establish substantial idle and muted-state savings on this desktop, **not a universal 50% reduction in CPU or RAM**. Active recognition CPU fell by 8.9–35.1% and its private resident RAM by 1.5–2.3% in this run. It uses silence, not continuous speech, and does not measure every workload or device. Normal desktop activity, run order and measurement variability can affect results. Both runs passed, including voice resumption. Evidence is retained in ignored `build/qa/resources/baseline-151-resident.json` and `release-152-resident.json`; reproduction is described in [Releasing](RELEASING.md#compare-packaged-resource-use).
+
+No live Spotify playback, system-volume changes, physical microphone recordings or provider requests were made for these checks. Earlier live-test limitations remain documented below. Build outputs, benchmark profiles, screenshots and raw logs stay in ignored directories.
+
 # 1.5.0 release checks — September 30, 2026
 
 The stable 1.5.0 source includes the Workspace, voice, media, work tools, optional integrations and manual-update changes described in the [release notes](releases/1.5.0.md). The following checks were rerun for the stable version and its local Windows installer. The tag workflow independently builds the published installer and its verification files from the release commit.

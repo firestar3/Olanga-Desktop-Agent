@@ -9,7 +9,15 @@
   let generation = 0, answerController = null, localRequestId = null, speechRequestId = null, localAudio = null, localAudioUrl = null, localReplyText = '';
   const closeHandlers = new Set();
   let openEpoch = 0, cleanedEpoch = -1;
+  let muteWatch = null;
+  function armLocalSpeechWatch() {
+    if (muteWatch !== null) return;
+    muteWatch = setInterval(() => {
+      if (isTtsMuted || currentState !== State.IDLE || window.OlangaLiveConversation?.isActive?.()) stopLocalSpeech();
+    }, 100);
+  }
   function stopLocalSpeech() {
+    clearInterval(muteWatch); muteWatch = null;
     if (speechRequestId) api.conversationLocalCancel(speechRequestId).catch(() => {});
     speechRequestId = null;
     const previous = localAudio; localAudio = null;
@@ -166,7 +174,7 @@
     if (localReplyText.length > 4000) throw new Error('Local speech supports answers up to 4,000 characters.');
     if (isTtsMuted) throw new Error('Unmute speech before playing this answer.');
     if (currentState !== State.IDLE || window.OlangaLiveConversation?.isActive?.()) throw new Error('Finish the current conversation before playing this answer.');
-    stopLocalSpeech(); const id = crypto.randomUUID(); speechRequestId = id; showMessage('Preparing local speech…');
+    stopLocalSpeech(); const id = crypto.randomUUID(); speechRequestId = id; armLocalSpeechWatch(); showMessage('Preparing local speech…');
     try { const result = checked(await api.conversationLocalSpeech({ url: speechUrl.value, model: speechModel.value, voice: speechVoice.value, text: localReplyText, requestId: id }));
       if (speechRequestId !== id) return;
       if (isTtsMuted || currentState !== State.IDLE || window.OlangaLiveConversation?.isActive?.()) { stopLocalSpeech(); return; }
@@ -180,7 +188,7 @@
       await audio.play(); if (localAudio === audio && speechRequestId === id) showMessage('Playing the local answer.');
     } catch (error) { if (speechRequestId === id) { stopLocalSpeech(); throw error; } }
   }), button('Stop local speech', stopLocalSpeech));
-  const muteWatch = setInterval(() => { if ((localAudio || speechRequestId) && (isTtsMuted || currentState !== State.IDLE || window.OlangaLiveConversation?.isActive?.())) stopLocalSpeech(); }, 100);
+
   document.addEventListener('keydown', event => { if (event.key === 'Escape' && (localAudio || speechRequestId)) stopLocalSpeech(); });
   window.addEventListener('beforeunload', () => { clearInterval(muteWatch); stopLocalSpeech(); }, { once: true });
   const liveModel = field(conversation, 'Gemini Live model', 'text', 'Enter an available Live model'); liveModel.maxLength = 120;

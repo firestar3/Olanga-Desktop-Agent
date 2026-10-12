@@ -112,7 +112,7 @@ Diagnostics now record **first audio**, the time from submission to the start of
 
 The reliability changes also make mute and unmute idempotent, retain an explicit toggle, and reject ambiguous relative percentages on the absolute-volume route. Windows speech settles on cancellation even without a native completion event; duplicate events cannot start extra follow-ups. Alarm resources are released on dismissal, completion or startup failure.
 
-Adding the first Gemini key after local setup now activates cloud input only after the secure save succeeds; failure leaves local commands available and the entered key ready to retry. Rapid recognition-mode changes cannot start the microphone for an obsolete selection. Optional Terminal tabs restore their history without starting hidden shells. Session initialization is shared, invalid working directories fail before spawning, pipe errors settle pending work, and replies from closed tabs cannot affect replacement tabs. Saved header text cannot inject markup.
+Adding the first Gemini key after local setup now activates cloud input only after the secure save succeeds; failure leaves local commands available and the entered key ready to retry. Rapid recognition-mode changes cannot start the microphone for an obsolete selection. The built-in Terminal was removed in 1.5.2, including its native shell sessions and command-execution endpoints.
 
 ## Behavior that must remain stable
 

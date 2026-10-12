@@ -1,11 +1,9 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, clipboard, protocol, net, safeStorage, screen, dialog, desktopCapturer, globalShortcut, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, clipboard, protocol, net, safeStorage, screen, dialog, desktopCapturer, globalShortcut, Notification, powerMonitor } = require('electron');
 const fs = require('fs');
 const http2 = require('http2');
 const zlib = require('zlib');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { spawn } = require('child_process');
-const os = require('os');
 
 // Keep userData at %APPDATA%/olanga-control so secure-store.json stays stable
 // across npm start / electron . / diagnostic scripts.
@@ -20,6 +18,28 @@ const { normalizeNvidiaKey } = require('./shared/nvidia-key');
 const { normalizeSavedKeys: normalizeGeminiKeys, validateCandidateKeys: validateGeminiKeys } = require('./shared/gemini-keys');
 
 let mainWindow;
+let pendingMainWindowShow = false;
+let appVisibilityRevision = 0;
+function getAppVisibility() {
+  return { visible: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()), revision: appVisibilityRevision };
+}
+function publishAppVisibility() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  appVisibilityRevision++;
+  mainWindow.webContents.send("app-visibility-changed", getAppVisibility());
+}
+function watchAppClock(window) {
+  const publish = reason => {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+    window.webContents.send('app-clock-changed', { reason });
+  };
+  const resumed = () => publish('resume');
+  // Windows broadcasts WM_TIMECHANGE even while the app is hidden. Deadline
+  // timers can therefore sleep until due without missing a wall-clock jump.
+  if (process.platform === 'win32') window.hookWindowMessage(0x001E, () => publish('system-time'));
+  powerMonitor.on('resume', resumed);
+  window.once('closed', () => powerMonitor.removeListener('resume', resumed));
+}
 let tray = null;
 let desktopAutomation;
 const statusOverlay = createStatusOverlay({
@@ -55,8 +75,8 @@ const trustedMainIpc = {
   }
 };
 
-// Transparent + fullscreen at construction is unreliable on Windows and can
-// leave a tiny non-expandable window. Size to the display instead.
+// Size to the current display before maximizing so first paint and monitor
+// changes consistently use the full available window.
 function ensureWindowExpanded() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   try {
@@ -83,7 +103,8 @@ function ensureWindowExpanded() {
 
 const isDev = process.argv.includes('--dev');
 // Set when Windows starts Olanga at login, so it boots straight to the tray.
-const startsHidden = process.argv.includes('--hidden');
+const updateLaunch = process.argv.includes('--updated') || process.argv.includes('--update-recovery');
+const startsHidden = process.argv.includes('--hidden') && !updateLaunch;
 
 const APP_ID = 'com.aarav.olanga';
 // Windows selects a crisp frame for each taskbar/tray DPI from the same orb.
@@ -197,7 +218,7 @@ function createWindow() {
     minWidth: 400,
     minHeight: 550,
     frame: false,
-    transparent: true,
+    transparent: false,
     resizable: true,
     maximizable: true,
     fullscreenable: true,
@@ -209,23 +230,31 @@ function createWindow() {
       backgroundThrottling: false // CRITICAL: keeps VAD and audio processing running at full speed in the background
     },
     icon: APP_ICON,
-    backgroundColor: '#00000000',
+    backgroundColor: '#0a0a0f',
     titleBarStyle: 'hidden',
     hasShadow: true
   });
 
+  for (const event of ['show', 'hide', 'minimize', 'restore']) mainWindow.on(event, publishAppVisibility);
+  watchAppClock(mainWindow);
   mainWindow.once('ready-to-show', () => {
     // A login-item launch stays in the tray; the renderer still boots so the
     // wake word is armed without ever showing the window.
-    if (startsHidden) return;
+    if (startsHidden && !pendingMainWindowShow) return;
+    pendingMainWindowShow = false;
     ensureWindowExpanded();
     mainWindow.show();
+    if (updateLaunch) mainWindow.focus();
+    publishAppVisibility();
     // Re-assert after show — Windows sometimes applies a tiny default size on first paint.
-    setTimeout(() => ensureWindowExpanded(), 50);
+    setTimeout(() => { if (mainWindow?.isVisible() && !mainWindow.isMinimized()) ensureWindowExpanded(); }, 50);
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
-    ensureWindowExpanded();
+    publishAppVisibility();
+    // Maximizing an opaque native window also shows it on Windows. Keep login
+    // launches and hidden reloads in the tray; the show path expands them.
+    if (mainWindow.isVisible() && !mainWindow.isMinimized()) ensureWindowExpanded();
   });
 
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -236,7 +265,7 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
   if (isDev) {
     // Docked rather than detached: a detached window hides behind the
-    // full-screen transparent window and looks like it never opened.
+    // maximized application window and looks like it never opened.
     mainWindow.webContents.openDevTools({ mode: 'bottom' });
 
     // Mirror renderer logs into the terminal so errors are copyable even when
@@ -270,7 +299,7 @@ function createWindow() {
 }
 
 function showMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow || mainWindow.isDestroyed()) { pendingMainWindowShow = true; return; }
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   ensureWindowExpanded();
@@ -1102,6 +1131,8 @@ trustedMainIpc.handle('get-open-at-login', () => getOpenAtLogin());
 
 trustedMainIpc.handle('set-open-at-login', (_event, enabled) => setOpenAtLogin(enabled));
 
+trustedMainIpc.handle('get-app-visibility', () => getAppVisibility());
+
 trustedMainIpc.handle('get-app-info', () => ({ version: app.getVersion(), packaged: app.isPackaged }));
 
 const { createPushToTalk } = require('./desktop/push-to-talk');
@@ -1195,15 +1226,18 @@ trustedMainIpc.on('media-cancel', () => {
 trustedMainIpc.handle('list-app-capabilities', () => appController.listCapabilities());
 const { createReleaseService } = require('./desktop/release-service');
 const { createManualUpdater, createElectronUpdateFetch } = require('./desktop/manual-updater');
-const { createInstallerLauncher } = require('./desktop/update-installer');
+const { createInstallerLauncher, readInstallResult } = require('./desktop/update-installer');
 const releaseService = createReleaseService({ getInstalledVersion: () => app.getVersion(), fetchImpl: (...args) => net.fetch(...args) });
+const updatesDir = path.join(app.getPath('userData'), 'updates');
+const installerLauncher = createInstallerLauncher({ quit: () => app.quit(), appExe: app.getPath('exe'), currentVersion: app.getVersion(), updatesDir });
 const manualUpdater = createManualUpdater({
   releaseService,
   fetchImpl: createElectronUpdateFetch(net),
-  updatesDir: path.join(app.getPath('userData'), 'updates'),
+  updatesDir,
+  installResult: readInstallResult(updatesDir, app.getVersion()),
   getInstalledVersion: () => app.getVersion(),
   canInstall: app.isPackaged && process.platform === 'win32',
-  launchInstaller: createInstallerLauncher({ spawnImpl: spawn, quit: () => app.quit() }),
+  launchInstaller: installerLauncher,
   onState: state => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-state-changed', state);
   }
@@ -1450,254 +1484,4 @@ trustedMainIpc.handle('secure-store-set', async (event, payload = {}) => {
   }
   writeSecureStore(store);
   return { ok: true };
-});
-
-const terminalSessions = new Map();
-
-function escapePowerShellSingleQuotedString(value) {
-  return String(value ?? '').replace(/'/g, "''");
-}
-
-function createTerminalSession(sessionId, cwd) {
-  const resolvedCwd = cwd || os.homedir();
-  try {
-    if (typeof resolvedCwd !== 'string' || !path.isAbsolute(resolvedCwd) || !fs.statSync(resolvedCwd).isDirectory()) throw new Error('Invalid directory');
-  } catch (_) {
-    throw new Error('The terminal folder is unavailable. Open a new terminal tab and try again.');
-  }
-  const processHandle = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', '-'], {
-    cwd: resolvedCwd,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true
-  });
-
-  const session = {
-    id: String(sessionId),
-    process: processHandle,
-    cwd: resolvedCwd,
-    buffer: '',
-    running: false,
-    queue: [],
-    currentCommand: null,
-    closed: false
-  };
-
-  function failQueuedCommands(error) {
-    if (session.currentCommand) {
-      session.currentCommand.reject(error);
-      session.currentCommand = null;
-    }
-    while (session.queue.length > 0) {
-      const queuedCommand = session.queue.shift();
-      queuedCommand.reject(error);
-    }
-    session.running = false;
-  }
-  session.dispose = error => {
-    if (session.closed) return;
-    session.closed = true;
-    failQueuedCommands(error);
-    if (terminalSessions.get(session.id) === session) terminalSessions.delete(session.id);
-    try { if (!processHandle.killed) processHandle.kill(); } catch (_) {}
-  };
-
-  const handleData = (chunk) => {
-    if (session.closed) return;
-    session.buffer += chunk.toString('utf8');
-    let newlineIndex = session.buffer.indexOf('\n');
-
-    while (newlineIndex !== -1) {
-      const rawLine = session.buffer.slice(0, newlineIndex);
-      session.buffer = session.buffer.slice(newlineIndex + 1);
-      const line = rawLine.replace(/\r$/, '');
-
-      if (session.currentCommand) {
-        if (line.startsWith('__OLANGA_CWD__:')) {
-          session.cwd = line.slice('__OLANGA_CWD__:'.length).trim();
-        } else if (line.startsWith('__OLANGA_EXIT__:')) {
-          const exitCode = Number(line.slice('__OLANGA_EXIT__:'.length).trim());
-          session.currentCommand.exitCode = Number.isNaN(exitCode) ? 0 : exitCode;
-        } else if (line === '__OLANGA_DONE__') {
-          const pending = session.currentCommand;
-          session.currentCommand = null;
-          session.running = false;
-          pending.resolve({
-            output: pending.outputLines.join('\n').trimEnd(),
-            cwd: session.cwd,
-            success: pending.exitCode === 0,
-            exitCode: pending.exitCode
-          });
-          process.nextTick(() => { if (terminalSessions.get(session.id) === session) drainTerminalSession(session.id); });
-        } else if (line && !line.startsWith('PS ')) {
-          session.currentCommand.outputLines.push(line);
-        }
-      }
-
-      newlineIndex = session.buffer.indexOf('\n');
-    }
-  };
-
-  processHandle.stdout.on('data', handleData);
-  processHandle.stderr.on('data', handleData);
-  processHandle.on('error', error => session.dispose(new Error(`Terminal could not start: ${error.message}`)));
-  processHandle.stdin.on('error', error => session.dispose(new Error(`Terminal input failed: ${error.message}`)));
-  processHandle.on('close', (code) => {
-    session.dispose(new Error(`Terminal session closed unexpectedly (code ${code ?? 'unknown'})`));
-  });
-
-  terminalSessions.set(session.id, session);
-  try {
-    processHandle.stdin.write(`[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\r\n`);
-    processHandle.stdin.write(`$ErrorActionPreference = 'Continue'\r\n`);
-    processHandle.stdin.write(`Set-Location -LiteralPath '${escapePowerShellSingleQuotedString(resolvedCwd)}'\r\n`);
-  } catch (error) { session.dispose(error); throw error; }
-  return { cwd: resolvedCwd };
-}
-
-function drainTerminalSession(sessionId) {
-  const session = terminalSessions.get(String(sessionId));
-  if (!session || session.closed || session.running || session.currentCommand || session.queue.length === 0) {
-    return;
-  }
-
-  const nextCommand = session.queue.shift();
-  session.running = true;
-  session.currentCommand = {
-    resolve: nextCommand.resolve,
-    reject: nextCommand.reject,
-    outputLines: [],
-    exitCode: 0
-  };
-
-  try {
-    session.process.stdin.write(`${nextCommand.command}\r\n`);
-    session.process.stdin.write(`Write-Output "__OLANGA_EXIT__:$LASTEXITCODE"\r\n`);
-    session.process.stdin.write(`Write-Output "__OLANGA_CWD__:$((Get-Location).Path)"\r\n`);
-    session.process.stdin.write(`Write-Output "__OLANGA_DONE__"\r\n`);
-  } catch (error) { session.dispose(error); }
-}
-
-trustedMainIpc.handle('terminal-session-create', async (event, payload = {}) => {
-  const sessionId = String(payload.sessionId ?? '');
-  if (!sessionId) {
-    throw new Error('Missing terminal session ID');
-  }
-
-  const cwd = payload.cwd || os.homedir();
-  if (terminalSessions.has(sessionId)) {
-    return { cwd: terminalSessions.get(sessionId).cwd };
-  }
-
-  return createTerminalSession(sessionId, cwd);
-});
-
-trustedMainIpc.handle('terminal-session-execute', async (event, payload = {}) => {
-  const sessionId = String(payload.sessionId ?? '');
-  const command = String(payload.command ?? '').trim();
-
-  if (!sessionId) {
-    throw new Error('Missing terminal session ID');
-  }
-
-  if (!command) {
-    throw new Error('Missing terminal command');
-  }
-
-  let session = terminalSessions.get(sessionId);
-  if (!session) {
-    createTerminalSession(sessionId, payload.cwd || os.homedir());
-    session = terminalSessions.get(sessionId);
-  }
-
-  return new Promise((resolve, reject) => {
-    session.queue.push({ command, resolve, reject });
-    drainTerminalSession(sessionId);
-  });
-});
-
-trustedMainIpc.handle('terminal-session-close', async (event, payload = {}) => {
-  const sessionId = String(payload.sessionId ?? '');
-  const session = terminalSessions.get(sessionId);
-
-  if (!session) {
-    return { closed: true };
-  }
-
-  try {
-    if (session.process && !session.process.killed) {
-      session.process.stdin.write('exit\r\n');
-      session.process.kill();
-    }
-  } catch (error) {
-    try {
-      session.process.kill('SIGKILL');
-    } catch (killError) {
-      // Ignore cleanup errors.
-    }
-  }
-
-  session.dispose(new Error('Terminal session was closed.'));
-  return { closed: true };
-});
-
-trustedMainIpc.handle('execute-command', async (event, payload) => {
-  const { exec } = require('child_process');
-  
-  let commandStr = '';
-  let commandCwd = null;
-  
-  if (payload && typeof payload === 'object') {
-    commandStr = payload.command || '';
-    commandCwd = payload.cwd || null;
-  } else {
-    commandStr = payload || '';
-  }
-  
-  if (!commandCwd) {
-    const os = require('os');
-    commandCwd = os.homedir();
-  }
-
-  return new Promise((resolve) => {
-    // Append PowerShell instruction to output the current working directory path at the end of execution
-    const fullCommand = `${commandStr}; Write-Output "__CWD__:$((Get-Location).Path)"`;
-    
-    exec(`powershell -NoProfile -Command "${fullCommand.replace(/"/g, '\\"')}"`, 
-      { 
-        timeout: 30000, 
-        maxBuffer: 1024 * 1024,
-        cwd: commandCwd
-      },
-      (error, stdout, stderr) => {
-        let output = stdout || '';
-        let errorOutput = stderr || '';
-        
-        // Parse current working directory from the output
-        const cwdPattern = /__CWD__:(.*)$/m;
-        const match = output.match(cwdPattern);
-        let newCwd = commandCwd;
-        
-        if (match) {
-          newCwd = match[1].trim();
-          output = output.replace(cwdPattern, '').trim();
-        }
-        
-        if (error && !output) {
-          resolve({
-            output: errorOutput || error.message,
-            cwd: newCwd,
-            success: false,
-            exitCode: typeof error.code === 'number' ? error.code : 1
-          });
-        } else {
-          resolve({
-            output: output + (errorOutput ? '\n' + errorOutput : ''),
-            cwd: newCwd,
-            success: !error,
-            exitCode: error && typeof error.code === 'number' ? error.code : 0
-          });
-        }
-      }
-    );
-  });
 });

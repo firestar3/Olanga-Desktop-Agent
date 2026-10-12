@@ -19,5 +19,11 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - name: Check native update handoff, completion and recovery
+        run: npm run smoke:installer
+
+      - name: Check hidden rendering and timer deadlines
+        run: npm run smoke:resources
+
       - name: Check work tools, review gates and local file recovery
         run: npm run smoke:workbench

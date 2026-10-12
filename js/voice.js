@@ -7,11 +7,80 @@
 // VOSK WAKE WORD DETECTION (OFFLINE)
 // ============================================
 let voskModelLoadPromise = null;
+let voskLibraryLoadPromise = null;
+let voskModelCleanup = null;
+let voskIdleTimer = null;
+let voskModelUsers = 0;
+let voskReleaseAfterLoad = false;
+const VOSK_IDLE_RELEASE_MS = 5000;
 
-async function initVosk() {
+function loadVoskLibrary() {
+  if (window.Vosk?.Model) return Promise.resolve(window.Vosk);
+  if (voskLibraryLoadPromise) return voskLibraryLoadPromise;
+  voskLibraryLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    // Keep this local and fixed: typed-only or muted startup does not need to
+    // parse the 5.8 MB speech bundle or construct its embedded worker source.
+    script.src = './node_modules/vosk-browser/dist/vosk.js';
+    script.async = true;
+    let settled = false;
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      script.onload = null; script.onerror = null;
+      if (error) { script.remove(); reject(error); }
+      else resolve(window.Vosk);
+    };
+    const timeout = setTimeout(() => finish(new Error('The offline speech library took too long to load. Please try again.')), 15000);
+    script.onload = () => finish(window.Vosk?.Model ? null : new Error('The offline speech library is unavailable. Please try again.'));
+    script.onerror = () => finish(new Error('The offline speech library could not load. Please try again.'));
+    try { document.head.appendChild(script); } catch (error) { finish(error); }
+  }).finally(() => { voskLibraryLoadPromise = null; });
+  return voskLibraryLoadPromise;
+}
+
+function retainVoskModel() {
+  voskModelUsers++;
+  voskReleaseAfterLoad = false;
+  clearTimeout(voskIdleTimer); voskIdleTimer = null;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    voskModelUsers--;
+    scheduleIdleVoskRelease();
+  };
+}
+
+function scheduleIdleVoskRelease() {
+  clearTimeout(voskIdleTimer); voskIdleTimer = null;
+  voskReleaseAfterLoad = false;
+  if (voskModelUsers || (microphoneRequested && !isMicMuted)) return;
+  // A cancelled offline request may release its lease while the shared model
+  // is still loading. Release that late result too, unless another user joined.
+  if (!voskModel) { voskReleaseAfterLoad = !!(voskModelLoadPromise || voskLibraryLoadPromise); return; }
+  // Brief mute toggles stay instant. A sustained mute releases the worker's
+  // model, decoded archive and WASM heap instead of retaining them all day.
+  voskIdleTimer = setTimeout(() => {
+    voskIdleTimer = null;
+    if (voskModelUsers || (microphoneRequested && !isMicMuted) || voskModelLoadPromise) return;
+    const model = voskModel;
+    if (!model || microphoneResources?.recognizer) return;
+    voskModel = null; isVoskReady = false;
+    voskModelCleanup?.(); voskModelCleanup = null;
+    try { model.worker?.terminate(); } catch (_) {}
+  }, VOSK_IDLE_RELEASE_MS);
+}
+
+async function initVosk({ microphone = false } = {}) {
+    if (microphone && isMicMuted) return null;
+    voskReleaseAfterLoad = false;
+    if (!window.Vosk?.Model) await loadVoskLibrary();
+    if (microphone && isMicMuted) return null;
+    clearTimeout(voskIdleTimer); voskIdleTimer = null;
     if (voskModel?.ready) return voskModel;
     if (voskModelLoadPromise) return voskModelLoadPromise;
-    if (!window.Vosk?.Model) throw new Error('Vosk library not loaded');
     console.log('[Olanga] Loading Vosk model from local tar.gz...');
     // The bundled 0.0.8 createModel wrapper does not reject model error events.
     // Observe both events directly, and share one load with the wake-word and
@@ -39,7 +108,9 @@ async function initVosk() {
           return;
         }
         voskModel = model;
+        voskModelCleanup = removeFailureListeners;
         isVoskReady = true;
+        if (voskReleaseAfterLoad || (typeof isMicMuted !== 'undefined' && isMicMuted)) scheduleIdleVoskRelease();
         console.log('[Olanga] Vosk model loaded successfully.');
         resolve(model);
       };
@@ -53,6 +124,7 @@ async function initVosk() {
         // Evict it so the next explicit initialization can recover.
         if (voskModel !== model) return;
         voskModel = null;
+        voskModelCleanup = null;
         isVoskReady = false;
         if (microphoneResources?.model === model) {
           failMicrophoneRecognition(microphoneResources, 'Offline speech stopped. Select your speech input again to retry.');
@@ -79,6 +151,80 @@ const MAX_RECORDING_SECONDS = 60;
 let recordingSampleCount = 0;
 let microphoneRecoveryNeeded = false;
 let microphoneDeviceListenerInstalled = false;
+let microphoneRequested = false;
+let microphoneResumePromise = null;
+let microphoneVisualSubscription = null;
+
+function microphoneVisualsVisible() {
+  return window.OlangaVisibility?.isVisible?.() ?? (typeof document === 'undefined' || !document.hidden);
+}
+
+function refreshMicrophoneMonitor() {
+  const resources = microphoneResources;
+  const needed = resources && !isMicMuted && (microphoneVisualsVisible() || !resources.endpoint);
+  if (!needed && microphoneMonitorFrame !== null) {
+    cancelAnimationFrame(microphoneMonitorFrame); microphoneMonitorFrame = null;
+  }
+  if (needed && microphoneMonitorFrame === null) monitorAudio();
+}
+
+async function resumeMicrophoneGraph(resources) {
+  await resources.suspendPromise;
+  if (microphoneResources !== resources || isMicMuted) return false;
+  if (resources.context.state === 'suspended') await resources.context.resume();
+  if (microphoneResources !== resources) return false;
+  if (isMicMuted) {
+    if (resources.context.state === 'running') await resources.context.suspend?.();
+    return false;
+  }
+  discardLocalSpeechCapture();
+  refreshMicrophoneMonitor();
+  return true;
+}
+
+function refreshMicrophoneActivity() {
+  if (isMicMuted) {
+    resetMicrophoneRecognition();
+    currentRMS = 0;
+    if (typeof waveBarEls !== 'undefined') updateWaveBars(0);
+    refreshMicrophoneMonitor();
+    const resources = microphoneResources;
+    try {
+      if (resources?.context.state === 'running') resources.suspendPromise = Promise.resolve(resources.context.suspend?.()).catch(() => {});
+    } catch (_) {}
+    scheduleIdleVoskRelease();
+    return;
+  }
+  clearTimeout(voskIdleTimer); voskIdleTimer = null;
+  if (!microphoneRequested) { resetMicrophoneRecognition(); return; }
+  if (microphoneResumePromise) return;
+  microphoneResumePromise = (async () => {
+    try {
+      // Microphone permission and the suspended graph are reused when possible.
+      // A muted startup has neither and creates them only after unmuting.
+      const existing = microphoneResources;
+      // Push-to-talk can capture immediately on the existing graph while the
+      // full wake model reloads. Its WAV and endpointing do not depend on Vosk.
+      await Promise.all([initVosk({ microphone: true }), existing ? resumeMicrophoneGraph(existing) : Promise.resolve()]);
+      if (isMicMuted) { scheduleIdleVoskRelease(); return; }
+      // A disconnect during resume belongs to the device-recovery path. Do
+      // not silently reopen the microphone while finishing this old attempt.
+      if (existing && !microphoneResources) return;
+      if (!await initMicrophone() || isMicMuted) return;
+      const resources = microphoneResources;
+      if (!resources) return;
+      await resources.suspendPromise;
+      if (microphoneResources !== resources || isMicMuted) return;
+      if (resources.context.state === 'suspended' && !await resumeMicrophoneGraph(resources)) return;
+      refreshMicrophoneMonitor();
+      if (currentState === State.IDLE) setState(State.IDLE);
+    } catch (error) {
+      if (!isMicMuted) showError(error.message || 'Could not resume voice input. Select your speech input again to retry.');
+    } finally {
+      microphoneResumePromise = null;
+    }
+  })();
+}
 
 function installMicrophoneDeviceRecovery() {
   if (microphoneDeviceListenerInstalled || !navigator.mediaDevices?.addEventListener) return;
@@ -263,7 +409,9 @@ function resetMicrophoneRecognition() {
 }
 
 async function initMicrophone() {
+  microphoneRequested = true;
   installMicrophoneDeviceRecovery();
+  if (isMicMuted && !microphoneInitPromise) { scheduleIdleVoskRelease(); return true; }
   if (microphoneInitPromise) return microphoneInitPromise;
   if (microphoneResources && microphoneResources.stream.active !== false && microphoneResources.context.state !== 'closed') {
     attachMicrophoneRecognizer(microphoneResources);
@@ -311,8 +459,10 @@ async function initializeMicrophoneResources() {
 
     attachMicrophoneRecognizer(resources);
 
-    resources.analyser = resources.context.createAnalyser();
-    resources.analyser.fftSize = 512;
+    if (!resources.endpoint) {
+      resources.analyser = resources.context.createAnalyser();
+      resources.analyser.fftSize = 512;
+    }
 
     if (resources.context.audioWorklet?.addModule && typeof AudioWorkletNode === 'function') {
       try {
@@ -355,8 +505,9 @@ async function initializeMicrophoneResources() {
 
     resources.source = resources.context.createMediaStreamSource(resources.stream);
 
-    // Connect: source → analyser (for VAD visualization)
-    resources.source.connect(resources.analyser);
+    // The sample-clock endpoint already computes RMS for the waveform. Only
+    // the legacy endpoint fallback needs a separate analyser/audio graph.
+    if (resources.analyser) resources.source.connect(resources.analyser);
 
     // Connect: source → scriptProcessor → silent output (for PCM capture)
     // Must connect to destination for onaudioprocess to fire, but mute it
@@ -366,18 +517,26 @@ async function initializeMicrophoneResources() {
     resources.processor.connect(resources.gain);
     resources.gain.connect(resources.context.destination);
 
+    // Mute may have changed while the worklet module was loading, before this
+    // graph was published as micStream and visible to the audio controls.
+    for (const track of resources.stream.getTracks()) track.enabled = !isMicMuted;
+
     microphoneResources = resources;
     microphoneRecoveryNeeded = false;
     micStream = resources.stream;
     audioContext = resources.context;
-    analyser = resources.analyser;
+    analyser = resources.analyser || null;
     scriptNode = resources.processor;
 
     console.log('[Olanga] ✅ Microphone initialized');
     // Initialization may finish after a typed request started. Never overwrite
     // its THINKING/SPEAKING/LISTENING state with an unrelated microphone event.
     if (currentState === State.IDLE) setState(State.IDLE);
-    monitorAudio();
+    if (!microphoneVisualSubscription && window.OlangaVisibility?.subscribe) {
+      microphoneVisualSubscription = window.OlangaVisibility.subscribe(refreshMicrophoneMonitor);
+    }
+    if (isMicMuted) refreshMicrophoneActivity();
+    else refreshMicrophoneMonitor();
     return true;
   } catch (err) {
     releaseMicrophoneResources(resources);
@@ -778,20 +937,24 @@ function cancelWakeWordCapture(options) {
 
 function monitorAudio() {
   microphoneMonitorFrame = null;
-  if (!microphoneResources || !analyser) return;
+  if (!microphoneResources) return;
+  if (isMicMuted || (!microphoneVisualsVisible() && microphoneResources.endpoint)) return;
   if (currentState === State.THINKING || currentState === State.SPEAKING) {
     microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
     return;
   }
 
-  if (isMicMuted) {
-    currentRMS = 0;
-    updateWaveBars(0);
+  // Capture callbacks already compute RMS and own endpointing even when the
+  // window is hidden. Reuse that value instead of analyzing the same mic twice.
+  if (microphoneResources.endpoint) {
+    updateWaveBars(currentRMS);
     microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
     return;
   }
+  if (!analyser) return;
 
-  const dataArray = new Uint8Array(analyser.fftSize);
+  const dataArray = microphoneResources.visualSamples?.length === analyser.fftSize
+    ? microphoneResources.visualSamples : (microphoneResources.visualSamples = new Uint8Array(analyser.fftSize));
   analyser.getByteTimeDomainData(dataArray);
 
   let sum = 0;
@@ -801,14 +964,7 @@ function monitorAudio() {
   }
   currentRMS = Math.sqrt(sum / dataArray.length) * 100;
 
-  updateWaveBars(currentRMS);
-
-  // Capture callbacks own endpointing even when the window is hidden and
-  // animation frames are throttled. The analyser remains visual-only.
-  if (microphoneResources.endpoint) {
-    microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
-    return;
-  }
+  if (microphoneVisualsVisible()) updateWaveBars(currentRMS);
 
   // VAD logic ONLY for stopping the recording once it has started
   if (currentState === State.LISTENING) {

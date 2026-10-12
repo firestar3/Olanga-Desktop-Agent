@@ -26,7 +26,8 @@ const report = {
   passed: false, oldExecutable: oldExe, newExecutable: newExe, oldVersion, newVersion,
   coverage: { packagedBinaries: true, sameDisposableProfile: true, securePreferences: true,
     localTimers: true, tasks: true, aliases: true, routines: true, explicitMemories: true,
-    interruptedRoutineRecovery: true, installerUpgrade: false, installedUserProfile: false,
+    interruptedRoutineRecovery: true, retiredTerminalPreference: true, retainedTerminalHistory: true, terminalRemoved: true,
+    installerUpgrade: false, installedUserProfile: false,
     liveMicrophone: false, liveProviders: false }, checks: [], stages: []
 };
 let profile, fixtureId, active;
@@ -107,7 +108,13 @@ async function launch(executable, expectedVersion, label) {
   // Capture requests from the start of the controlled reload as well. These
   // wrappers observe the real renderer without replacing application behavior.
   await instance.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
-    window.__upgradeSmoke = { microphoneRequests: 0, playbackRequests: 0 };
+    window.__upgradeSmoke = { microphoneRequests: 0, playbackRequests: 0, terminalHistoryReads: 0 };
+    const readStorage = Storage.prototype.getItem;
+    Object.defineProperty(window.__upgradeSmoke, 'readStoredValue', { value: key => readStorage.call(localStorage, key) });
+    Storage.prototype.getItem = function(key) {
+      if (this === localStorage && key === 'olangaTerminalTabs') window.__upgradeSmoke.terminalHistoryReads++;
+      return readStorage.call(this, key);
+    };
     if (navigator.mediaDevices?.getUserMedia) {
       const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia = (...args) => { window.__upgradeSmoke.microphoneRequests++; return original(...args); };
@@ -169,6 +176,9 @@ const snapshotExpression = `(async () => ({
   localSetup: localStorage.getItem('olanga_local_setup'),
   localPreferences: readPrefsFromLocalStorage(),
   securePreferences: JSON.parse(await window.electronAPI.secureStoreGet('app_preferences')),
+  storedFeatures: JSON.parse(localStorage.getItem('olanga_enabled_features')),
+  runtimeFeatures: getEnabledFeatures(),
+  terminalHistory: window.__upgradeSmoke?.readStoredValue ? window.__upgradeSmoke.readStoredValue('olangaTerminalTabs') : localStorage.getItem('olangaTerminalTabs'),
   workspace: window.OlangaWorkspace.snapshot(),
   savedWorkspace: JSON.parse(localStorage.getItem('olanga_productivity_v1')),
   savedTimers: JSON.parse(localStorage.getItem('olanga_timers')),
@@ -202,11 +212,18 @@ async function quiet(instance, expectedVersion) {
 }
 async function seedOld() {
   const old = await launch(oldExe, oldVersion, 'old');
+  const sentinelPath = path.join(profile, 'terminal-history-must-not-execute.txt');
+  const quotePowerShell = value => "'" + value.replace(/'/g, "''") + "'";
+  const history = JSON.stringify([{ id: 0, name: 'Preserved upgrade history', cwd: profile, entries: [
+    { type: 'command', text: 'Set-Content -LiteralPath ' + quotePowerShell(sentinelPath) + " -Value 'unexpected history execution'" },
+    { type: 'output', text: 'Saved output must remain inert through the upgrade.' }
+  ] }]);
   const seeded = await old.evaluate(`(async () => {
     document.getElementById('startLocalBtn').click();
+    localStorage.setItem('olangaTerminalTabs', ${JSON.stringify(history)});
     const preferences = { ...readPrefsFromLocalStorage(), city: 'Upgrade Fixture City', state: 'Fixture State', country: 'Fixture Country',
       ttsEngine: 'windows', ttsRate: 1.2, statusLightMode: 'off', statusLightSize: 'large', statusLightSizeV2: true,
-      bargeIn: false, streamReplies: false, endOfSpeech: 'quick', pushToTalk: 'off', features: ['notepadScreen'], keyRotation: false,
+      bargeIn: false, streamReplies: false, endOfSpeech: 'quick', pushToTalk: 'off', features: ['terminalScreen', 'notepadScreen'], keyRotation: false,
       customWakeWordGroups: [{ id: 'upgrade-wake', label: 'fixture assistant', phrases: ['fixture assistant', 'hello fixture'], createdAt: 1700000000000 }] };
     preferences.quickActions = preferences.quickActions.map((item, index) => index === 0 ? { ...item, label: 'Review fixture tasks', prompt: 'show my tasks' } : item);
     await persistAppPreferences(preferences); applyPrefsToRuntime(preferences);
@@ -228,12 +245,14 @@ async function seedOld() {
     store.timing('execution', 37, 'ok');
     return { created: created.every(item => item.ok), completion: completion.ok, runId: run.id };
   })()`);
-  check('1.4.1: native local-data APIs successfully seeded the profile', seeded.created && seeded.completion);
+  check(oldVersion + ': native local-data APIs successfully seeded the profile', seeded.created && seeded.completion);
   await reload(old);
   const baseline = await old.evaluate(snapshotExpression);
-  check('1.4.1: timer, incomplete task and completed task survive reload', baseline.savedTimers.length === 1 && baseline.tasks.length === 2 && baseline.tasks.filter(item => item.completed).length === 1);
+  check(oldVersion + ': timer, incomplete task and completed task survive reload', baseline.savedTimers.length === 1 && baseline.tasks.length === 2 && baseline.tasks.filter(item => item.completed).length === 1);
+  check(oldVersion + ': fixture retains enabled Terminal and Notepad preferences', ['localPreferences', 'securePreferences'].every(key => baseline[key].features.includes('terminalScreen') && baseline[key].features.includes('notepadScreen')) && baseline.storedFeatures.includes('terminalScreen') && baseline.runtimeFeatures.includes('terminalScreen'));
+  check(oldVersion + ': saved Terminal history survives without executing its command', baseline.terminalHistory?.includes('terminal-history-must-not-execute.txt') && baseline.terminalHistory.includes('Saved output must remain inert') && !fs.existsSync(sentinelPath));
   const run = baseline.workspace.runs.find(item => item.id === seeded.runId);
-  check('1.4.1: interrupted routine preserves completion and marks in-flight step uncertain', run?.state === 'interrupted' && run.steps[0].state === 'completed' && run.steps[1].state === 'uncertain');
+  check(oldVersion + ': interrupted routine preserves completion and marks in-flight step uncertain', run?.state === 'interrupted' && run.steps[0].state === 'completed' && run.steps[1].state === 'uncertain');
   const observations = await quiet(old, oldVersion);
   await stop(old);
   const seed = { profile, fixtureId, oldVersion, baseline, observations, checks: [...report.checks], stages: [...report.stages], createdAt: new Date().toISOString() };
@@ -241,17 +260,36 @@ async function seedOld() {
   return seed;
 }
 async function upgrade(seed) {
+  assert.ok(seed.baseline.terminalHistory && seed.baseline.storedFeatures?.includes('terminalScreen'), 'Regenerate the old-version fixture to include retired Terminal preferences and history');
+  const expected = structuredClone(seed.baseline);
+  // Runtime/local mirrors normalize supported features. Preserve the encrypted
+  // preference record byte-for-byte in meaning until a later explicit save.
+  expected.localPreferences.features = expected.localPreferences.features.filter(feature => feature !== 'terminalScreen');
+  expected.storedFeatures = expected.storedFeatures.filter(feature => feature !== 'terminalScreen');
+  expected.runtimeFeatures = expected.runtimeFeatures.filter(feature => feature !== 'terminalScreen');
+  const sentinelPath = path.join(profile, 'terminal-history-must-not-execute.txt');
   const next = await launch(newExe, newVersion, 'new');
   const initial = await next.evaluate(snapshotExpression);
-  same('New packaged build preserves every seeded record and preference on first launch', initial, seed.baseline);
+  same('New packaged build drops only the retired optional flag while preserving every other seeded record and preference', initial, expected);
+  check('New packaged build does not execute saved Terminal history on first launch', !fs.existsSync(sentinelPath));
+  const terminal = await next.evaluate(`({
+    panel: !!document.getElementById('terminalScreen'),
+    controls: document.querySelectorAll('[data-feature="terminalScreen"], [data-screen="terminalScreen"]').length,
+    optional: OlangaPrefs.OPTIONAL_FEATURES.includes('terminalScreen'),
+    renderer: [typeof initializeTerminal, typeof executeTerminalCommand, typeof terminalTabsData],
+    preload: Object.keys(window.electronAPI).filter(key => /terminal/i.test(key) || key === 'executeCommand')
+  })`);
+  check('Upgraded packaged renderer and preload expose no Terminal panel, feature or API', !terminal.panel && terminal.controls === 0 && !terminal.optional && terminal.renderer.every(value => value === 'undefined') && terminal.preload.length === 0);
   await quiet(next, newVersion);
   await reload(next);
   // Observe the schedule interval and normal post-boot initialization, then
   // ensure pending metadata has not become work or created extra local records.
   await pause(5500);
   const restored = await next.evaluate(snapshotExpression);
-  same('New packaged build preserves all IDs, deadlines, completed steps and settings after reload', restored, seed.baseline);
+  same('New packaged build preserves IDs, deadlines, completed steps, supported settings and retired history after reload', restored, expected);
   report.upgradedObservations = await quiet(next, newVersion);
+  check('Upgraded renderer never reads retained Terminal history during observed startup', report.upgradedObservations.observations?.terminalHistoryReads === 0);
+  check('Retained Terminal history is not executed during upgrade or reload', !fs.existsSync(sentinelPath));
   report.recordCounts = { timers: restored.timers.length, tasks: restored.tasks.length, routines: restored.workspace.routines.length,
     aliases: restored.workspace.aliases.length, playlists: restored.workspace.playlists.length, facts: restored.workspace.facts.length,
     interruptedRuns: restored.workspace.runs.filter(run => run.state === 'interrupted').length };

@@ -19,7 +19,8 @@ function saveAudioPreference(key, muted) {
 
 function applyMicrophoneMuteState() {
   try { micStream?.getTracks().forEach(track => { track.enabled = !isMicMuted; }); } catch (_) {}
-  if (typeof resetMicrophoneRecognition === 'function') resetMicrophoneRecognition();
+  if (typeof refreshMicrophoneActivity === 'function') refreshMicrophoneActivity();
+  else if (typeof resetMicrophoneRecognition === 'function') resetMicrophoneRecognition();
 }
 
 function initAudioControls() {
@@ -87,6 +88,7 @@ function toggleMic() {
 
 function muteTts(persist = true) {
   isTtsMuted = true;
+  window.OlangaLocalSpeech?.stop?.();
   if (typeof stopAssistantSpeech === 'function') stopAssistantSpeech();
   else {
     try { currentTTSAudio?.pause(); } catch (_) {}

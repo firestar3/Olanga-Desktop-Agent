@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { EventEmitter } = require('node:events');
 
 const source = file => fs.readFileSync(path.join(__dirname, '../..', file), 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -14,174 +13,6 @@ function element() {
     set innerHTML(value) { this.markup = value; this.children = []; }, get innerHTML() { return this.markup || ''; },
     appendChild(child) { this.children.push(child); }, addEventListener() {}, querySelector() { return element(); }, querySelectorAll() { return []; } };
 }
-async function terminalRenderer(options = {}) {
-  const nodes = new Map();
-  const values = new Map([['olangaTerminalTabs', JSON.stringify(options.tabs || [{ id: 0, name: 'Saved', cwd: 'Z:\\deleted', entries: [] }])]]);
-  const calls = { create: [], execute: [], close: [], alerts: [] };
-  const context = vm.createContext({
-    document: { getElementById(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); }, createElement: element },
-    window: { electronAPI: {
-      createTerminalSession(payload) { calls.create.push(payload); return options.create?.(payload) || Promise.resolve({ cwd: 'C:\\Users\\Tester' }); },
-      executeTerminalSessionCommand(payload) { calls.execute.push(payload); return options.execute?.(payload) || Promise.resolve({ output: 'first command output', cwd: 'C:\\Users\\Tester', success: true }); },
-      closeTerminalSession(payload) { calls.close.push(payload); return options.close?.(payload) || Promise.resolve({ closed: true }); }
-    } },
-    localStorage: { getItem: key => { if (options.readError) throw new Error('storage unavailable'); return values.get(key); }, setItem: (key, value) => { if (options.writeError) throw new Error('quota'); values.set(key, value); } },
-    escapeHTML: text => String(text), alert: text => calls.alerts.push(text), prompt() {}, console: { warn() {}, error() {} }
-  });
-  vm.runInContext(source('js/terminal.js'), context);
-  await new Promise(resolve => setImmediate(resolve));
-  return { context, calls, nodes, tabs: () => vm.runInContext('terminalTabsData', context) };
-}
-
-test('saved terminal tabs launch no shell until a real command, then use the actual initial directory', async () => {
-  const h = await terminalRenderer();
-  assert.equal(h.calls.create.length, 0);
-  await h.context.executeTerminalCommand('cls');
-  assert.equal(h.calls.create.length, 0);
-  await h.context.executeTerminalCommand('Get-Location');
-  assert.deepEqual(plain(h.calls.create), [{ sessionId: 0 }], 'a deleted saved path is not sent to spawn');
-  assert.equal(h.calls.execute[0].cwd, 'C:\\Users\\Tester');
-  assert.equal(h.tabs()[0].entries.find(entry => entry.type === 'command').prompt, 'PS C:\\Users\\Tester>');
-  assert.ok(h.tabs()[0].entries.some(entry => entry.text === 'first command output'));
-  await h.context.executeTerminalCommand('Write-Output second');
-  assert.equal(h.calls.create.length, 1);
-  assert.equal(h.calls.execute.length, 2);
-});
-
-test('concurrent first commands share initialization and a failed initialization can retry', async () => {
-  const ready = deferred();
-  const h = await terminalRenderer({ create: () => ready.promise });
-  const first = h.context.executeTerminalCommand('one'), second = h.context.executeTerminalCommand('two');
-  assert.equal(h.calls.create.length, 1); assert.equal(h.calls.execute.length, 0);
-  ready.resolve({ cwd: 'C:\\Users\\Tester' });
-  await Promise.all([first, second]);
-  assert.deepEqual(h.calls.execute.map(call => call.command), ['one', 'two']);
-
-  let attempts = 0;
-  const retry = await terminalRenderer({ create: () => ++attempts === 1 ? Promise.reject(new Error('PowerShell missing')) : Promise.resolve({ cwd: 'C:\\' }) });
-  await retry.context.executeTerminalCommand('one');
-  assert.equal(retry.calls.execute.length, 0);
-  assert.ok(retry.tabs()[0].entries.some(entry => entry.text === 'PowerShell missing'));
-  await retry.context.executeTerminalCommand('two');
-  assert.equal(retry.calls.execute.length, 1);
-});
-
-test('closing a tab during initialization prevents its command and a stale reply cannot affect a replacement', async () => {
-  const ready = deferred();
-  const tabs = [0, 1].map(id => ({ id, name: `Tab ${id}`, cwd: 'C:\\', entries: [] }));
-  const h = await terminalRenderer({ tabs, create: () => ready.promise });
-  h.context.switchTerminalTab(1);
-  const pending = h.context.executeTerminalCommand('must not dispatch');
-  await h.context.closeTerminalTab(1);
-  ready.resolve({ cwd: 'C:\\Users\\Tester' }); await pending;
-  assert.equal(h.calls.execute.length, 0);
-
-  const result = deferred();
-  const second = await terminalRenderer({ tabs, execute: () => result.promise });
-  second.context.switchTerminalTab(1);
-  const executing = second.context.executeTerminalCommand('old command');
-  await new Promise(resolve => setImmediate(resolve));
-  await second.context.closeTerminalTab(1);
-  await second.context.addTerminalTab(); // Reuses the old numeric ID, with a new object.
-  result.resolve({ output: 'stale private output', cwd: 'Z:\\wrong', success: true });
-  await executing;
-  assert.equal(second.tabs()[1].cwd, 'C:\\Users\\Tester');
-  assert.equal(JSON.stringify(second.tabs()[1].entries).includes('stale private output'), false);
-});
-
-test('overlapping terminal closes remove the intended tabs and always retain one usable tab', async () => {
-  const waits = new Map([[0, deferred()], [1, deferred()]]);
-  const h = await terminalRenderer({ tabs: [0, 1, 2].map(id => ({ id, entries: [] })), close: payload => waits.get(payload.sessionId).promise });
-  const first = h.context.closeTerminalTab(0), second = h.context.closeTerminalTab(1);
-  await h.context.closeTerminalTab(2);
-  assert.equal(h.calls.close.length, 2);
-  waits.get(0).resolve(); await first;
-  waits.get(1).resolve(); await second;
-  assert.deepEqual(Array.from(h.tabs(), tab => tab.id), [2]);
-});
-
-test('saved terminal headers cannot inject arbitrary HTML into the renderer', async () => {
-  const h = await terminalRenderer({ tabs: [{ id: 0, entries: [{ type: 'header', html: '<img src=x onerror="runCommands()">' }] }] });
-  const header = h.nodes.get('terminalOutput').children[0];
-  assert.match(header.innerHTML, /Windows PowerShell/);
-  assert.doesNotMatch(header.innerHTML, /onerror|runCommands/);
-});
-
-test('unavailable terminal storage leaves a usable tab and failed writes do not discard live command output', async () => {
-  const h = await terminalRenderer({ readError: true, writeError: true });
-  assert.equal(h.tabs().length, 1); assert.equal(h.calls.create.length, 0);
-  await h.context.executeTerminalCommand('Get-Location');
-  assert.ok(h.tabs()[0].entries.some(entry => entry.text === 'first command output'));
-  assert.equal(h.calls.alerts.length, 1);
-});
-
-test('malformed saved terminal rows preserve valid neighbors without duplicate session IDs', async () => {
-  const h = await terminalRenderer({ tabs: [null, { id: 'NaN', name: 'Saved', entries: [null, { type: 'output', text: 'kept' }] }, { id: 'NaN', entries: [] }] });
-  assert.deepEqual(Array.from(h.tabs(), tab => tab.id), [0, 1]);
-  assert.equal(h.tabs()[0].entries[0].text, 'kept');
-  assert.equal(h.calls.create.length, 0);
-});
-
-function terminalMain(options = {}) {
-  const handles = new Map(), children = [];
-  const context = vm.createContext({
-    Map, String, Number, Error, process: { nextTick: callback => callback() },
-    os: { homedir: () => 'C:\\Users\\Tester' }, path: path.win32,
-    fs: { statSync(cwd) { if (cwd === 'Z:\\deleted') throw new Error('ENOENT'); return { isDirectory: () => cwd !== 'C:\\file.txt' }; } },
-    trustedMainIpc: { handle: (name, handler) => handles.set(name, handler) },
-    spawn(executable, args, config) {
-      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.stdin = new EventEmitter();
-      child.writes = []; child.killed = false;
-      child.stdin.write = text => { if (child.writeError) throw child.writeError; child.writes.push(text); return true; };
-      child.kill = () => { child.killed = true; };
-      child.config = config; children.push(child); return child;
-    }
-  });
-  const main = source('main.js');
-  vm.runInContext(main.slice(main.indexOf('const terminalSessions = new Map();'), main.indexOf("trustedMainIpc.handle('execute-command'")), context);
-  return { children, call: (name, payload) => handles.get(`terminal-session-${name}`)({}, payload) };
-}
-
-test('native terminal handlers reject invalid working directories before spawning', async () => {
-  const h = terminalMain();
-  assert.equal(h.children.length, 0);
-  for (const cwd of ['Z:\\deleted', 'C:\\file.txt', 'relative']) await assert.rejects(h.call('execute', { sessionId: 'a', command: 'dir', cwd }), /folder is unavailable/);
-  assert.equal(h.children.length, 0);
-  await h.call('create', { sessionId: 'a' });
-  assert.equal(h.children[0].config.windowsHide, true);
-  assert.equal(h.children[0].config.cwd, 'C:\\Users\\Tester');
-});
-
-test('native spawn and pipe errors reject pending terminal commands without crashing or hanging', async () => {
-  for (const failure of ['spawn', 'pipe', 'write']) {
-    const h = terminalMain();
-    const first = h.call('execute', { sessionId: 'a', command: 'one' });
-    const second = h.call('execute', { sessionId: 'a', command: 'two' });
-    const settled = Promise.all([failure === 'write' ? first.then(result => assert.equal(result.success, true)) : assert.rejects(first, /missing|broken/), assert.rejects(second, /missing|broken/)]);
-    const child = h.children[0];
-    if (failure === 'spawn') child.emit('error', new Error('PowerShell missing'));
-    else if (failure === 'pipe') child.stdin.emit('error', new Error('broken pipe'));
-    else { child.writeError = new Error('broken write'); child.stdout.emit('data', Buffer.from('__OLANGA_DONE__\n')); }
-    await settled;
-    assert.equal(child.killed, true);
-    await h.call('create', { sessionId: 'a' });
-    assert.equal(h.children.length, 2);
-  }
-});
-
-test('closing a native terminal settles its queue and a delayed old close cannot erase its replacement', async () => {
-  const h = terminalMain();
-  const pending = h.call('execute', { sessionId: 'a', command: 'one' });
-  const cancelled = assert.rejects(pending, /closed/);
-  await h.call('close', { sessionId: 'a' }); await cancelled;
-  await h.call('create', { sessionId: 'a' });
-  h.children[0].emit('close', 0);
-  const next = h.call('execute', { sessionId: 'a', command: 'new command' });
-  h.children[1].stdout.emit('data', Buffer.from('new output\n__OLANGA_EXIT__:0\n__OLANGA_CWD__:C:\\Users\\Tester\n__OLANGA_DONE__\n'));
-  assert.equal((await next).output, 'new output');
-  assert.equal(h.children.length, 2);
-});
-
 function settingsRenderer(options = {}) {
   const calls = { saves: [], model: 0, microphone: 0, errors: [] };
   const values = new Map(Object.entries(options.legacy || {})); let inputMode = 'cloud';
@@ -386,7 +217,8 @@ test('local setup and idle hints never claim the microphone is listening when ab
   let voiceStarts = 0;
   const context = vm.createContext({
     State: { IDLE: 'idle' }, currentState: 'thinking', lastIdleTime: 0,
-    micStream: null, isMicMuted: false, voskRecognizer: null, isWakeWordCapturing: false,
+    refreshOrbAnimation() {},
+    micStream: null, isMicMuted: false, voskRecognizer: null, isVoskReady: false, isWakeWordCapturing: false,
     hint: element(), setupScreen: element(), mainScreen: element(),
     document: { body: element(), querySelector: () => element() }, window: {}, console: { log() {}, error() {} },
     initVosk: async () => { voiceStarts++; }, initMicrophone: async () => { voiceStarts++; }, showError() {}
@@ -399,5 +231,7 @@ test('local setup and idle hints never claim the microphone is listening when ab
   context.micStream = { active: true }; context.isMicMuted = true;
   context.setState('idle'); assert.match(context.hint.textContent, /Microphone muted/);
   context.isMicMuted = false; context.setState('idle');
+  assert.match(context.hint.textContent, /Wake word is not ready/);
+  context.isVoskReady = true; context.voskRecognizer = { reset() {} }; context.setState('idle');
   assert.match(context.hint.innerHTML, /Hey Olanga/);
 });

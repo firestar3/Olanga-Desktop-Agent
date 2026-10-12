@@ -1,6 +1,6 @@
 {
   "name": "olanga-control",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Olanga - Your AI Voice Assistant",
   "main": "main.js",
   "scripts": {
@@ -22,13 +22,16 @@
     "smoke:sessions": "node tests/work-sessions-native-smoke.js",
     "smoke:updates": "electron tests/manual-update-smoke.js --hidden",
     "smoke:renderer": "electron tests/renderer-races-smoke.js --hidden",
+    "smoke:resources": "electron tests/renderer-resources-smoke.js --hidden",
+    "smoke:installer": "node tests/update-installer-native-smoke.js",
     "smoke:apps": "node tests/app-adapter-smoke.js",
     "smoke:offline": "electron tests/offline-speech-smoke.js --compare-grammar",
     "smoke:packaged": "node tests/packaged-smoke.js",
     "bench:latency": "electron tests/latency-benchmark.js",
     "verify:package": "node scripts/verify-package.js && node scripts/verify-icons.js --packaged",
     "icons:generate": "electron scripts/generate-icons.js",
-    "verify:icons": "node scripts/verify-icons.js"
+    "verify:icons": "node scripts/verify-icons.js",
+    "bench:resources": "node tests/resource-benchmark.js"
   },
   "keywords": [
     "ai",

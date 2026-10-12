@@ -170,6 +170,7 @@ function createManualUpdater({
   getInstalledVersion = () => require('../package.json').version,
   fetchImpl = globalThis.fetch,
   launchInstaller,
+  installResult = null,
   onState = () => {},
   canInstall: installationSupported = true,
   timeoutMs = 15 * 60 * 1000,
@@ -183,10 +184,11 @@ function createManualUpdater({
   let candidate = null, ready = null, active = null, disposed = false;
   let state = {
     ok: true, phase: 'idle', status: 'not-checked', installedVersion: String(getInstalledVersion()),
-    message: 'Check for a newer version when you are ready.', url: RELEASES_URL,
+    message: installResult?.message || 'Check for a newer version when you are ready.', url: RELEASES_URL,
     channel: 'stable', automaticUpdatesEnabled: false, downloaded: false,
     assetVerification: 'not-performed', signingVerified: false,
     bytesReceived: 0, totalBytes: 0, progress: 0,
+    ...(installResult ? { installationResult: installResult } : {}),
   };
 
   function getState() {
@@ -467,7 +469,7 @@ function createManualUpdater({
       try {
         // Only this callback can launch an executable. Both the path and hash
         // are main-process state, never values received over renderer IPC.
-        await launchInstaller(file.filePath, file.version);
+        await launchInstaller(file.filePath, file.version, { sha256: file.hash });
         return getState();
       } catch {
         return publish({ ok: false, phase: 'ready', message: 'The installer could not start. Olanga is still open; you can try Install & restart again.' });

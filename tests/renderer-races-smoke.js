@@ -59,6 +59,21 @@ app.whenReady().then(async () => {
       };
       window.beginNote = message => { notepadAiInput.value = message; return sendNotepadAiMessage(); };
     });
+    await check('retired Terminal preferences cannot restore its UI or interrupt supported panels', () => {
+      const savedHistory = '[{"name":"Legacy tab","entries":[{"text":"Preserved output"}]}]';
+      localStorage.setItem('olangaTerminalTabs', savedHistory);
+      localStorage.setItem('olanga_enabled_features', '["terminalScreen","notepadScreen","newsScreen"]');
+      applyPrefsToRuntime(OlangaPrefs.load(localStorage));
+      applyFeatureToggles();
+      assertRace(getEnabledFeatures().join(',') === 'notepadScreen,newsScreen', 'Retired feature restored from preferences');
+      assertRace(!document.querySelector('#terminalScreen, [data-screen="terminalScreen"], [data-feature="terminalScreen"], script[src*="terminal.js"]'), 'Retired Terminal UI still exists');
+      assertRace(['createTerminalSession', 'executeTerminalSessionCommand', 'closeTerminalSession', 'executeCommand'].every(name => typeof window.electronAPI[name] === 'undefined'), 'Retired shell APIs remain exposed');
+      document.querySelector('[data-screen="notepadScreen"]').click();
+      assertRace(!notepadScreen.classList.contains('hidden'), 'Notepad navigation was removed');
+      document.querySelector('[data-screen="settingsScreen"]').click();
+      assertRace(!settingsScreen.classList.contains('hidden') && document.querySelector('[data-feature="newsScreen"]').checked, 'Settings or News option was removed');
+      assertRace(localStorage.getItem('olangaTerminalTabs') === savedHistory, 'Saved user history was deleted');
+    });
     await check('safe note formatting preserves first lines, blank lines, tabs and literal HTML', () => {
       const response = 'UPDATED NOTE:\n```\nHello\n\nWorld\n```';
       assertRace(extractUpdatedNote(response) === 'Hello<br><br>World', 'First line or paragraph lost');
@@ -189,10 +204,10 @@ app.whenReady().then(async () => {
       for (const name of ['getItem', 'setItem', 'removeItem']) Storage.prototype[name] = function () { throw new Error('Fixture storage unavailable'); };
     ` });
     await main.webContents.reload(); await pause(700);
-    const blocked = await evaluate(() => ({ errors: storageStartupErrors, notes: notepadTabsData.length, terminal: terminalTabsData.length, slots: document.querySelectorAll('#quickActionsEditor fieldset').length, setup: typeof handleSaveKey }));
+    const blocked = await evaluate(() => ({ errors: storageStartupErrors, notes: notepadTabsData.length, slots: document.querySelectorAll('#quickActionsEditor fieldset').length, setup: typeof handleSaveKey }));
     assert.deepEqual(blocked.errors, []);
-    assert.ok(blocked.notes > 0 && blocked.terminal > 0 && blocked.slots === 5 && blocked.setup === 'function', 'Storage failure stopped startup: ' + JSON.stringify(blocked));
-    report.checks.push('blocked browser storage still initializes notes, terminal, setup and quick actions without uncaught errors');
+    assert.ok(blocked.notes > 0 && blocked.slots === 5 && blocked.setup === 'function', 'Storage failure stopped startup: ' + JSON.stringify(blocked));
+    report.checks.push('blocked browser storage still initializes notes, setup and quick actions without uncaught errors');
     await main.webContents.debugger.sendCommand('Page.removeScriptToEvaluateOnNewDocument', { identifier: injected.identifier });
     main.webContents.debugger.detach();
     assert.deepEqual(report.forbiddenCalls, []); assert.deepEqual(report.errors, []);

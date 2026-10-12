@@ -8,9 +8,9 @@ The app remains a complete Electron Windows application, distributed through thi
 
 Checking does not download an installer. If a completed installer is cached from a previous session, the explicit check also fetches its small `SHA256SUMS` manifest and rehashes the local bytes before offering installation. A separate **Download update** action fetches a missing version-matched installer and manifest. The main process validates fixed repository URLs, every redirect, bounded file sizes and hashes, including GitHub asset digests when supplied. Downloads stream to a private updates directory under the app's data folder, with progress, cancellation and partial-file cleanup. Network, rate-limit and malformed-response failures remain distinct from “up to date.”
 
-Only **Install & restart** launches an installer, after rehashing the saved file. The renderer cannot supply a download URL, file path or executable arguments. The NSIS update path retains the existing installation directory, installation mode and app data, and reopens Olanga. An ordinary app quit never installs anything. The button is available in packaged Windows builds; source checkouts can check and download but cannot install. Complete downloads have bounded local cache metadata and can be recovered by a later explicit Check; startup does not scan files or contact GitHub. Partial downloads restart from the beginning, and abandoned partial files are removed by an explicit Download. Tampered, linked, stale-version or mismatched cache entries cannot become installable. Versions through 1.4.0 need one manual installer update to gain this flow.
+Only **Install & restart** launches an installer, after rehashing the saved file. The renderer cannot supply a download URL, file path or executable arguments. The NSIS update path retains the existing installation directory, installation mode and app data. Starting in 1.5.2, a copied native supervisor must report readiness before Olanga closes. It waits for the app to exit, keeps a progress window visible, checks the installer exit code and installed version, then launches the exact installed executable with --updated. A failed install attempts to reopen the app with --update-recovery and records its result in the private update cache. This is recovery reporting, not automatic rollback. An ordinary app quit never installs anything. The button is available in packaged Windows builds; source checkouts can check and download but cannot install. Complete downloads have bounded local cache metadata and can be recovered by a later explicit Check; startup does not scan files or contact GitHub. Partial downloads restart from the beginning, and abandoned partial files are removed by an explicit Download. Tampered, linked, stale-version or mismatched cache entries cannot become installable. Versions through 1.4.0 need one manual installer update to gain this flow.
 
-Checksum verification does not verify publisher identity. The checked-in publisher policy is disabled, so the current unsigned build does not claim a verified signature. A future build with an explicit publisher pin also requires a valid Authenticode signature with that exact certificate on download, cache recovery and immediately before installation. Installation, elevated-install cancellation and rollback are separate from the download and launch checks. See the [GitHub Releases API documentation](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
+Checksum verification does not verify publisher identity. The checked-in publisher policy is disabled, so the current unsigned build does not claim a verified signature. A future build with an explicit publisher pin also requires a valid Authenticode signature with that exact certificate on download, cache recovery and immediately before installation. Native supervisor fixtures cover completed installation, installer failure, unchanged-version rejection, and tampered-file refusal using disposable executables. They do not establish real NSIS upgrade or rollback behavior. See the [GitHub Releases API documentation](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
 
 ## Verify locally
 
@@ -23,6 +23,8 @@ npm run smoke:workspace
 npm run smoke:workbench
 npm run smoke:sessions
 npm run smoke:updates
+npm run smoke:installer
+npm run smoke:resources
 npm run smoke:offline
 npm run smoke:apps
 npm run smoke:overlay
@@ -52,6 +54,43 @@ The voice smoke checks are opt-in live Windows checks. They open Spotify, briefl
 Building does **not** update the installed app or its desktop/Start-menu shortcuts. Quit the running Olanga from its tray menu, run the version-matched installer, then reopen Olanga using your shortcut. The installer preserves app data. For a light that stays visible while idle, choose **Settings → Corner Status Light → All Lights**. Closing the main window only hides it; it does not quit an older running version.
 
 Before releasing, install the built version and check All Lights mode over another app, all eight menu items, both hide timers, shortcut persistence after restart, an ordinary Gemini question, a Gemini screen diagnosis, both edit confirmations, cancellation from each confirmation, editor-region refusal when accessibility is unavailable, and Escape during a harmless edit in a disposable document. Check that post-edit verification describes visible evidence and clearly identifies untested behavior before approving a new phase. Do not use a valuable document for the first live input test.
+
+## Compare packaged resource use
+
+`npm run bench:resources` compares resource use through six states: visible and tray idle without a microphone, visible and tray voice readiness, then tray and visible sustained microphone mute. It uses disposable profiles and Chromium's synthetic silent capture device, blocks provider network requests, and makes no physical microphone recordings, Spotify requests or system-volume changes. GPU acceleration stays enabled. Run each package sequentially on the same Windows desktop, with similar background activity and power settings; avoid simultaneous builds or tests. The final voice-resume check waits for the capture graph and recognition model to be ready.
+
+Preserve the **whole old packaged directory**, including its resources, before building the candidate. The following example requires an existing 1.5.1 package at `dist/win-unpacked/` and the 1.5.2 source checkout. It refuses to replace a saved baseline and writes the new package to a separate directory:
+
+```powershell
+$baselineDirectory = Join-Path (Get-Location) 'build/qa/resource-baseline-151'
+$oldExecutable = Get-Item -LiteralPath 'dist/win-unpacked/Olanga.exe'
+if ($oldExecutable.VersionInfo.ProductVersion -notmatch '^1\.5\.1(?:\.|$)') {
+    throw 'The baseline executable must be Olanga 1.5.1.'
+}
+if (Test-Path -LiteralPath $baselineDirectory) { throw 'Use the existing saved baseline or choose a new directory.' }
+New-Item -ItemType Directory -Path 'build/qa' -Force | Out-Null
+Copy-Item -LiteralPath 'dist/win-unpacked' -Destination $baselineDirectory -Recurse
+npm run pack -- --config.directories.output=dist/152
+if ($LASTEXITCODE -ne 0) { throw 'Candidate packaging failed.' }
+
+$env:OLANGA_BENCH_SAMPLES = '20'
+$env:OLANGA_BENCH_LABEL = 'baseline-151-resident'
+$env:OLANGA_BENCH_EXE = Join-Path $baselineDirectory 'Olanga.exe'
+npm run bench:resources
+if ($LASTEXITCODE -ne 0) { throw 'Baseline benchmark failed; do not compare incomplete results.' }
+
+$env:OLANGA_BENCH_LABEL = 'release-152-resident'
+$env:OLANGA_BENCH_EXE = 'dist/152/win-unpacked/Olanga.exe'
+npm run bench:resources
+if ($LASTEXITCODE -ne 0) { throw 'Candidate benchmark failed; do not compare incomplete results.' }
+Remove-Item Env:OLANGA_BENCH_SAMPLES, Env:OLANGA_BENCH_LABEL, Env:OLANGA_BENCH_EXE
+```
+
+Each JSON report and its log are written under ignored `build/qa/resources/`. Check `passed`, the recorded package versions and each phase's microphone/model/visibility state before comparing matching phases. Reports distinguish mean **CPU as a percentage of one logical core**, median **private committed memory**, median **total working set**, and one **private resident RAM snapshot** at the end of each phase. Twenty counter snapshots yield 19 measured CPU intervals after the first is discarded. Shared working-set pages must not be presented as additional private RAM; committed bytes must not be labeled resident RAM.
+
+Private resident RAM comes from the Windows `WorkingSetPrivate` counter, summed across the selected executable's processes after the CPU interval has ended. The sampler uses Windows PowerShell 5.1 with its system module path and requires a complete counter snapshot for this benchmark. An environment that denies Windows CIM access must permit that read before benchmarking; do not substitute zero or committed bytes. The sampler's standalone `-AllowMissingPrivateWorkingSet` option can record unavailable counters as null, but those reports do not pass `bench:resources` or support a resident-memory comparison.
+
+The [1.5.2 validation record](VALIDATION.md) includes all six states and the measured model-reload tradeoff. Resource improvements depend on the state and hardware; repeat paired runs when making broader claims, and do not turn an idle-state CPU reduction into a claim about active recognition or all memory use.
 
 ## Commit and publish
 

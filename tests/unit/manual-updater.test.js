@@ -42,7 +42,7 @@ function harness(t, options = {}) {
   const releaseService = createReleaseService({ getInstalledVersion: () => '1.4.0', fetchImpl });
   const updater = createManualUpdater({
     releaseService, updatesDir: directory, fetchImpl, getInstalledVersion: () => '1.4.0',
-    launchInstaller: async (file, version) => { launches.push({ file, version }); return options.launchInstaller?.(file, version); },
+    launchInstaller: async (file, version, verification) => { launches.push({ file, version, verification }); return options.launchInstaller?.(file, version, verification); },
     onState: state => { states.push(state); options.onState?.(state); },
     ...options.updaterOptions,
   });
@@ -93,6 +93,7 @@ test('download verifies both checksum assets, reports progress and waits for exp
   assert.equal(h.launches.length, 1);
   assert.equal(h.launches[0].file, downloadedFile(h.directory));
   assert.equal(h.launches[0].version, '1.4.1');
+  assert.deepEqual(h.launches[0].verification, { sha256: sha(h.data.installer) });
   assert.equal(h.updater.getState().phase, 'installing');
   await h.updater.install();
   assert.equal(h.launches.length, 1);

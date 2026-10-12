@@ -4,13 +4,13 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../../js/workbench.js'), 'utf8');
-const helper = source.slice(source.indexOf('  function stopLocalSpeech()'), source.indexOf('  function showMessage'));
+const helper = source.slice(source.indexOf('  let muteWatch = null;'), source.indexOf('  function showMessage'));
 const block = source.slice(source.indexOf("  const conversation = page('conversation'"), source.indexOf('  for (const value of pages.values())'));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture(options = {}) {
-  const buttons = new Map(), fields = new Map(), messages = [], intervals = [], keydowns = [], audio = [], cancelled = [];
-  let live = false, recognizerResets = 0;
+  const buttons = new Map(), fields = new Map(), messages = [], intervals = new Map(), keydowns = [], audio = [], cancelled = [];
+  let live = false, recognizerResets = 0, intervalId = 0;
   const node = () => ({ append() {}, setAttribute() {} });
   class Audio {
     constructor() { this.paused = false; this.playing = deferred(); audio.push(this); }
@@ -25,7 +25,7 @@ function fixture(options = {}) {
     button: (label, action) => { buttons.set(label, action); return node(); }, actions() {}, report() {}, showMessage: message => messages.push(message), checked: value => value,
     Audio, URL: { createObjectURL: () => 'blob:fixture', revokeObjectURL() {} }, Blob, Uint8Array,
     atob: value => Buffer.from(value, 'base64').toString('binary'), crypto: require('node:crypto'),
-    setInterval: callback => { intervals.push(callback); return 1; }, clearInterval() {}, closeHandlers: new Set(),
+    setInterval: callback => { const id = ++intervalId; intervals.set(id, callback); return id; }, clearInterval: id => intervals.delete(id), closeHandlers: new Set(),
     discardLocalSpeechCapture: () => { recognizerResets++; },
     generation: 0, localRequestId: null, speechRequestId: null, localReplyText: '', localAudio: null, localAudioUrl: null,
     isTtsMuted: false, currentState: 'idle', State: { IDLE: 'idle' } });
@@ -66,16 +66,16 @@ test('cancelled Live setup never publishes a late active message and starting Li
 test('local speech guards wake input before play resolves and releases it on every playback exit', async () => {
   for (const ending of ['stop', 'ended', 'error', 'rejected']) {
     const f = fixture({ deferPlay: true }), speech = f.context.window.OlangaLocalSpeech;
-    assert.equal(speech.isActive(), false); await f.buttons.get('Ask local model')();
+    assert.equal(speech.isActive(), false); assert.equal(f.intervals.size, 0); await f.buttons.get('Ask local model')();
     const pending = f.buttons.get('Speak local answer')(); await flush();
-    assert.equal(speech.isActive(), true, ending); assert.equal(f.resets(), 1);
+    assert.equal(speech.isActive(), true, ending); assert.equal(f.resets(), 1); assert.equal(f.intervals.size, 1);
     if (ending === 'stop') speech.stop();
     else if (ending === 'ended') f.audio[0].onended();
     else if (ending === 'error') f.audio[0].onerror();
     else f.audio[0].playing.reject(new Error('Autoplay refused'));
     if (ending === 'rejected') await assert.rejects(pending, /Autoplay/);
     else { f.audio[0].playing.resolve(); await pending; }
-    assert.equal(speech.isActive(), false, ending); assert.equal(f.resets(), 2);
+    assert.equal(speech.isActive(), false, ending); assert.equal(f.resets(), 2); assert.equal(f.intervals.size, 0);
     assert.equal(f.context.currentState, 'idle'); assert.equal(f.context.isTtsMuted, false);
   }
 });

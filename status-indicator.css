@@ -42,6 +42,7 @@ body[data-state="speaking"] { --accent: #0984e3; --accent-light: #74b9ff; --acce
 body[data-state="thinking"] .light-surface { animation: thinking 3s linear infinite; }
 body[data-state="listening"] .light-surface { animation: breathe 1.8s ease-in-out infinite; }
 body[data-state="speaking"] .light-surface { animation: breathe 1s ease-in-out infinite; }
+body.visuals-paused *, body.visuals-paused *::before, body.visuals-paused *::after { animation-play-state: paused !important; }
 
 #quickMenu {
   position: absolute; left: var(--menu-left); top: var(--menu-top); width: var(--menu-width); height: var(--menu-height);

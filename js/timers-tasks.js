@@ -13,6 +13,47 @@ const TIMER_KINDS = new Set(['timer', 'reminder', 'alarm']);
 const TIMER_NOT_SAVED = ' It could not be saved and will be lost if Olanga closes.';
 let stopAlarmPlayback = null;
 let localRecordSequence = 0;
+let countdownTimeout = null;
+
+function timerDisplaysVisible() {
+  return window.OlangaVisibility ? window.OlangaVisibility.isVisible() : !document.hidden;
+}
+
+// All countdowns share one wakeup. The nearest deadline still fires in the
+// tray; only visible countdown labels need a one-second refresh. A minute cap
+// rechecks wall-clock adjustments without waking once per second per timer.
+function scheduleTimerCountdowns() {
+  clearTimeout(countdownTimeout);
+  countdownTimeout = null;
+  const now = Date.now();
+  let remaining = Infinity;
+  for (const timer of activeTimers) if (!timer.ringing) remaining = Math.min(remaining, timer.endTime - now);
+  if (remaining === Infinity) return;
+  const delay = Math.max(0, Math.min(remaining, timerDisplaysVisible() ? 1000 : 60000));
+  countdownTimeout = setTimeout(refreshTimerCountdowns, delay);
+}
+
+function refreshTimerCountdowns() {
+  const now = Date.now();
+  const visible = timerDisplaysVisible();
+  for (const timer of activeTimers) {
+    if (timer.ringing) continue;
+    if (timer.endTime <= now) ringTimer(timer);
+    else if (visible) updateTimerDisplay(timer);
+  }
+  scheduleTimerCountdowns();
+}
+
+const unsubscribeTimerVisibility = window.OlangaVisibility?.subscribe(refreshTimerCountdowns);
+const unsubscribeTimerClock = window.electronAPI?.onAppClockChanged?.(refreshTimerCountdowns);
+if (!window.OlangaVisibility) document.addEventListener?.('visibilitychange', refreshTimerCountdowns);
+window.addEventListener?.('focus', refreshTimerCountdowns);
+window.addEventListener?.('beforeunload', () => {
+  clearTimeout(countdownTimeout);
+  unsubscribeTimerVisibility?.();
+  unsubscribeTimerClock?.();
+  stopTimerAlarm();
+}, { once: true });
 
 function describeDuration(totalSeconds) {
   const hours = Math.floor(totalSeconds / 3600), minutes = Math.floor((totalSeconds % 3600) / 60), seconds = totalSeconds % 60;
@@ -74,22 +115,13 @@ function startTimerCountdown(timerObj) {
   if (timerObj.endTime <= Date.now()) {
     // Only a restored record can already be due: every new duration is positive.
     ringTimer(timerObj, true);
-    return;
   }
-  timerObj.intervalId = setInterval(() => {
-    if (timerObj.endTime <= Date.now()) {
-      clearInterval(timerObj.intervalId);
-      timerObj.intervalId = null;
-      ringTimer(timerObj);
-    } else {
-      updateTimerDisplay(timerObj);
-    }
-  }, 1000);
+  scheduleTimerCountdowns();
 }
 
 function loadTimers() {
   // Repeated initialization must not create duplicate countdowns or alarms.
-  activeTimers.forEach(timer => { if (timer.intervalId !== null) clearInterval(timer.intervalId); });
+  clearTimeout(countdownTimeout);
   stopTimerAlarm();
   activeTimers = [];
   try {
@@ -108,7 +140,9 @@ function loadTimers() {
     console.error('Failed to load timers:', error);
   }
   renderTimers();
-  activeTimers.forEach(startTimerCountdown);
+  const restoredAt = Date.now();
+  for (const timer of activeTimers) if (timer.endTime <= restoredAt) ringTimer(timer, true);
+  scheduleTimerCountdowns();
 }
 
 function createTimer(durationSeconds, label = 'Timer') {
@@ -195,9 +229,6 @@ function cancelTimer(id) {
   const timerIndex = activeTimers.findIndex(t => t.id === id);
   if (timerIndex !== -1) {
     const timer = activeTimers[timerIndex];
-    if (timer.intervalId) {
-      clearInterval(timer.intervalId);
-    }
     activeTimers.splice(timerIndex, 1);
     const saved = saveTimers();
 
@@ -206,6 +237,7 @@ function cancelTimer(id) {
     if (!stillRinging) stopTimerAlarm();
 
     renderTimers();
+    scheduleTimerCountdowns();
     return { ok: saved, message: `${timer.label} cancelled.${saved ? '' : ' The change could not be saved; this timer may return when Olanga reopens.'}` };
   }
   return { ok: false, message: 'That timer is no longer active.' };
@@ -260,9 +292,8 @@ function findTimerForChange(text) {
 }
 
 function clearAllTimers() {
-  activeTimers.forEach(t => {
-    if (t.intervalId) clearInterval(t.intervalId);
-  });
+  clearTimeout(countdownTimeout);
+  countdownTimeout = null;
   activeTimers = [];
   const saved = saveTimers();
   stopTimerAlarm();
@@ -322,7 +353,8 @@ function updateTimerDisplay(timerObj) {
   if (!timeEl) return;
 
   const remainingMs = timerObj.endTime - Date.now();
-  timeEl.textContent = formatTime(remainingMs > 0 ? remainingMs : 0);
+  const text = formatTime(remainingMs > 0 ? remainingMs : 0);
+  if (timeEl.textContent !== text) timeEl.textContent = text;
 }
 
 function formatTime(ms) {

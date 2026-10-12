@@ -35,15 +35,15 @@ The current bundled-model smoke also passed with eight generated WAV fixtures an
 
 Coverage: `tests/unit/screenshot-cancel.test.js`, `desktop-workflows.test.js`, `desktop-automation.test.js`, `productivity.test.js` and `assistant-routing.test.js`. Controlled tests inject delayed results and cancellation at different phases; they do not replace native confirmation or prove arbitrary document editing works.
 
-## Local data, settings and Terminal
+## Local data and settings
 
-- Corrupt timer, checklist and Terminal records no longer prevent valid neighboring records or the rest of startup from loading. Record identifiers remain distinct across repeated creation and reload.
+- Corrupt timer and checklist records no longer prevent valid neighboring records or the rest of startup from loading. Record identifiers remain distinct across repeated creation and reload.
 - Checklist writes roll back on persistence failure. The manual UI retains the submitted text, restores a failed checkbox change and reports the failure. Timer receipts distinguish a working session timer from a failed durable save; deadline, dismissal and alarm resources are tested across restart and audio initialization failures.
 - Runtime audio controls and startup remain usable when browser storage is blocked. Cleanup operations are isolated so one failure cannot skip the remaining resource releases.
-- Terminal tabs create their native session lazily on the first command. The command runs in the actual validated initial directory, and concurrent first commands share initialization. Spawn/pipe errors settle pending commands; closing a tab prevents late initialization or replies from affecting its replacement. Saved header text cannot inject HTML.
+- The built-in Terminal and its shell-execution endpoints were removed in 1.5.2. Stale feature preferences cannot restore it.
 - Settings initialization cannot let an obsolete speech-mode change start the microphone or overwrite the latest choice. Activity updates preserve in-progress Workspace form text; routine cancellation/review preserves completed work without replay.
 
-Coverage: `tests/unit/timers-tasks.test.js`, `startup-terminal.test.js`, `prefs-schema.test.js`, `productivity.test.js` and the real-renderer Workspace smoke. The current Workspace report contains 16 passing checks with no provider, microphone or privileged native calls.
+Coverage: `tests/unit/timers-tasks.test.js`, `startup-settings.test.js`, `prefs-schema.test.js`, `productivity.test.js` and the real-renderer Workspace smoke. The current Workspace report contains 16 passing checks with no provider, microphone or privileged native calls.
 
 ## Credentials and recovery
 
@@ -52,7 +52,7 @@ Coverage: `tests/unit/timers-tasks.test.js`, `startup-terminal.test.js`, `prefs-
 - New keys and key removals become active only after secure persistence succeeds. A failed first-key save leaves local input available and the candidate available for retry.
 - Explicitly empty secure entries represent deletion and cannot resurrect old plaintext credentials. Legacy migration occurs only when the secure record is genuinely absent; failed migration leaves the candidate inactive and preserves recovery data. Failure to clear obsolete browser storage cannot turn a successful secure save into a reported failure.
 
-Coverage: `tests/unit/secure-store.test.js`, `credential-storage.test.js`, `startup-terminal.test.js` and provider tests. Tests use controlled storage/encryption dependencies; they do not claim recovery from every OS or profile corruption case. Live speech reports contain no plaintext credential.
+Coverage: `tests/unit/secure-store.test.js`, `credential-storage.test.js`, `startup-settings.test.js` and provider tests. Tests use controlled storage/encryption dependencies; they do not claim recovery from every OS or profile corruption case. Live speech reports contain no plaintext credential.
 
 ## Notes and news
 

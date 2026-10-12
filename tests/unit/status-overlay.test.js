@@ -8,9 +8,9 @@ const { createStatusOverlay, overlayGeometry, pointerTarget } = require('../../d
 function fixture(t) {
   const ipcMain = new EventEmitter();
   const screen = new EventEmitter();
-  let cursor = { x: 0, y: 0 };
+  let cursor = { x: 0, y: 0 }, pointerReads = 0;
   screen.getPrimaryDisplay = () => ({ workArea: { x: -1920, y: 0, width: 1920, height: 1040 } });
-  screen.getCursorScreenPoint = () => cursor;
+  screen.getCursorScreenPoint = () => { pointerReads++; return cursor; };
   class FakeWindow extends EventEmitter {
     constructor(options) {
       super(); this.options = options; this.visible = false; this.destroyed = false; this.focused = false; this.snapshots = [];
@@ -58,7 +58,7 @@ function fixture(t) {
   const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
   const send = (type, extra = {}, sender = event) => ipcMain.emit('status-overlay-action', sender, { type, ...extra });
   t.after(() => overlay.destroy());
-  return { overlay, window, screen, ipcMain, event, send, actions, opens: () => opens, cursor: (point) => { cursor = point; }, latest: () => window.snapshots.at(-1) };
+  return { overlay, window, screen, ipcMain, event, send, actions, opens: () => opens, pointerReads: () => pointerReads, cursor: (point) => { cursor = point; }, latest: () => window.snapshots.at(-1) };
 }
 
 test('only the orb and open rounded menu capture mouse input', () => {
@@ -286,4 +286,35 @@ test('leaving the menu dismisses it after the recovery delay without trapping in
   t.mock.timers.tick(51);
   assert.equal(f.latest().menuOpen, false);
   assert.equal(f.window.focused, false);
+});
+
+test('hidden overlay stops native pointer polling and resumes the fallback when shown', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 10000 });
+  const f = fixture(t);
+  assert.equal(f.window.options.webPreferences.backgroundThrottling, true);
+  f.send('ready');
+  t.mock.timers.tick(5000);
+  assert.equal(f.pointerReads(), 0);
+  f.overlay.setMode('all');
+  t.mock.timers.tick(100);
+  assert.ok(f.pointerReads() > 0);
+  f.overlay.setSuspended(true);
+  const reads = f.pointerReads();
+  assert.equal(f.latest().visible, false);
+  t.mock.timers.tick(5000);
+  assert.equal(f.pointerReads(), reads);
+  f.overlay.setSuspended(false);
+  assert.equal(f.latest().visible, true);
+  t.mock.timers.tick(100);
+  assert.ok(f.pointerReads() > reads);
+});
+
+test('unchanged overlay state does not repeatedly send and repaint its snapshot', (t) => {
+  const f = fixture(t);
+  f.overlay.setMode('all'); f.send('ready');
+  const before = f.window.snapshots.length;
+  f.overlay.setState('idle'); f.overlay.setMode('all'); f.overlay.setSuspended(false);
+  assert.equal(f.window.snapshots.length, before);
+  f.send('ready');
+  assert.equal(f.window.snapshots.length, before + 1, 'a fresh renderer always receives its initial snapshot');
 });

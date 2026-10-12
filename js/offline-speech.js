@@ -132,6 +132,9 @@
     }
     cancel();
     const run = { controller: new AbortController(), recognizer: null, decoder: null, started: Date.now() };
+    // A muted microphone may release its large shared worker. Keep it alive
+    // until this request's recognizer has been removed, including cancellation.
+    run.releaseModel = typeof retainVoskModel === 'function' ? retainVoskModel() : null;
     active = run;
     lastError = '';
     const abort = () => run.controller.abort(abortError());
@@ -206,6 +209,7 @@
         run.decoder = null;
       }
       if (active === run) active = null;
+      run.releaseModel?.();
     }
   }
 
@@ -213,7 +217,8 @@
     transcribe, cancel,
     getStatus: () => ({
       ready: typeof voskModel !== 'undefined' && !!voskModel?.ready,
-      loading: typeof voskModelLoadPromise !== 'undefined' && !!voskModelLoadPromise,
+      loading: (typeof voskModelLoadPromise !== 'undefined' && !!voskModelLoadPromise) ||
+        (typeof voskLibraryLoadPromise !== 'undefined' && !!voskLibraryLoadPromise),
       busy: !!active, recognizers: active?.recognizer ? 1 : 0,
       decoding: !!active?.decoder, lastError, lastRun,
       maxAudioSeconds: MAX_AUDIO_SECONDS, maxAudioBytes: MAX_AUDIO_BYTES

@@ -18,7 +18,7 @@ function fixture({ claim = async () => true, persist = true } = {}) {
     openApp: async name => { calls.opened.push(name); return { ok: true, verified: true, message: 'Spotify is open.' }; }, mediaControl: async (...args) => { calls.media.push(args); return { ok: true, verified: true, message: 'Volume is set.' }; }, cancelMedia() {}
   };
   const context = vm.createContext({
-    AbortController, DOMException, Date, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {},
+    AbortController, DOMException, Date, setTimeout: (...args) => { const timer = setTimeout(...args); timer.unref(); return timer; }, clearTimeout, setInterval: () => 1, clearInterval() {},
     console: { log() {}, warn() {}, error() {} }, OlangaGemini: require('../../shared/gemini-request'), OlangaIntents: require('../../shared/fast-intents'), OlangaTurnLifecycle: require('../../shared/turn-lifecycle'), OlangaTurnCorrections: require('../../shared/turn-corrections'),
     window: { electronAPI: api, OlangaDesktop: { cancel() {}, isBusy: () => desktopBusy }, OlangaLiveConversation: { isActive: () => live, stop: async () => { live = false; } } },
     document: { querySelector: () => dialog ? {} : null, getElementById: () => null },

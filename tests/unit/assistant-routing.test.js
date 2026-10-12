@@ -37,6 +37,9 @@ function loadLocalActions(context) {
   context.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
   context.setInterval = () => 1;
   context.clearInterval = () => {};
+  // These routing fixtures do not advance timer deadlines (covered separately).
+  // Keep timeout-based countdowns from retaining the Node test process.
+  context.setTimeout = (...args) => { const timer = setTimeout(...args); timer.unref(); return timer; };
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/timers-tasks.js'), 'utf8'), context);
   return storage;
 }
@@ -752,6 +755,7 @@ test('actual idle state after TTS and a silence timeout preserves conversation',
   const core = fs.readFileSync(path.join(__dirname, '../../js/core.js'), 'utf8');
   context.document = { body: { classList: { add() {}, remove() {} } } };
   context.lastIdleTime = 0; context.voskRecognizer = null; context.isWakeWordCapturing = false;
+  context.refreshOrbAnimation = () => {};
   vm.runInContext(core.slice(core.indexOf('function setState('), core.indexOf('async function showMainScreen')), context);
   context.rememberConversationMessage('user', 'Change the timer');
   context.rememberConversationMessage('model', 'Which timer?');

@@ -69,12 +69,6 @@
         <path d="M8 18h3"></path>
       </svg>
     </button>
-    <button class="floating-icon" data-screen="terminalScreen" title="Terminal">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="4 17 10 11 4 5"></polyline>
-        <line x1="12" y1="19" x2="20" y2="19"></line>
-      </svg>
-    </button>
     <button class="floating-icon" data-screen="settingsScreen" title="Settings">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
@@ -407,26 +401,6 @@
 
 
 
-  <div class="screen hidden" id="terminalScreen">
-    <div class="terminal-container">
-      <div class="terminal-header">
-        <span class="terminal-title">Terminal</span>
-        <div class="terminal-actions">
-          <button class="terminal-btn" id="terminalClearBtn" title="Clear screen">Clear</button>
-        </div>
-      </div>
-      <div class="terminal-tabs-wrapper">
-        <div class="terminal-tabs" id="terminalTabs"></div>
-        <button class="terminal-tab-add" id="terminalTabAddBtn" title="New terminal tab">+</button>
-      </div>
-      <div class="terminal-output" id="terminalOutput"></div>
-      <div class="terminal-input-wrapper">
-        <span class="terminal-prompt" id="terminalPrompt">PS C:\></span>
-        <input type="text" class="terminal-input" id="terminalInput" placeholder="Enter command..." autocomplete="off">
-      </div>
-    </div>
-  </div>
-
   <!-- Settings Screen -->
   <div class="screen hidden" id="settingsScreen">
     <div class="settings-container">
@@ -596,13 +570,6 @@
           </label>
           <span>News</span>
         </div>
-        <div class="rotation-toggle-row">
-          <label class="toggle-switch">
-            <input type="checkbox" id="featureTerminalToggle" data-feature="terminalScreen">
-            <span class="slider"></span>
-          </label>
-          <span>Terminal</span>
-        </div>
       </div>
 
       <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
@@ -651,7 +618,6 @@
     </div>
   </div>
 
-  <script src="./node_modules/vosk-browser/dist/vosk.js"></script>
   <script src="./shared/status-light.js"></script>
   <script src="./shared/quick-actions.js"></script>
   <script src="./shared/gemini-request.js"></script>
@@ -681,7 +647,6 @@
   <script src="./js/desktop-workflows.js"></script>
   <script src="./js/notepad.js"></script>
   <script src="./js/news.js"></script>
-  <script src="./js/terminal.js"></script>
   <script src="./js/settings.js"></script>
   <script src="./js/workbench.js"></script>
   <script src="./js/schedules.js"></script>

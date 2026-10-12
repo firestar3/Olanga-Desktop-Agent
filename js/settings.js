@@ -484,7 +484,7 @@ async function handleAddKeyFromSettings() {
     if (newKeyInput.value.trim() === key) newKeyInput.value = '';
     renderKeyList();
     // A keyless local setup has never started the wake word or microphone.
-    if (firstKey && !micStream) { await initVosk(); if (apiKey && !micStream) await initMicrophone(); }
+    if (firstKey && !micStream) { await initVosk({ microphone: true }); if (apiKey && !micStream) await initMicrophone(); }
   } catch (error) {
     showError(error.message || 'Could not initialize voice input.');
   } finally {
@@ -498,7 +498,7 @@ async function changeSpeechInput(select) {
   try {
     window.OlangaWorkspace.preference('speechInput', select.value);
     if (!micStream && (apiKey || select.value !== 'cloud')) {
-      await initVosk();
+      await initVosk({ microphone: true });
       if (version !== speechInputChangeVersion) return;
       // Recheck after model loading: keyless cloud input does not need a mic.
       if (apiKey || window.OlangaWorkspace.snapshot().speechInput !== 'cloud') await initMicrophone();
@@ -624,8 +624,7 @@ async function init() {
   }
 
   // Start clock + date
-  setInterval(updateClock, 1000);
-  updateClock();
+  startClock();
 
   if (saveKeyBtn) saveKeyBtn.addEventListener('click', handleSaveKey);
   document.getElementById('startLocalBtn')?.addEventListener('click', () => {
@@ -1063,7 +1062,7 @@ function renderCustomWakeWords() {
 
 // ============================================
 // OPTIONAL FEATURE PANELS
-// The voice assistant is the core product; Notepad, News, and Terminal
+// The voice assistant is the core product; Notepad and News
 // are opt-in panels toggled from Settings (off by default).
 // ============================================
 
@@ -1126,14 +1125,12 @@ function initFeatureToggles() {
 const floatingIcons = document.querySelectorAll('.floating-icon');
 const notepadScreen = document.getElementById('notepadScreen');
 const newsScreen = document.getElementById('newsScreen');
-const terminalScreen = document.getElementById('terminalScreen');
 const settingsScreen = document.getElementById('settingsScreen');
 
 const screens = {
   mainScreen,
   notepadScreen,
   newsScreen,
-  terminalScreen,
   settingsScreen
 };
 

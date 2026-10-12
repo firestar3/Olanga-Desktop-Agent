@@ -26,6 +26,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getOpenAtLogin: () => ipcRenderer.invoke('get-open-at-login'),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke('set-open-at-login', enabled),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  getAppVisibility: () => ipcRenderer.invoke('get-app-visibility'),
+  onAppClockChanged: callback => {
+    const handler = (_event, value) => callback(value);
+    ipcRenderer.on('app-clock-changed', handler);
+    return () => ipcRenderer.removeListener('app-clock-changed', handler);
+  },
+  onAppVisibilityChanged: callback => {
+    const handler = (_event, state) => callback(state);
+    ipcRenderer.on('app-visibility-changed', handler);
+    return () => ipcRenderer.removeListener('app-visibility-changed', handler);
+  },
   projectList: () => ipcRenderer.invoke('project-list'),
   workbenchGuide: name => ipcRenderer.invoke('workbench-guide', name),
   phoneAddresses: () => ipcRenderer.invoke('phone-addresses'),
@@ -110,10 +121,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   arrangeApp: (payload) => ipcRenderer.invoke('arrange-app', payload),
   closeApp: (appName) => ipcRenderer.invoke('close-app', appName),
   requestScreenshot: () => ipcRenderer.invoke('request-screenshot'),
-  executeCommand: (payload) => ipcRenderer.invoke('execute-command', payload),
-  createTerminalSession: (payload) => ipcRenderer.invoke('terminal-session-create', payload),
-  executeTerminalSessionCommand: (payload) => ipcRenderer.invoke('terminal-session-execute', payload),
-  closeTerminalSession: (payload) => ipcRenderer.invoke('terminal-session-close', payload),
   fetchNewsBundle: (payload) => ipcRenderer.invoke('fetch-news-bundle', payload),
   nvidiaTtsConfig: (payload) => ipcRenderer.invoke('nvidia-tts-config', payload),
   nvidiaTtsSynthesize: (payload) => ipcRenderer.invoke('nvidia-tts-synthesize', payload),

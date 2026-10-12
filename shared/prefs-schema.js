@@ -21,7 +21,7 @@
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (statusLight, quickActions, shortcuts) {
   const DEFAULT_NVIDIA_VOICE = 'Magpie-Multilingual.EN-US.Sofia';
-  const OPTIONAL_FEATURES = ['notepadScreen', 'newsScreen', 'terminalScreen'];
+  const OPTIONAL_FEATURES = ['notepadScreen', 'newsScreen'];
   const DEFAULT_TTS_RATE = 1.05;
   // Silence that ends a spoken request. Standard keeps the original timing.
   const END_OF_SPEECH_MS = Object.freeze({ standard: 1500, quick: 1000, fast: 700 });

@@ -67,6 +67,21 @@ test('unknown feature ids are dropped', () => {
   assert.deepEqual(loaded.features, ['notepadScreen']);
 });
 
+test('retired Terminal preferences are ignored without deleting saved history or supported panels', () => {
+  const history = '[{"name":"Saved tab","entries":[{"text":"user output"}]}]';
+  const storage = fakeStorage({
+    olanga_enabled_features: '["terminalScreen","notepadScreen","newsScreen"]',
+    olangaTerminalTabs: history
+  });
+  const loaded = prefs.load(storage);
+  assert.deepEqual(loaded.features, ['notepadScreen', 'newsScreen']);
+  const merged = prefs.merge(loaded, { features: ['terminalScreen', 'newsScreen'] });
+  assert.deepEqual(merged.features, ['newsScreen']);
+  prefs.writeToStorage(storage, merged);
+  assert.deepEqual(prefs.readFromStorage(storage).features, ['newsScreen']);
+  assert.equal(storage.getItem('olangaTerminalTabs'), history);
+});
+
 test('a write followed by a read round-trips', () => {
   const storage = fakeStorage();
   const written = prefs.sanitize({
@@ -76,7 +91,7 @@ test('a write followed by a read round-trips', () => {
     ttsEngine: 'magpie',
     ttsRate: 1.2,
     nvidiaVoice: 'Magpie-Multilingual.EN-US.Leo',
-    features: ['terminalScreen'],
+    features: ['newsScreen'],
     keyRotation: true,
     statusLightMode: 'all',
     statusLightSize: 'large',
@@ -89,7 +104,7 @@ test('a write followed by a read round-trips', () => {
   assert.equal(reloaded.city, 'Portland');
   assert.equal(reloaded.ttsEngine, 'magpie');
   assert.equal(reloaded.ttsRate, 1.2);
-  assert.deepEqual(reloaded.features, ['terminalScreen']);
+  assert.deepEqual(reloaded.features, ['newsScreen']);
   assert.equal(reloaded.keyRotation, true);
   assert.equal(reloaded.statusLightMode, 'all');
   assert.equal(reloaded.statusLightSize, 'large');

@@ -7,23 +7,33 @@ const source = fs.readFileSync(path.join(__dirname, '../../js/timers-tasks.js'),
 
 function harness(store = new Map(), start = 100000) {
   let now = start, nextInterval = 0, alarms = 0;
-  const intervals = new Map();
+  const intervals = new Map(), timeouts = new Map(), listeners = new Map();
   class Clock extends Date {
     constructor(...args) { super(...(args.length ? args : [now])); }
     static now() { return now; }
   }
   const context = vm.createContext({
-    Date: Clock, setTimeout, clearTimeout, console: { log() {}, error() {} }, window: {},
+    Date: Clock, console: { log() {}, error() {} }, window: {
+      addEventListener(name, fn) { listeners.set(name, fn); },
+      electronAPI: { onAppClockChanged(fn) { listeners.set('native-clock', fn); return () => listeners.delete('native-clock'); } }
+    },
     activeTimers: [], activeTasks: [], alarmIntervalId: null, timersContainer: null,
-    document: { getElementById() { return null; } },
+    document: { hidden: false, getElementById() { return null; }, addEventListener(name, fn) { listeners.set(name, fn); } },
     localStorage: { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) },
     setInterval(fn, delay) { const id = ++nextInterval; intervals.set(id, { fn, delay }); return id; },
-    clearInterval(id) { intervals.delete(id); }
+    clearInterval(id) { intervals.delete(id); },
+    setTimeout(fn, delay) { const id = ++nextInterval; timeouts.set(id, { fn, delay, at: now + delay }); return id; },
+    clearTimeout(id) { timeouts.delete(id); }
   });
   vm.runInContext(source, context);
   context.playAlarmSound = () => { alarms++; };
-  return { context, store, intervals, get alarms() { return alarms; },
-    advance(ms) { now += ms; for (const [id, interval] of [...intervals]) if (intervals.has(id)) interval.fn(); }
+  return { context, store, intervals, timeouts, listeners, get alarms() { return alarms; }, jumpClock(ms) { now += ms; },
+    advance(ms) {
+      now += ms;
+      const repeating = [...intervals];
+      for (const [id, timer] of [...timeouts]) if (timeouts.has(id) && timer.at <= now) { timeouts.delete(id); timer.fn(); }
+      for (const [id, interval] of repeating) if (intervals.has(id)) interval.fn();
+    }
   };
 }
 
@@ -57,12 +67,81 @@ test('overdue timers ring on reopening with one shared alarm and no duplicate in
   reopened.context.loadTimers();
   assert.equal(reopened.context.activeTimers.filter(timer => timer.ringing).length, 2);
   assert.equal(reopened.alarms, 1);
-  assert.deepEqual([...reopened.intervals.values()].map(item => item.delay).sort(), [1000, 2000]);
+  assert.deepEqual([...reopened.intervals.values()].map(item => item.delay), [2000]);
+  assert.deepEqual([...reopened.timeouts.values()].map(item => item.delay), [1000]);
   reopened.context.loadTimers();
-  assert.equal(reopened.intervals.size, 2);
+  assert.equal(reopened.intervals.size, 1);
+  assert.equal(reopened.timeouts.size, 1);
   reopened.context.clearAllTimers();
   assert.equal(reopened.intervals.size, 0);
+  assert.equal(reopened.timeouts.size, 0);
   assert.equal(first.store.get('olanga_timers'), '[]');
+});
+
+test('many countdowns share one wakeup, sleep in the tray, and still ring at exact fractional deadlines', () => {
+  const app = harness();
+  for (let i = 0; i < 50; i++) app.context.createTimer(120 + i, `Timer ${i}`);
+  assert.equal(app.intervals.size, 0);
+  assert.equal(app.timeouts.size, 1);
+  assert.equal([...app.timeouts.values()][0].delay, 1000);
+  app.context.document.hidden = true;
+  app.listeners.get('visibilitychange')();
+  assert.equal([...app.timeouts.values()][0].delay, 60000);
+  app.context.createTimer(0.25, 'Quick');
+  assert.equal([...app.timeouts.values()][0].delay, 250);
+  app.advance(249);
+  assert.equal(app.alarms, 0);
+  app.advance(1);
+  assert.equal(app.alarms, 1);
+  assert.equal(app.context.activeTimers.find(timer => timer.label === 'Quick').ringing, true);
+  app.context.cancelTimerByLabel('Quick');
+  assert.equal(app.intervals.size, 0, 'the shared audible alarm stops');
+  app.context.document.hidden = false;
+  app.listeners.get('visibilitychange')();
+  assert.equal([...app.timeouts.values()][0].delay, 1000);
+  app.context.clearAllTimers();
+  assert.equal(app.timeouts.size, 0);
+});
+
+test('a wall-clock jump or restore delivers each elapsed deadline once and cancellation disarms it', () => {
+  const app = harness();
+  app.context.document.hidden = true;
+  app.context.createTimer(120, 'Tea');
+  app.context.createTimer(180, 'Laundry');
+  app.advance(240000);
+  assert.equal(app.context.activeTimers.filter(timer => timer.ringing).length, 2);
+  assert.equal(app.alarms, 1);
+  assert.equal(app.timeouts.size, 0);
+  app.listeners.get('focus')();
+  assert.equal(app.alarms, 1);
+  app.context.clearAllTimers();
+  app.context.createTimer(0.25, 'Cancelled');
+  app.context.cancelTimerByLabel('Cancelled');
+  app.advance(250);
+  assert.equal(app.alarms, 1);
+  assert.equal(app.timeouts.size, 0);
+});
+
+test('native clock-change and resume notifications wake a hidden deadline immediately without polling', () => {
+  const app = harness();
+  app.context.document.hidden = true;
+  app.context.createTimer(120, 'Tea');
+  assert.equal([...app.timeouts.values()][0].delay, 60000);
+  app.jumpClock(180000);
+  assert.equal(app.alarms, 0, 'no timeout or focus event has fired');
+  app.listeners.get('native-clock')({ reason: 'system-time' });
+  assert.equal(app.alarms, 1);
+  assert.equal(app.context.activeTimers[0].ringing, true);
+  app.listeners.get('native-clock')({ reason: 'resume' });
+  assert.equal(app.alarms, 1, 'duplicate native events do not redeliver');
+  app.context.clearAllTimers();
+  app.context.createTimer(120, 'Later');
+  app.jumpClock(-60000);
+  app.listeners.get('native-clock')({ reason: 'system-time' });
+  assert.equal(app.context.activeTimers[0].ringing, false, 'a backward clock change never rings early');
+  app.listeners.get('beforeunload')();
+  assert.equal(app.timeouts.size, 0);
+  assert.equal(app.listeners.has('native-clock'), false);
 });
 
 test('invalid timer storage cannot break startup or discard valid neighboring timers', () => {
@@ -328,8 +407,11 @@ test('a hung audio resume cannot accumulate contexts and dismissal closes pendin
   let created = 0, closed = 0, watchdog;
   const app = harness();
   vm.runInContext(source.slice(source.indexOf('function playAlarmSound()'), source.indexOf('function playAlarmSoundLoop()')), app.context);
-  app.context.setTimeout = fn => { watchdog = fn; return 1; };
-  app.context.clearTimeout = () => {};
+  const schedule = app.context.setTimeout;
+  app.context.setTimeout = (fn, delay) => {
+    if (delay === 5000) { watchdog = fn; return 'watchdog'; }
+    return schedule(fn, delay);
+  };
   app.context.window.AudioContext = class {
     state = 'suspended'; currentTime = 0;
     constructor() { created++; }

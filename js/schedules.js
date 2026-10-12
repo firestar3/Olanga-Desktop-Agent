@@ -12,9 +12,24 @@
     notify: payload => window.electronAPI?.notify?.(payload)
   });
   let render = () => {}, lastError = '';
+  let interval = null;
+  let disposed = false;
+  function syncSchedulePolling() {
+    const state = store.snapshot();
+    const needed = !disposed && !state.error && state.items.some(item => item.enabled && item.nextAt !== null);
+    if (needed && interval === null) interval = setInterval(tick, 5000);
+    else if (!needed && interval !== null) { clearInterval(interval); interval = null; }
+  }
+  // Calendar imports and the schedules page share this store. Start and stop
+  // delivery checks whenever either changes it; empty/disabled schedules sleep.
+  for (const name of ['add', 'enable', 'remove']) {
+    const mutate = store[name];
+    store[name] = (...args) => { const result = mutate(...args); syncSchedulePolling(); return result; };
+  }
   async function tick() {
     try { if (await runner.tick()) render(); lastError = ''; }
     catch (error) { if (lastError !== error.message) { lastError = error.message; console.warn('[Olanga] Schedule delivery stopped:', error.message); } }
+    finally { syncSchedulePolling(); }
   }
   window.OlangaScheduleStore = store;
   window.OlangaWorkbench.addPage('schedules', 'Schedules', ({ section, node, button, field, actions, detail, showMessage }) => {
@@ -51,9 +66,9 @@
     }, true), button('Refresh schedules', render));
     section.append(node('h3', 'Saved schedules'), list, node('h3', 'Recent notifications')); actions(section, button('Clear notification history', () => { store.clearHistory(); render(); })); section.append(history); render();
   });
-  const interval = setInterval(tick, 5000);
   window.addEventListener('focus', tick);
+  const unsubscribeClock = window.electronAPI?.onAppClockChanged?.(tick);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
-  window.addEventListener('beforeunload', () => clearInterval(interval), { once: true });
+  window.addEventListener('beforeunload', () => { disposed = true; clearInterval(interval); interval = null; unsubscribeClock?.(); }, { once: true });
   tick();
 })();

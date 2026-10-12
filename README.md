@@ -26,9 +26,9 @@ Olanga is an open-source Windows assistant for the things you do throughout the 
 
 Common commands run directly through local controls, with no API key required for typed requests. Choose cloud transcription or optional on-device English recognition. Gemini handles questions and requests that need interpretation. A small corner orb keeps Olanga within reach while you work in other apps.
 
-**Olanga 1.5.1** gives the app, installer, desktop, Start menu and tray the same transparent purple orb. Update directly from **Workspace → Apps & updates**. [What’s new in 1.5.1](docs/releases/1.5.1.md).
+**Olanga 1.5.2** reduces background work, removes the built-in Terminal and adds visible installation progress with completion checks and app recovery. [What’s new in 1.5.2](docs/releases/1.5.2.md).
 
-Version 1.5.0 brings more of your daily work into **Workspace**: save app layouts, review file changes, search a project, schedule reminders and connect optional browser, editor and phone companions. It also improves request progress, spoken acknowledgments and Spotify startup, while keeping the existing controls, colors and typography. [What's new in 1.5.0](docs/releases/1.5.0.md).
+Use **Workspace** to save app layouts, review file changes, search a project, schedule reminders and connect optional browser, editor and phone companions. Request progress and spoken action results keep you informed as Olanga works.
 
 Local commands, reviewed routines, action results, saved names, memories, spoken briefings and manual in-app updates remain part of the core experience. Optional integrations start only when you choose to use them.
 
@@ -70,9 +70,11 @@ This example shows a supported two-action request: open Spotify and set the syst
 | “Explain the error on my screen.” | Requests a screen capture, then uses Gemini to help diagnose it. |
 | “Fix the bug on my screen.” | Proposes an edit in a supported editor for your review, then checks the visible result after approval. |
 
-Ask questions, request current information through Google Search, or use the optional **Notepad**, **News** and **Terminal** panels for notes, briefings and your own PowerShell sessions.
+Ask questions, request current information through Google Search, or use the optional **Notepad** and **News** panels for notes and briefings.
 
 ## Built for quick responses
+
+**Less work in the background.** In a paired Windows benchmark against 1.5.1, 1.5.2 used 54% less CPU with the idle window visible, 99% less while idle in the tray, and 87% less while muted in the tray. After sustained mute, private resident memory was 40–45% lower. Active voice recognition showed smaller savings. These are measurements on one computer, not a hardware-wide guarantee; see the [full results and test method](docs/VALIDATION.md).
 
 Common app, music, volume, timer, reminder, memory and checklist commands use a local intent matcher. Supported typed requests on this path need **zero model calls**. The cloud transcription path can execute a recognized local command after **one transcription call**; reviewed on-device commands need no transcription provider. Commands receive a short local acknowledgment while work starts, followed by the actual action results. Known local requests get a brief description of the intended action; voice acknowledgments vary while transcription is still pending.
 
@@ -86,12 +88,12 @@ Each request tracks actions and speech separately. A completed action stays comp
 
 ## Get started
 
-1. Download [**Olanga-Setup-1.5.1.exe**](https://github.com/firestar3/Olanga-Desktop-Agent/releases/download/v1.5.1/Olanga-Setup-1.5.1.exe) from the [1.5.1 release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.5.1) and run it. It adds desktop and Start-menu shortcuts.
+1. Download [**Olanga-Setup-1.5.2.exe**](https://github.com/firestar3/Olanga-Desktop-Agent/releases/download/v1.5.2/Olanga-Setup-1.5.2.exe) from the [1.5.2 release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.5.2) and run it. It adds desktop and Start-menu shortcuts.
 2. Choose **Use local commands without a key**, or add your own [Google Gemini API key](https://aistudio.google.com/apikey) for cloud transcription, conversation, screen understanding, planning, and Notes/News AI.
 3. Use the built-in **Windows voice**, or choose **NVIDIA Magpie** in Settings and add a separate [NVIDIA hosted API key](https://build.nvidia.com/settings/api-keys). Use **Save & Test** to verify Magpie synthesis.
 4. Type a request, or enable voice input and say **“Hey Olanga”**, wait for the listening orb, and give your request. **Settings → Speech recognition** offers cloud and on-device modes; on-device modes ask you to review the transcript before sending it. You can also enable a push-to-talk shortcut in Settings.
 
-**Requirements:** Windows 10/11 x64; a microphone for voice input; internet and available Gemini quota for cloud features. Spotify commands require the Spotify desktop app, signed in. Its collection controls currently depend on English accessible labels. The 1.5.1 installer is **unsigned**; its checksum and signing status are included with the release.
+**Requirements:** Windows 10/11 x64; a microphone for voice input; internet and available Gemini quota for cloud features. Spotify commands require the Spotify desktop app, signed in. Its collection controls currently depend on English accessible labels. The 1.5.2 installer is **unsigned**; its checksum and signing status are included with the release.
 
 NVIDIA is optional and used only for Magpie speech; it requires its own key. Volume commands change the Windows output volume, and a nonzero target also unmutes it.
 
@@ -153,7 +155,7 @@ In a small offline comparison, the command vocabulary produced transcripts match
 - **Reminder alerts.** Due reminders and alarms speak if Olanga is idle and its voice is unmuted; busy or restored reminders ring instead. Windows notifications appear when Olanga isn't in front, subject to Windows notification settings. Alarm beeps pause while you're talking to Olanga.
 - **Voice fallback.** If Magpie synthesis or playback fails, Olanga can continue through the Windows voice. Short Magpie replies are cached per voice for reuse.
 
-After starting without a key, you can add a Gemini key in Settings. It becomes active only after a successful secure save. Saved Terminal tabs reopen as history; a PowerShell session starts when you submit a command, and results stay attached to the tab that issued it.
+After starting without a key, you can add a Gemini key in Settings. It becomes active only after a successful secure save.
 
 ## Screen assistance, with you in control
 
@@ -167,7 +169,7 @@ Share your screen to get help understanding an error or preparing an edit in a s
 
 Open **Desktop task** below the command box to start a workflow directly. Supported actions include focusing an observed window, clicking, typing, bounded keyboard shortcuts, scrolling and short waits.
 
-Verification checks the visible result. It does not compile code or run tests, and Olanga does not execute model-generated shell commands. You control the optional Terminal panel yourself.
+Verification checks the visible result. It does not compile code or run tests, and Olanga does not execute model-generated shell commands.
 
 For supported full-field text replacements, the result includes **Before**, **After** and **Undo text edit**. The local checkpoint lasts five minutes. Undo checks the original window, process, editor identity and current text, then verifies restoration. It refuses changed text or a changed editor instead of overwriting intervening work. Other edits may have no undo; this is not general document versioning or automatic rollback.
 
@@ -216,11 +218,13 @@ Gemini **3.5 Flash-Lite** handles transcription, routing and responses; **3.5 Fl
 
 Use **Workspace → Apps & updates → Check for updates** to compare your version with the latest stable GitHub release. Choose **Download update** to download it inside Olanga, with progress and cancellation. Once the download is verified, **Install & restart** updates the existing installation and reopens Olanga, preserving your settings and saved data. Checks, downloads and installation happen only when you choose them; nothing installs on ordinary quit.
 
+From 1.5.2 onward, a separate progress window stays open during installation. Olanga verifies the installed version and reopens the app when the update finishes; failed attempts return a recovery message.
+
 Olanga verifies the downloaded installer's SHA-256 against the release checksum and checks the file again before installation. An explicit update check can recover a complete cached installer after a restart, using fresh release metadata and a new hash check. Interrupted partial downloads restart when you choose Download again.
 
-The 1.5.0 installer is **unsigned**. A checksum confirms file bytes, not publisher identity. Signing support is prepared for a future publisher certificate. Automatic updates and automatic rollback remain disabled.
+The 1.5.2 installer is **unsigned**. A checksum confirms file bytes, not publisher identity. Signing support is prepared for a future publisher certificate. Automatic updates and automatic rollback remain disabled.
 
-Versions through 1.4.0 have a release-page link only. Install 1.5.0 from [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.5.0) to get the in-app update flow for future versions.
+Versions through 1.4.0 have a release-page link only. Install 1.5.2 from [Releases](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.5.2) to get the in-app update flow for future versions.
 
 ## Run from source
 
@@ -253,4 +257,4 @@ See [validation](docs/VALIDATION.md) for reproducible checks and measured covera
 
 ---
 
-[Release notes](docs/releases/1.5.0.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](docs/VALIDATION.md) · [MIT license](LICENSE)
+[Release notes](docs/releases/1.5.2.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](docs/VALIDATION.md) · [MIT license](LICENSE)

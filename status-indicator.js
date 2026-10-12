@@ -28,6 +28,7 @@
     const state = Object.hasOwn(statusLabels, snapshot.state) ? snapshot.state : 'off';
     const open = snapshot.menuOpen === true && state !== 'off';
     document.body.dataset.state = state;
+    document.body.classList.toggle('visuals-paused', snapshot.visible === false);
     light.hidden = state === 'off';
     light.classList.toggle('hovered', snapshot.hovered === true);
     light.setAttribute('aria-expanded', String(open));
