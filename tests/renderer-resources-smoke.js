@@ -36,6 +36,33 @@ async function waitFor(fn, label) {
   for (let i = 0; i < 100; i++) { if (await fn()) return; await pause(40); }
   throw new Error(label);
 }
+async function diagnostics() {
+  if (!main || main.isDestroyed() || main.webContents.isDestroyed()) return { windowUnavailable: true };
+  return {
+    native: { visible: main.isVisible(), minimized: main.isMinimized(), bounds: main.getBounds() },
+    renderer: await evaluate(async () => {
+      const canvas = document.getElementById('orbCanvas');
+      const intersection = canvas ? await new Promise(resolve => {
+        const observer = new IntersectionObserver(entries => { clearTimeout(timer); observer.disconnect(); resolve(entries.map(entry => ({ intersecting: entry.isIntersecting, ratio: entry.intersectionRatio }))); });
+        const timer = setTimeout(() => { observer.disconnect(); resolve('not delivered'); }, 500);
+        observer.observe(canvas);
+      }) : null;
+      return { reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches, documentHidden: document.hidden,
+        nativeVisible: window.OlangaVisibility?.isVisible(), state: typeof currentState === 'undefined' ? null : currentState,
+        pendingFrame: typeof animationFrameId === 'undefined' ? null : animationFrameId,
+        draws: window.orbDraws, mainHidden: document.getElementById('mainScreen')?.classList.contains('hidden'),
+        canvasBounds: canvas?.getBoundingClientRect().toJSON(), intersection };
+    })
+  };
+}
+async function setReducedMotion(reduce) {
+  // Use Chromium's real media-query machinery: Windows CI images may default
+  // to reduced motion. Verify both preferences independently of the host.
+  await main.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: reduce ? 'reduce' : 'no-preference' }]
+  });
+  await waitFor(() => evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches).then(value => value === reduce), 'Emulated motion preference did not reach the renderer');
+}
 const deadline = setTimeout(() => { report.error = 'Resource lifecycle check exceeded 45 seconds.'; save(); app.exit(1); }, 45000);
 deadline.unref();
 app.whenReady().then(async () => {
@@ -45,6 +72,9 @@ app.whenReady().then(async () => {
       return main && !main.webContents.isLoading();
     }, 'Main renderer did not load');
     await waitFor(() => evaluate(() => typeof orbCanvasCtx !== 'undefined' && !!orbCanvasCtx && !!window.OlangaVisibility), 'Asynchronous app initialization did not finish');
+    report.initialReducedMotion = await evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
+    main.webContents.debugger.attach('1.3');
+    await setReducedMotion(false);
     await evaluate(() => {
       window.resourceErrors = [];
       window.addEventListener('error', event => resourceErrors.push(event.message));
@@ -74,6 +104,21 @@ app.whenReady().then(async () => {
     assert.equal(await evaluate(() => orbDraws), idleDraws, 'idle canvas is invisible and does no work');
     report.checks.push('native show resumes active animation; idle draws zero frames');
 
+    await evaluate(() => setState(State.LISTENING));
+    await waitFor(() => evaluate(() => animationFrameId !== null), 'Visible active canvas did not schedule animation');
+    await setReducedMotion(true);
+    await waitFor(() => evaluate(() => animationFrameId === null), 'Reduced motion did not cancel the animation loop');
+    const reducedDraws = await evaluate(() => orbDraws);
+    await pause(250);
+    assert.equal(await evaluate(() => orbDraws), reducedDraws, 'reduced motion keeps a static texture without recurring canvas draws');
+    assert.equal(await evaluate(() => currentState), 'listening', 'motion preference must not change assistant state');
+    await setReducedMotion(false);
+    await waitFor(async () => {
+      const state = await evaluate(() => ({ drawing: animationFrameId !== null, draws: orbDraws }));
+      return state.drawing && state.draws > reducedDraws + 1;
+    }, 'Normal motion did not resume the visible active canvas');
+    report.checks.push('live reduced-motion changes stop recurring draws and normal motion resumes them');
+
     await evaluate(() => { setState(State.SPEAKING); createTimer(4, 'Visible countdown'); });
     main.minimize();
     await waitFor(() => evaluate(() => !window.OlangaVisibility.isVisible()), 'Minimize did not pause visual work');
@@ -81,7 +126,10 @@ app.whenReady().then(async () => {
     await pause(300);
     assert.equal(await evaluate(() => orbDraws), minimizedDraws);
     main.restore(); main.showInactive();
-    await waitFor(() => evaluate(() => window.OlangaVisibility.isVisible() && orbDraws > 1), 'Restore did not resume visual work');
+    await waitFor(async () => {
+      const state = await evaluate(() => ({ visible: window.OlangaVisibility.isVisible(), drawing: animationFrameId !== null, draws: orbDraws }));
+      return state.visible && state.drawing && state.draws > minimizedDraws + 1;
+    }, 'Restore did not resume visual work');
     await pause(1100);
     const timer = await evaluate(() => {
       const value = activeTimers.find(item => item.label === 'Visible countdown');
@@ -160,7 +208,12 @@ app.whenReady().then(async () => {
       assert.equal(changedBytes, 0, 'opaque native surface preserves identical page pixels');
       report.checks.push('transparent and opaque native surfaces render the same frozen application pixels');
     }
-    report.passed = true; save(); console.log(JSON.stringify({ passed: true, checks: report.checks.length }));
+    main.webContents.debugger.detach();
+    report.passed = true; save(); console.log(JSON.stringify({ passed: true, checks: report.checks.length, initialReducedMotion: report.initialReducedMotion }));
     app.quit();
-  } catch (error) { report.error = error.stack; save(); console.error(error.stack); app.exit(1); }
+  } catch (error) {
+    report.error = error.stack;
+    try { report.diagnostics = await diagnostics(); } catch (diagnosticError) { report.diagnosticError = diagnosticError.message; }
+    save(); console.error(error.stack); console.error(JSON.stringify(report.diagnostics)); app.exit(1);
+  }
 });
