@@ -26,7 +26,9 @@ Olanga is an open-source Windows assistant for the things you do throughout the 
 
 Common commands run directly through local controls, with no API key required for typed requests. Choose cloud transcription or optional on-device English recognition. Gemini handles questions and requests that need interpretation. A small corner orb keeps Olanga within reach while you work in other apps.
 
-**Olanga 1.5.0** brings more of your daily work into **Workspace**: save app layouts, review file changes, search a project, schedule reminders and connect optional browser, editor and phone companions. It also improves request progress, spoken acknowledgments and Spotify startup, while keeping the existing controls, colors and typography. [What's new in 1.5.0](docs/releases/1.5.0.md).
+**Olanga 1.5.1** gives the app, installer, desktop, Start menu and tray the same transparent purple orb. Update directly from **Workspace → Apps & updates**. [What’s new in 1.5.1](docs/releases/1.5.1.md).
+
+Version 1.5.0 brings more of your daily work into **Workspace**: save app layouts, review file changes, search a project, schedule reminders and connect optional browser, editor and phone companions. It also improves request progress, spoken acknowledgments and Spotify startup, while keeping the existing controls, colors and typography. [What's new in 1.5.0](docs/releases/1.5.0.md).
 
 Local commands, reviewed routines, action results, saved names, memories, spoken briefings and manual in-app updates remain part of the core experience. Optional integrations start only when you choose to use them.
 
@@ -84,12 +86,12 @@ Each request tracks actions and speech separately. A completed action stays comp
 
 ## Get started
 
-1. Download [**Olanga-Setup-1.5.0.exe**](https://github.com/firestar3/Olanga-Desktop-Agent/releases/download/v1.5.0/Olanga-Setup-1.5.0.exe) from the [1.5.0 release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.5.0) and run it. It adds desktop and Start-menu shortcuts.
+1. Download [**Olanga-Setup-1.5.1.exe**](https://github.com/firestar3/Olanga-Desktop-Agent/releases/download/v1.5.1/Olanga-Setup-1.5.1.exe) from the [1.5.1 release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.5.1) and run it. It adds desktop and Start-menu shortcuts.
 2. Choose **Use local commands without a key**, or add your own [Google Gemini API key](https://aistudio.google.com/apikey) for cloud transcription, conversation, screen understanding, planning, and Notes/News AI.
 3. Use the built-in **Windows voice**, or choose **NVIDIA Magpie** in Settings and add a separate [NVIDIA hosted API key](https://build.nvidia.com/settings/api-keys). Use **Save & Test** to verify Magpie synthesis.
 4. Type a request, or enable voice input and say **“Hey Olanga”**, wait for the listening orb, and give your request. **Settings → Speech recognition** offers cloud and on-device modes; on-device modes ask you to review the transcript before sending it. You can also enable a push-to-talk shortcut in Settings.
 
-**Requirements:** Windows 10/11 x64; a microphone for voice input; internet and available Gemini quota for cloud features. Spotify commands require the Spotify desktop app, signed in. Its collection controls currently depend on English accessible labels. The 1.5.0 installer is **unsigned**; its checksum and signing status are included with the release.
+**Requirements:** Windows 10/11 x64; a microphone for voice input; internet and available Gemini quota for cloud features. Spotify commands require the Spotify desktop app, signed in. Its collection controls currently depend on English accessible labels. The 1.5.1 installer is **unsigned**; its checksum and signing status are included with the release.
 
 NVIDIA is optional and used only for Magpie speech; it requires its own key. Volume commands change the Windows output volume, and a nonzero target also unmutes it.
 

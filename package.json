@@ -1,6 +1,6 @@
 {
   "name": "olanga-control",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Olanga - Your AI Voice Assistant",
   "main": "main.js",
   "scripts": {
@@ -26,7 +26,9 @@
     "smoke:offline": "electron tests/offline-speech-smoke.js --compare-grammar",
     "smoke:packaged": "node tests/packaged-smoke.js",
     "bench:latency": "electron tests/latency-benchmark.js",
-    "verify:package": "node scripts/verify-package.js"
+    "verify:package": "node scripts/verify-package.js && node scripts/verify-icons.js --packaged",
+    "icons:generate": "electron scripts/generate-icons.js",
+    "verify:icons": "node scripts/verify-icons.js"
   },
   "keywords": [
     "ai",
@@ -66,7 +68,8 @@
       "desktop-workflows.css",
       "desktop/**/*",
       "extensions/**/*",
-      "docs/PHONE_REMOTE.md"
+      "docs/PHONE_REMOTE.md",
+      "assets/icons/icon.ico"
     ],
     "extraResources": [
       {
@@ -87,7 +90,7 @@
           ]
         }
       ],
-      "icon": "icon.png",
+      "icon": "assets/icons/icon.ico",
       "artifactName": "Olanga-Setup-${version}.${ext}"
     },
     "nsis": {
@@ -97,7 +100,10 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Olanga",
-      "uninstallDisplayName": "Olanga"
+      "uninstallDisplayName": "Olanga",
+      "installerIcon": "assets/icons/icon.ico",
+      "uninstallerIcon": "assets/icons/icon.ico",
+      "installerHeaderIcon": "assets/icons/icon.ico"
     },
     "asarUnpack": [
       "desktop/*.ps1"

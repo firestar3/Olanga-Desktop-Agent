@@ -124,3 +124,9 @@ Optionally set the repository variable `OLANGA_SIGNING_PUBLISHER_THUMBPRINT` to 
 `build.publish` remains `null`; the workflow does not publish an automatic-update feed. The app has no automatic download, installation or rollback path. Both `automaticUpdatesEnabled` and `rollbackValidated` are recorded as false in release metadata. Configuring a signing secret does not turn those features on.
 
 Before introducing automatic updates, require verified publisher signatures plus tests of update interruption, a failed startup after upgrade, preserved user data, schema compatibility when returning to an older build, and recovery to a previously verified installer. Until then, keep updates manual and retain prior release installers for deliberate recovery. Do not claim that reinstalling an older executable safely reverses data migrations unless that version transition has been tested.
+
+## Windows orb assets
+
+The editable source is assets/icons/orb.svg, matching the idle orb palette in styles.css. Run npm run icons:generate to render the transparent icon.png and multi-resolution assets/icons/icon.ico with the project's Electron runtime. Commit both generated assets with their source.
+
+npm run check validates transparent edges and every ICO size. npm run verify:package also compares the icon resources embedded in the built Windows app and installer with that ICO. Windows shortcuts continue to point at the same executable and AppUserModelID. The NSIS installer retains existing shortcut choices and notifies the Windows shell after updating.

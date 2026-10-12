@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+  <!-- Palette and highlights match styles.css .orb/.orb-inner. Transparent padding
+       and a compact halo keep the mark clear at Windows icon sizes. -->
+  <defs>
+    <radialGradient id="halo">
+      <stop offset="0.80" stop-color="#6c5ce7" stop-opacity="0.28"/>
+      <stop offset="0.90" stop-color="#6c5ce7" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#6c5ce7" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="orb" gradientUnits="userSpaceOnUse" cx="214.4" cy="193.6" r="367.96">
+      <stop stop-color="#a29bfe"/>
+      <stop offset="0.5" stop-color="#6c5ce7"/>
+      <stop offset="1" stop-color="#4a3fcf"/>
+    </radialGradient>
+    <radialGradient id="highlight" gradientUnits="userSpaceOnUse" cx="172.8" cy="172.8" r="247">
+      <stop stop-color="white" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="256" cy="256" r="248" fill="url(#halo)"/>
+  <circle cx="256" cy="256" r="208" fill="url(#orb)"/>
+  <circle cx="256" cy="256" r="208" fill="url(#highlight)"/>
+</svg>

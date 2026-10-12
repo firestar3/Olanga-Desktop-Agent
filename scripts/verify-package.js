@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, '..');
 const resources = path.join(path.resolve(root, process.env.OLANGA_BUILD_DIR || 'dist'), 'win-unpacked/resources');
 const archive = path.join(resources, 'app.asar');
 const hash = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
-const files = ['main.js', 'preload.js', 'index.html', 'styles.css', 'desktop-workflows.css', 'status-indicator.html', 'status-indicator.js', 'status-indicator.css', 'status-indicator-preload.js'];
+const files = ['icon.png', 'assets/icons/icon.ico', 'main.js', 'preload.js', 'index.html', 'styles.css', 'desktop-workflows.css', 'status-indicator.html', 'status-indicator.js', 'status-indicator.css', 'status-indicator-preload.js'];
 function addDirectory(folder) { for (const entry of fs.readdirSync(path.join(root, folder), { withFileTypes: true })) { const file = folder + '/' + entry.name; if (entry.isDirectory()) addDirectory(file); else if (entry.isFile()) files.push(file); } }
 for (const folder of ['js', 'shared', 'desktop', 'extensions']) addDirectory(folder);
 files.push('docs/PHONE_REMOTE.md');

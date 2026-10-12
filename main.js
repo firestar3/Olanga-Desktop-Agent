@@ -86,6 +86,8 @@ const isDev = process.argv.includes('--dev');
 const startsHidden = process.argv.includes('--hidden');
 
 const APP_ID = 'com.aarav.olanga';
+// Windows selects a crisp frame for each taskbar/tray DPI from the same orb.
+const APP_ICON = path.join(__dirname, process.platform === 'win32' ? 'assets/icons/icon.ico' : 'icon.png');
 // Without this, Windows groups the taskbar entry and notifications under the
 // generic Electron identity instead of Olanga.
 app.setAppUserModelId(APP_ID);
@@ -206,7 +208,7 @@ function createWindow() {
       nodeIntegration: false,
       backgroundThrottling: false // CRITICAL: keeps VAD and audio processing running at full speed in the background
     },
-    icon: path.join(__dirname, 'icon.png'),
+    icon: APP_ICON,
     backgroundColor: '#00000000',
     titleBarStyle: 'hidden',
     hasShadow: true
@@ -276,7 +278,7 @@ function showMainWindow() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'icon.png');
+  const iconPath = APP_ICON;
   tray = new Tray(iconPath);
   
   const contextMenu = Menu.buildFromTemplate([

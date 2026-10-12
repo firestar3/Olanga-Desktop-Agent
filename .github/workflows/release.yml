@@ -46,7 +46,8 @@ jobs:
         run: |
           $missing = @()
           if (-not (Test-Path 'vosk-model-v2.tar.gz')) { $missing += 'vosk-model-v2.tar.gz (offline wake word model)' }
-          if (-not (Test-Path 'icon.png')) { $missing += 'icon.png (app and installer icon, 256x256 or larger)' }
+          if (-not (Test-Path 'icon.png')) { $missing += 'icon.png (transparent app orb)' }
+          if (-not (Test-Path 'assets/icons/icon.ico')) { $missing += 'assets/icons/icon.ico (Windows app and installer icons)' }
           if (-not (Test-Path 'node_modules/electron-builder')) { $missing += 'electron-builder in devDependencies' }
           if ($missing.Count -gt 0) {
             Write-Host '::error::Cannot build a working installer. Missing:'

@@ -6,11 +6,12 @@ const pkg = require('../package.json');
 const lock = require('../package-lock.json');
 if (lock.version !== pkg.version || lock.packages[''].version !== pkg.version) throw new Error('Package and lockfile versions differ');
 if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== 'v' + pkg.version) throw new Error('Release tag must match package.json version');
-const required = ['main.js', 'preload.js', 'index.html', 'styles.css', 'desktop-workflows.css', 'status-indicator.html', 'status-indicator.js', 'status-indicator.css', 'status-indicator-preload.js', 'desktop/automation.js', 'desktop/input-helper.ps1', 'desktop/status-overlay.js', 'shared/quick-actions.js', 'shared/action-plan.js', 'js/desktop-workflows.js', 'icon.png', 'vosk-model-v2.tar.gz'];
+const required = ['main.js', 'preload.js', 'index.html', 'styles.css', 'desktop-workflows.css', 'status-indicator.html', 'status-indicator.js', 'status-indicator.css', 'status-indicator-preload.js', 'desktop/automation.js', 'desktop/input-helper.ps1', 'desktop/status-overlay.js', 'shared/quick-actions.js', 'shared/action-plan.js', 'js/desktop-workflows.js', 'icon.png', 'assets/icons/icon.ico', 'assets/icons/orb.svg', 'vosk-model-v2.tar.gz'];
 for (const file of required) {
   if (!fs.existsSync(path.join(root, file))) throw new Error('Missing application asset: ' + file);
 }
-for (const file of ['status-indicator.js', 'status-indicator.css', 'desktop-workflows.css', 'desktop/**/*', 'extensions/**/*', 'docs/PHONE_REMOTE.md']) {
+require('./verify-icons').verifyIcons({ root });
+for (const file of ['assets/icons/icon.ico', 'icon.png', 'status-indicator.js', 'status-indicator.css', 'desktop-workflows.css', 'desktop/**/*', 'extensions/**/*', 'docs/PHONE_REMOTE.md']) {
   if (!pkg.build.files.includes(file)) throw new Error('Missing packaged asset: ' + file);
 }
 if (!pkg.build.asarUnpack.includes('desktop/*.ps1')) throw new Error('Native helper must be outside ASAR');
