@@ -22,6 +22,8 @@ jobs:
       - name: Check native update handoff, completion and recovery
         run: npm run smoke:installer
 
+      - name: Check native tray alpha on light and dark backgrounds
+        run: powershell -NoProfile -File scripts/verify-tray-native.ps1
       - name: Check hidden rendering and timer deadlines
         run: npm run smoke:resources
 

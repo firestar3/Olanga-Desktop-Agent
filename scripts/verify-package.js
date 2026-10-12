@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, '..');
 const resources = path.join(path.resolve(root, process.env.OLANGA_BUILD_DIR || 'dist'), 'win-unpacked/resources');
 const archive = path.join(resources, 'app.asar');
 const hash = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
-const files = ['icon.png', 'assets/icons/icon.ico', 'main.js', 'preload.js', 'index.html', 'styles.css', 'desktop-workflows.css', 'status-indicator.html', 'status-indicator.js', 'status-indicator.css', 'status-indicator-preload.js'];
+const files = ['icon.png', 'assets/icons/icon.ico', 'assets/icons/tray.ico', 'main.js', 'preload.js', 'index.html', 'styles.css', 'desktop-workflows.css', 'status-indicator.html', 'status-indicator.js', 'status-indicator.css', 'status-indicator-preload.js'];
 function addDirectory(folder) { for (const entry of fs.readdirSync(path.join(root, folder), { withFileTypes: true })) { const file = folder + '/' + entry.name; if (entry.isDirectory()) addDirectory(file); else if (entry.isFile()) files.push(file); } }
 for (const folder of ['js', 'shared', 'desktop', 'extensions']) addDirectory(folder);
 files.push('docs/PHONE_REMOTE.md');
@@ -21,6 +21,8 @@ for (const helper of fs.readdirSync(path.join(root, 'desktop')).filter(file => f
   assert.ok(fs.existsSync(path.join(resources, 'app.asar.unpacked/desktop', helper)), 'Native helper is not unpacked: ' + helper);
 }
 assert.equal(hash(fs.readFileSync(path.join(resources, 'vosk-model-v2.tar.gz'))), hash(fs.readFileSync(path.join(root, 'vosk-model-v2.tar.gz'))), 'Offline model is missing or stale');
+const unpackedTray = path.join(resources, 'app.asar.unpacked/assets/icons/tray.ico');
+assert.equal(hash(fs.readFileSync(unpackedTray)), hash(fs.readFileSync(path.join(root, 'assets/icons/tray.ico'))), 'Native tray icon is missing or stale');
 const installedPackage = JSON.parse(asar.extractFile(archive, 'package.json').toString());
 assert.equal(installedPackage.version, require('../package.json').version);
 console.log('Verified ' + files.length + ' packaged source files, native helper, offline model and version ' + installedPackage.version + '.');

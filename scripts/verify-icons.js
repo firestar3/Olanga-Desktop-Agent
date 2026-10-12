@@ -124,6 +124,50 @@ function assertOrbImage(image, label = 'Icon') {
   assert.ok(translucent > 0, label + ' must have antialiased transparent edges');
 }
 
+function assertTrayImage(image, label = 'Tray icon') {
+  const { width, height, pixels } = image;
+  assert.equal(width, height, label + ' must be square');
+  assert.equal(pixels.length, width * height * 4, label + ' pixel length');
+  for (const [x, y] of [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]]) {
+    assert.equal(pixels[(y * width + x) * 4 + 3], 0, label + ' must have transparent corners');
+  }
+  let opaque = 0, translucent = 0, coverage = 0;
+  for (let index = 3; index < pixels.length; index += 4) {
+    coverage += pixels[index] / 255;
+    if (pixels[index] === 255) opaque++;
+    else if (pixels[index]) translucent++;
+  }
+  assert.ok(coverage >= width * height * 0.7 && coverage <= width * height * 0.8, label + ' must be a full circular orb without a halo');
+  assert.ok(opaque > width * height * 0.55 && translucent > 0, label + ' must have an opaque core and antialiased edges');
+  const mid = Math.floor(width / 2), center = (mid * width + mid) * 4;
+  assert.equal(pixels[center + 3], 255, label + ' center must be opaque');
+  assert.ok(pixels[center + 2] > pixels[center] && pixels[center + 2] > pixels[center + 1] && pixels[center + 2] >= 180, label + ' center must retain the purple orb');
+  for (const [x, y] of [[0, mid], [width - 1, mid], [mid, 0], [mid, height - 1]]) {
+    assert.ok(pixels[(y * width + x) * 4 + 3] > 0, label + ' must fill the tray slot without rectangular padding');
+  }
+}
+
+function assertTrayIco(buffer, label = 'Tray ICO') {
+  const images = readIco(buffer);
+  assert.deepEqual(images.map(image => image.width), ICON_SIZES, label + ' must contain all Windows DPI sizes');
+  images.forEach((image, index) => {
+    assertTrayImage(image, label + ' ' + image.width + 'px');
+    const entry = 6 + index * 16, start = buffer.readUInt32LE(entry + 12), length = buffer.readUInt32LE(entry + 8);
+    const frame = bounded(buffer, start, length, 'tray icon bitmap');
+    const size = image.width, maskStride = Math.ceil(size / 32) * 4;
+    assert.equal(frame.readUInt32LE(0), 40, label + ' must use native 32-bit bitmap frames');
+    assert.equal(frame.length, 40 + size * size * 4 + maskStride * size, label + ' needs a complete transparency mask');
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const offset = 40 + size * size * 4 + (size - y - 1) * maskStride + (x >> 3);
+        const mask = !!(frame[offset] & (0x80 >> (x & 7)));
+        assert.equal(mask, image.pixels[(y * size + x) * 4 + 3] === 0, label + ' AND mask must match transparent pixels');
+      }
+    }
+  });
+  return images;
+}
+
 function readPeIconGroups(buffer) {
   bounded(buffer, 0, 64, 'DOS header');
   assert.equal(buffer.toString('ascii', 0, 2), 'MZ', 'Invalid DOS signature');
@@ -222,9 +266,13 @@ function verifyIcons({ root = path.resolve(__dirname, '..'), packaged = false, b
   const expected = readIco(fs.readFileSync(path.join(root, 'assets/icons/icon.ico')));
   assert.deepEqual(expected.map(image => image.width).sort((a, b) => a - b), ICON_SIZES, 'ICO must contain each required Windows icon size once');
   for (const image of expected) assertOrbImage(image, 'ICO ' + image.width + 'px');
+  const trayBytes = fs.readFileSync(path.join(root, 'assets/icons/tray.ico'));
+  assertTrayIco(trayBytes);
   const verified = [];
   if (packaged) {
     const dist = path.resolve(root, buildDir);
+    const packagedTray = fs.readFileSync(path.join(dist, 'win-unpacked/resources/app.asar.unpacked/assets/icons/tray.ico'));
+    assert.ok(packagedTray.equals(trayBytes), 'Packaged native tray asset must match the verified source');
     const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
     const candidates = [path.join(dist, 'win-unpacked/Olanga.exe'), path.join(dist, 'Olanga-Setup-' + version + '.exe')];
     const unpackedUninstaller = path.join(dist, 'win-unpacked/Uninstall Olanga.exe');
@@ -235,7 +283,7 @@ function verifyIcons({ root = path.resolve(__dirname, '..'), packaged = false, b
       verified.push(file);
     }
   } else if (uninstaller) throw new Error('--uninstaller requires --packaged');
-  return { sourceSize: source.width, icoSizes: ICON_SIZES, executables: verified };
+  return { sourceSize: source.width, icoSizes: ICON_SIZES, traySizes: ICON_SIZES, executables: verified };
 }
 
 if (require.main === module) {
@@ -248,8 +296,8 @@ if (require.main === module) {
       else throw new Error('Unknown or incomplete argument: ' + argument);
     }
     const result = verifyIcons(options);
-    console.log('Verified transparent 1024px Olanga orb and native icon sizes ' + result.icoSizes.join(', ') + 'px.' + (result.executables.length ? '\nVerified embedded pixels in:\n' + result.executables.join('\n') : ''));
+    console.log('Verified transparent Olanga app and tray orbs at native sizes ' + result.icoSizes.join(', ') + 'px.' + (result.executables.length ? '\nVerified embedded pixels in:\n' + result.executables.join('\n') : ''));
   } catch (error) { console.error('Icon verification failed: ' + error.message); process.exitCode = 1; }
 }
 
-module.exports = { ICON_SIZES, decodePng, decodeIconImage, readIco, assertOrbImage, readPeIconGroups, assertPeIcons, equalImage, verifyIcons };
+module.exports = { ICON_SIZES, decodePng, decodeIconImage, readIco, assertOrbImage, assertTrayImage, assertTrayIco, readPeIconGroups, assertPeIcons, equalImage, verifyIcons };

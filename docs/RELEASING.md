@@ -169,3 +169,5 @@ Before introducing automatic updates, require verified publisher signatures plus
 The editable source is assets/icons/orb.svg, matching the idle orb palette in styles.css. Run npm run icons:generate to render the transparent icon.png and multi-resolution assets/icons/icon.ico with the project's Electron runtime. Commit both generated assets with their source.
 
 npm run check validates transparent edges and every ICO size. npm run verify:package also compares the icon resources embedded in the built Windows app and installer with that ICO. Windows shortcuts continue to point at the same executable and AppUserModelID. The NSIS installer retains existing shortcut choices and notifies the Windows shell after updating.
+
+The Windows tray uses assets/icons/tray.ico, generated from the same orb palette with a tighter circle and no halo. It is unpacked into app.asar.unpacked for direct native loading. App, installer and shortcut artwork keep their existing icon.ico. Package verification checks the tray asset's source and unpacked bytes separately.

@@ -72,7 +72,8 @@
       "desktop/**/*",
       "extensions/**/*",
       "docs/PHONE_REMOTE.md",
-      "assets/icons/icon.ico"
+      "assets/icons/icon.ico",
+      "assets/icons/tray.ico"
     ],
     "extraResources": [
       {
@@ -109,7 +110,8 @@
       "installerHeaderIcon": "assets/icons/icon.ico"
     },
     "asarUnpack": [
-      "desktop/*.ps1"
+      "desktop/*.ps1",
+      "assets/icons/tray.ico"
     ]
   }
 }

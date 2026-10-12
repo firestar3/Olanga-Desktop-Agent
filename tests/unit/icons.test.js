@@ -2,7 +2,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const zlib = require('node:zlib');
-const { ICON_SIZES, decodePng, decodeIconImage, readIco, assertOrbImage, assertPeIcons, readPeIconGroups, equalImage, verifyIcons } = require('../../scripts/verify-icons');
+const fs = require('node:fs');
+const path = require('node:path');
+const { ICON_SIZES, decodePng, decodeIconImage, readIco, assertOrbImage, assertTrayImage, assertTrayIco, assertPeIcons, readPeIconGroups, equalImage, verifyIcons } = require('../../scripts/verify-icons');
 
 function crc32(buffer) {
   let crc = 0xffffffff;
@@ -123,6 +125,18 @@ function pe(groups, is64 = true) {
 
 test('checked-in source and all native Windows sizes have transparent orb edges', () => {
   assert.deepEqual(verifyIcons().icoSizes, ICON_SIZES);
+});
+test('dedicated tray icons fill every native size and preserve transparent corners and masks', () => {
+  const bytes = fs.readFileSync(path.join(__dirname, '../../assets/icons/tray.ico'));
+  assert.deepEqual(assertTrayIco(bytes).map(image => image.width), ICON_SIZES);
+  const brokenMask = Buffer.from(bytes), frame = bytes.readUInt32LE(18);
+  brokenMask[frame + 40 + 16 * 16 * 4] ^= 0x80;
+  assert.throws(() => assertTrayIco(brokenMask), /AND mask/);
+  const padded = orb(32);
+  assert.throws(() => assertTrayImage(padded), /full circular|fill the tray/);
+  const matte = readIco(bytes)[0];
+  matte.pixels[3] = 255;
+  assert.throws(() => assertTrayImage(matte), /transparent corners/);
 });
 test('PNG decoding supports all five row filters without losing alpha', () => {
   const expected = orb(24);

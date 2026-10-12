@@ -41,7 +41,10 @@ if (process.argv[2] === '--parent-fixture') {
 
 async function run() {
   if (process.platform !== 'win32') throw new Error('This smoke test requires Windows.');
-  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "olanga-installer-native-"));
+  // Native processes expand Windows 8.3 aliases such as RUNNER~1. Compare
+  // actual directories, even when TEMP or a child process uses another spelling.
+  const temporaryDirectory = fs.realpathSync.native(os.tmpdir());
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(temporaryDirectory, "olanga-installer-native-")));
   const compiler = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
   const report = { cases: [], isolatedRoot: root, passed: false };
   const fixtureProcesses = [];
@@ -159,7 +162,7 @@ delegate bool WindowCallback(IntPtr window, IntPtr data);
       await waitFor(() => fs.existsSync(appMarker), 'App was not restarted after installer completed');
       const invocation = fs.readFileSync(path.join(cache, 'install-invocation.txt'), 'utf8').split('\n');
       assert.equal(invocation[0], '--updated /S');
-      assert.equal(path.dirname(invocation[1]), updatesDir, 'installer working directory must be outside the installed app');
+      assert.equal(fs.realpathSync.native(path.dirname(invocation[1])), fs.realpathSync.native(updatesDir), 'installer working directory must be outside the installed app');
       const appStart = fs.readFileSync(appMarker, 'utf8');
       if (mode === 'success' || mode === 'progress') {
         assert.equal(result.stage, 'restarted');
@@ -197,7 +200,7 @@ delegate bool WindowCallback(IntPtr window, IntPtr data);
       fs.mkdirSync(path.dirname(path.resolve(reportPath)), { recursive: true });
       fs.writeFileSync(path.resolve(reportPath), JSON.stringify(report, null, 2));
     }
-    assert.equal(path.dirname(root), fs.realpathSync(os.tmpdir()));
+    assert.equal(fs.realpathSync.native(path.dirname(root)), temporaryDirectory);
     assert.match(path.basename(root), /^olanga-installer-native-/);
     fs.rmSync(root, { recursive: true, force: true });
   }
