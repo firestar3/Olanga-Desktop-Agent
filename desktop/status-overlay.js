@@ -58,6 +58,7 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
   let ignoringMouse = true;
   let hiddenUntil = 0;
   let suspended = false;
+  let reducedMotion = false;
   let hiddenTimer = null;
   let pollTimer = null;
   let outsideSince = 0;
@@ -81,7 +82,7 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
   function snapshot() {
     if (!alive() || !ready) return;
     const value = {
-      state: visibleState(), menuOpen, hovered, geometry: getGeometry(),
+      state: visibleState(), menuOpen, hovered, reducedMotion, geometry: getGeometry(),
       visible: window.isVisible() && shouldShow(),
       actions: slots.map(({ id, label }) => ({ id, label }))
     };
@@ -315,6 +316,7 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
     setMode: (value) => { mode = statusLight.normalizeMode(value); syncVisibility(); },
     setSize: (value) => { size = statusLight.normalizeSize(value); position(); },
     setQuickActions: (value) => { slots = quickActions.normalizeQuickActions(value); snapshot(); },
+    setReducedMotion: (value) => { if (typeof value === 'boolean') { reducedMotion = value; snapshot(); } },
     setSuspended: (value) => { suspended = value === true; syncVisibility(); }
   };
 }

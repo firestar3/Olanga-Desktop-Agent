@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setStatusState: (state) => ipcRenderer.send('status-indicator-set', state),
   setStatusLightMode: (mode) => ipcRenderer.send('status-indicator-set-mode', mode),
   setStatusLightSize: (size) => ipcRenderer.send('status-indicator-set-size', size),
+  setReducedMotion: (enabled) => { if (typeof enabled === 'boolean') ipcRenderer.send('status-overlay-set-reduced-motion', enabled); },
   setQuickActions: (actions) => ipcRenderer.send('status-overlay-set-quick-actions', actions),
   onQuickAction: (callback) => {
     const handler = (_event, action) => callback(action);

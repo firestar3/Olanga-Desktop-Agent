@@ -95,8 +95,37 @@ app.whenReady().then(async () => {
     assert.ok(actions.some((action) => action.type === 'open-app'));
     assert.ok(actions.some((action) => action.type === 'close'));
     assert.ok(trustedSenders.length && trustedSenders.every(Boolean), 'isolated session keeps the real IPC sender, main frame, and exact trusted file URL');
+    const loadedFont = await window.webContents.executeJavaScript(`(async () => {
+      await document.fonts.load('500 12px Outfit');
+      await document.fonts.ready;
+      return [...document.fonts].some(face => face.family.replace(/['"]/g, '') === 'Outfit' && face.status === 'loaded');
+    })()`);
+    assert.equal(loadedFont, true, 'The overlay loads bundled Outfit without a remote request');
+    window.webContents.debugger.attach('1.3');
+    await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    const motionStyle = () => window.webContents.executeJavaScript(`({
+      animation: getComputedStyle(document.querySelector('.light-surface')).animationName,
+      menuAnimation: getComputedStyle(document.getElementById('quickMenu')).animationName,
+      transition: getComputedStyle(document.getElementById('light')).transitionDuration,
+      accent: getComputedStyle(document.body).getPropertyValue('--accent').trim(),
+      state: document.body.dataset.state,
+      reduced: document.body.classList.contains('reduced-motion')
+    })`);
+    for (const [state, animation] of [['thinking', 'thinking'], ['listening', 'breathe'], ['speaking', 'breathe']]) {
+      window.webContents.send('status-overlay-snapshot', { ...snapshot, state, reducedMotion: false }); await pause(30);
+      const animated = await motionStyle(); assert.equal(animated.animation, animation);
+      window.webContents.send('status-overlay-snapshot', { ...snapshot, state, reducedMotion: true }); await pause(30);
+      const reduced = await motionStyle();
+      assert.equal(reduced.animation, 'none'); assert.equal(reduced.menuAnimation, 'none'); assert.equal(reduced.transition, '0s');
+      assert.equal(reduced.reduced, true); assert.equal(reduced.state, state); assert.equal(reduced.accent, animated.accent, 'Reduced motion preserves status colors');
+      window.webContents.send('status-overlay-snapshot', { ...snapshot, state, reducedMotion: false }); await pause(30);
+      assert.equal((await motionStyle()).animation, animation, 'Motion resumes when the explicit preference is disabled');
+    }
+    await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await pause(30); assert.equal((await motionStyle()).animation, 'none', 'Windows reduced motion remains authoritative');
+    window.webContents.debugger.detach();
     assert.deepEqual(errors, []);
-    console.log('Overlay smoke passed: isolated session and trusted sender, eight options, compact layout, hover geometry, number shortcuts and Tab focus, bounded hide IPC, three screenshots.');
+    console.log('Overlay smoke passed: isolated session and trusted sender, eight options, compact layout, hover geometry, number shortcuts and Tab focus, bounded hide IPC, local Outfit, explicit and system reduced motion, three screenshots.');
     app.exit(0);
   } catch (error) {
     console.error('Overlay smoke failed:', error.stack || error.message);

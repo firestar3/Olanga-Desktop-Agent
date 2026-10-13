@@ -1,3 +1,22 @@
+# Settings and privacy — unreleased source, October 12, 2026
+
+The current source adds User preferences, Core settings and Privacy sections, five accent choices, stronger window contrast, adjustable orb glow, a static appearance preview, an appearance-only reset, reduced motion for the main window and corner light, bundled Outfit fonts and an offline privacy notice. The published 1.5.2 installer does not contain these changes yet.
+
+| Check | Result |
+| --- | --- |
+| Unit suite | **748 passed**, zero failures or skips |
+| Syntax and required assets | **73 JavaScript files passed** |
+| Settings experience | **17 production-renderer checks passed**: keyboard tabs and labels, setup-only Privacy, management shortcut focus, actual offline font loading, five accents at 400px, contrast/glow with active orb states, appearance-only reset, save failure/retry, delayed writes, rapid Settings reselection, reload persistence, encrypted-backup recovery and real corner-light motion IPC |
+| Packaged directory build | **101 source files matched**; **20 built-executable checks passed**, including the bundled notice, font and all four appearance preferences after a full reload |
+| Existing UI regressions | Renderer races **12**, manual updates **11**, Work tools **12** and resource lifecycle **7** checks passed |
+| Corner light | Focused overlay smoke passed: explicit/Windows reduced motion, all active status colors, local font, shortcuts, focus and geometry |
+
+Validation used disposable profiles and fixture providers with external actions blocked. It did not use personal API keys, live microphone input, Spotify, or the normal installed profile. Screenshots of the new appearance controls were reviewed at normal and 400px window widths. The earlier settings preview also received native inspection and was closed. The final appearance tests measured 36 News/Notes text combinations across nine accent/contrast combinations; all exceeded 4.5:1, with a minimum of 6.34:1. Rapidly reselecting Settings before its 150 ms debounce now preserves unsaved location and toggle edits. The delayed-save regression also tests an older successful save followed by a newer failed save, ensuring Retry keeps the latest light and shortcut choices. Recognized speech and custom wake phrases are no longer written to the console, with runtime regression coverage.
+
+The latest preview was rebuilt with the already installed matching Electron 36.9.5 distribution. An earlier fresh download returned HTTP 500. This was a directory build, not a new installer or GitHub release. Local screenshots, logs, profiles and build output remain ignored. Source check workflows now include Settings validation; no new remote CI run is claimed here.
+
+---
+
 # 1.5.2 release checks — October 12, 2026
 
 This patch targets update completion and avoidable CPU/memory work. The recognition model, command vocabulary, theme and manual-update policy are unchanged. The built-in Terminal, its shell sessions and freeform command endpoints are removed.
@@ -186,7 +205,7 @@ The sections below are historical records. Their test counts, local installer ha
 
 # Conversational latency validation — September 26, 2026
 
-These checks cover the latency work described in [IMPROVEMENTS.md](IMPROVEMENTS.md#conversational-latency). No live Gemini key was used, so provider response times on real prompts are not measured here. The package version remains **1.4.0**.
+These checks cover the latency work described in [the historical improvement notes](https://github.com/firestar3/Olanga-Desktop-Agent/blob/a3ab7eaceccb57e346b6d0b47b1fd8c65e9724c2/docs/IMPROVEMENTS.md#conversational-latency). No live Gemini key was used, so provider response times on real prompts are not measured here. The package version remains **1.4.0**.
 
 | Check | Result | Evidence |
 | --- | --- | --- |
@@ -218,7 +237,7 @@ Not covered: real Gemini time to first token, prompt-cache hit rates, the rough 
 
 # 2.0 foundations validation — September 26, 2026
 
-These checks cover the first 2.0 wave described in [IMPROVEMENTS.md](IMPROVEMENTS.md): local time/date/help answers, reminders and alarms, memories, the daily briefing, the health check, push-to-talk, voice interruption and the end-of-speech setting. They ran on one Windows machine after the final source change. The package version remains **1.4.0**; no installer was built.
+These checks cover the first 2.0 wave described in [the historical improvement notes](https://github.com/firestar3/Olanga-Desktop-Agent/blob/a3ab7eaceccb57e346b6d0b47b1fd8c65e9724c2/docs/IMPROVEMENTS.md): local time/date/help answers, reminders and alarms, memories, the daily briefing, the health check, push-to-talk, voice interruption and the end-of-speech setting. They ran on one Windows machine after the final source change. The package version remains **1.4.0**; no installer was built.
 
 | Check | Result | Evidence |
 | --- | --- | --- |
@@ -423,7 +442,7 @@ After building, `npm run verify:package` checks packaged content and `npm run sm
 
 # Earlier reliability validation (September 25, 2026)
 
-The reliability improvements described in [the improvement plan](IMPROVEMENTS.md) passed:
+The reliability improvements described in [the historical improvement notes](https://github.com/firestar3/Olanga-Desktop-Agent/blob/a3ab7eaceccb57e346b6d0b47b1fd8c65e9724c2/docs/IMPROVEMENTS.md) passed:
 
 - **197 unit tests.** New cases cover timer restart/deadline/dismissal behavior, overdue alarms, malformed storage, failed saves, decimal duration parsing, exact and ambiguous task matches, clarification without replaying compound steps, direct action results, relative-volume ambiguity, repeated mute/unmute, Windows speech cancellation without native events, duplicate speech events, and alarm resource cleanup even when audio initialization never resolves.
 - **Syntax, version, and asset checks** for all 26 application JavaScript files at that stage. The package still reported 1.3.1 for this earlier run.

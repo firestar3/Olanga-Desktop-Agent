@@ -117,6 +117,17 @@ async function stop() {
       await send('Network.enable'); await send('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
       await waitForRenderer();
       check('Packaged renderer finishes loading settings, workbench and schedules', true);
+      const font = await evaluate("(async () => { await document.fonts.ready; return [...document.fonts].some(face => face.family === 'Outfit' && face.status === 'loaded'); })()");
+      check('Packaged Outfit font loads offline from the app bundle', font);
+      await evaluate("document.getElementById('setupPrivacyBtn').click(); document.getElementById('privacyFullNotice').open = true; void 0");
+      let notice = '';
+      for (let attempt = 0; attempt < 80; attempt++) {
+        notice = await evaluate("document.getElementById('privacyFullNoticeBody').textContent");
+        if (notice.includes('Provider policies and retention')) break;
+        await pause(50);
+      }
+      check('Packaged full privacy notice is readable offline before setup', notice.includes('Provider policies and retention') && notice.length > 5000);
+      await evaluate("document.getElementById('settingsReturnToSetupBtn').click(); void 0");
       let visibility;
       for (let attempt = 0; attempt < 40; attempt++) {
         visibility = await evaluate('window.electronAPI.getAppVisibility()');
@@ -142,6 +153,13 @@ async function stop() {
       check('Keyless startup works without opening a microphone', local.visible && !local.key && !local.mic && local.input === 'cloud');
       const update = await evaluate('window.electronAPI.getUpdateState()');
       check('Packaged updater starts idle with no automatic download or install', update.phase === 'idle' && update.status === 'not-checked' && update.installedVersion === report.version && !update.canDownload && !update.canInstall && update.bytesReceived === 0 && update.automaticUpdatesEnabled === false);
+      await evaluate("(() => { OlangaSettingsNavigation.open('user'); for (const [id, value] of Object.entries({ appearanceAccentSelect: 'rose', appearanceContrastSelect: 'strong', appearanceGlowSelect: 'subtle', appearanceMotionSelect: 'reduced' })) { const control = document.getElementById(id); control.value = value; control.dispatchEvent(new Event('change', { bubbles: true })); } })()");
+      for (let attempt = 0; attempt < 80; attempt++) {
+        if (await evaluate("document.getElementById('preferencesSaveStatus').dataset.state === 'saved'")) break;
+        await pause(50);
+      }
+      check('Packaged appearance preferences save without a provider', await evaluate("document.getElementById('preferencesSaveStatus').dataset.state === 'saved' && document.documentElement.dataset.accent === 'rose' && document.documentElement.dataset.contrast === 'strong' && document.documentElement.dataset.glow === 'subtle' && document.documentElement.dataset.reduceMotion === 'true'"));
+      await evaluate("document.querySelector('[data-screen=mainScreen]').click(); void 0");
       const created = await evaluate(`(() => { const timer = createTimer(1800, 'Packaged fixture'); const task = addTask('Packaged fixture'); return timer.ok && task.ok; })()`);
       check('Packaged local timer and task save successfully', created);
       await reloadRenderer();
@@ -152,6 +170,7 @@ async function stop() {
         await pause(100);
       }
       check('Packaged reload restores local setup, timers and tasks', restored?.timer && restored?.task && restored?.visible && !restored?.mic);
+      check('All four packaged appearance preferences survive a complete renderer reload', await evaluate("document.documentElement.dataset.accent === 'rose' && document.documentElement.dataset.contrast === 'strong' && document.documentElement.dataset.glow === 'subtle' && document.documentElement.dataset.motion === 'reduced' && Object.entries({ appearanceAccentSelect: 'rose', appearanceContrastSelect: 'strong', appearanceGlowSelect: 'subtle', appearanceMotionSelect: 'reduced' }).every(([id, value]) => document.getElementById(id).value === value)"));
       const provider = await evaluate('window.electronAPI.providerStatus()');
       check('No saved credential or provider request in test profile', !provider.configured && provider.totals.requests === 0);
       const optional = await evaluate(`(async () => ({ phone: await electronAPI.phoneStatus(), companions: await electronAPI.companionList(), phoneGuide: await electronAPI.workbenchGuide('phone'), companionGuide: await electronAPI.workbenchGuide('companions') }))()`);

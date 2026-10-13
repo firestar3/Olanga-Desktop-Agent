@@ -27,6 +27,10 @@
   const END_OF_SPEECH_MS = Object.freeze({ standard: 1500, quick: 1000, fast: 700 });
 
   const PREF_DEFS = [
+    { key: 'appearanceContrast', storageKey: 'olanga_appearance_contrast', type: 'enum', values: ['standard', 'strong'], default: 'standard' },
+    { key: 'appearanceGlow', storageKey: 'olanga_appearance_glow', type: 'enum', values: ['standard', 'subtle', 'off'], default: 'standard' },
+    { key: 'appearanceAccent', storageKey: 'olanga_appearance_accent', type: 'enum', values: ['violet', 'blue', 'mint', 'rose', 'amber'], default: 'violet' },
+    { key: 'appearanceMotion', storageKey: 'olanga_appearance_motion', type: 'enum', values: ['system', 'reduced'], default: 'system' },
     { key: 'quickActions', storageKey: 'olanga_quick_actions', type: 'quickActions', default: quickActions.DEFAULT_QUICK_ACTIONS },
     { key: 'city', storageKey: 'olanga_city', type: 'string', default: '' },
     { key: 'state', storageKey: 'olanga_state', type: 'string', default: '' },

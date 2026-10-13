@@ -7,6 +7,21 @@ const vm = require('node:vm');
 function fixture() {
   let now = 12500, sequence = 0, nativeListener, initialReply, observer;
   const frames = new Map(), timers = new Map(), listeners = new Map(), elements = new Map();
+  const eventTarget = scope => ({
+    addEventListener(name, callback) {
+      const key = scope + ':' + name;
+      if (!listeners.has(key)) listeners.set(key, new Set());
+      listeners.get(key).add(callback);
+    },
+    removeEventListener(name, callback) {
+      const key = scope + ':' + name;
+      listeners.get(key)?.delete(callback);
+      if (!listeners.get(key)?.size) listeners.delete(key);
+    }
+  });
+  const emit = (scope, name) => {
+    for (const callback of [...(listeners.get(scope + ':' + name) || [])]) callback({ type: name });
+  };
   const classes = () => {
     const values = new Set();
     return { add: (...items) => items.forEach(item => values.add(item)), remove: (...items) => items.forEach(item => values.delete(item)), contains: item => values.has(item), toggle(item, enabled) { if (enabled) values.add(item); else values.delete(item); } };
@@ -16,16 +31,16 @@ function fixture() {
     return elements.get(id);
   };
   const drawing = { frames: 0, clearRect() { this.frames++; }, beginPath() {}, arc() {}, fill() {}, stroke() {} };
-  const media = { matches: false, addEventListener(_name, fn) { this.change = fn; }, removeEventListener() {} };
+  const media = { matches: false, ...eventTarget('media'), change: () => emit('media', 'change') };
   class Clock extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const context = vm.createContext({
     console: { log() {}, warn() {}, error() {} }, Date: Clock, performance: { now: () => now },
     OlangaPrefs: { DEFAULT_NVIDIA_VOICE: 'default', END_OF_SPEECH_MS: {}, load: () => ({}), writeToStorage() {} },
     localStorage: { getItem: () => null },
-    document: { hidden: false, body: { classList: classes() }, getElementById: node, querySelectorAll: () => [], querySelector: () => null, addEventListener: (name, fn) => listeners.set(`document:${name}`, fn) },
+    document: { hidden: false, body: { classList: classes() }, getElementById: node, querySelectorAll: () => [], querySelector: () => null, ...eventTarget('document') },
     window: {
       speechSynthesis: { cancel() {} }, matchMedia: () => media,
-      addEventListener: (name, fn) => listeners.set(`window:${name}`, fn),
+      ...eventTarget('window'),
       electronAPI: { onAppVisibilityChanged: fn => { nativeListener = fn; }, getAppVisibility: () => new Promise(resolve => { initialReply = resolve; }) }
     },
     IntersectionObserver: class { constructor(fn) { observer = this; this.notify = fn; } observe() {} disconnect() { this.disconnected = true; } },
@@ -35,7 +50,7 @@ function fixture() {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/core.js'), 'utf8'), context);
   context.drawing = drawing;
   vm.runInContext('orbCanvasCtx = drawing;', context);
-  return { context, drawing, frames, timers, listeners, media, node,
+  return { context, drawing, frames, timers, listeners, media, node, emit,
     run: source => vm.runInContext(source, context),
     native: visible => nativeListener({ visible }), reply: value => initialReply(value),
     intersect: visible => observer.notify([{ isIntersecting: visible }]),
@@ -64,7 +79,9 @@ test('orb draws only visible listening/speaking frames and resumes after native 
   assert.equal(f.frames.size, 0, 'thinking also has a transparent canvas');
   f.run('setState(State.SPEAKING); startOrbAnimation(); startOrbAnimation()');
   assert.equal(f.frames.size, 1, 'reinitialization cannot accumulate loops');
-  f.listeners.get('window:beforeunload')();
+  assert.equal(f.listeners.get('window:olanga-appearance-changed').size, 1, 'reinitialization removes the old appearance listener');
+  assert.equal(f.listeners.get('media:change').size, 1, 'reinitialization removes the old system-motion listener');
+  f.emit('window', 'beforeunload');
   assert.equal(f.frames.size, 0);
 });
 
@@ -82,6 +99,52 @@ test('orb respects live reduced-motion changes without removing its static visib
   assert.equal(f.frames.size, 0);
 });
 
+test('explicit reduced motion switches an active orb to a static frame without changing assistant state', () => {
+  const f = fixture();
+  let reduced = false;
+  f.context.window.OlangaAppearance = { isReducedMotion: () => reduced };
+  f.run('startOrbAnimation(); setState(State.LISTENING)');
+  assert.equal(f.frames.size, 1);
+  assert.equal(f.media.matches, false, 'Windows still permits animation');
+
+  reduced = true;
+  const previousFrames = f.drawing.frames;
+  f.emit('window', 'olanga-appearance-changed');
+  assert.equal(f.frames.size, 0, 'the explicit preference cancels the animation frame');
+  assert.equal(f.drawing.frames, previousFrames + 1, 'one static frame remains visible');
+  assert.equal(f.run('currentState'), 'listening', 'changing appearance must not end listening');
+
+  reduced = false;
+  f.emit('window', 'olanga-appearance-changed');
+  assert.equal(f.frames.size, 1, 'returning to system motion resumes the active canvas');
+  assert.equal(f.run('currentState'), 'listening');
+  f.run('setState(State.SPEAKING)');
+  reduced = true;
+  f.emit('window', 'olanga-appearance-changed');
+  assert.equal(f.frames.size, 0);
+  assert.equal(f.run('currentState'), 'speaking', 'speech continues while its visual animation stops');
+
+  f.native(false);
+  const hiddenFrames = f.drawing.frames;
+  reduced = false;
+  f.emit('window', 'olanga-appearance-changed');
+  assert.equal(f.drawing.frames, hiddenFrames, 'appearance events do not wake hidden rendering');
+  assert.equal(f.frames.size, 0);
+  f.native(true);
+  assert.equal(f.frames.size, 1);
+  assert.equal(f.run('currentState'), 'speaking');
+
+  f.run('stopOrbAnimation()');
+  assert.equal(f.listeners.has('window:olanga-appearance-changed'), false);
+  assert.equal(f.listeners.has('media:change'), false);
+  reduced = true;
+  const stoppedFrames = f.drawing.frames;
+  f.emit('window', 'olanga-appearance-changed');
+  f.media.change();
+  assert.equal(f.drawing.frames, stoppedFrames, 'removed listeners cannot restart the stopped canvas');
+  assert.equal(f.frames.size, 0);
+});
+
 test('late initial visibility replies cannot restart hidden rendering', async () => {
   const f = fixture();
   f.native(false);
@@ -91,7 +154,7 @@ test('late initial visibility replies cannot restart hidden rendering', async ()
   f.native(true);
   assert.equal(f.context.window.OlangaVisibility.isVisible(), true);
   f.context.document.hidden = true;
-  f.listeners.get('document:visibilitychange')();
+  f.emit('document', 'visibilitychange');
   assert.equal(f.context.window.OlangaVisibility.isVisible(), false);
 });
 
@@ -107,6 +170,6 @@ test('clock sleeps until the next minute and refreshes immediately after a nativ
   f.native(true);
   assert.notEqual(f.node('clockDisplay').textContent, before);
   assert.equal(f.timers.size, 1);
-  f.listeners.get('window:beforeunload')();
+  f.emit('window', 'beforeunload');
   assert.equal(f.timers.size, 0);
 });

@@ -17,6 +17,10 @@ test('empty storage yields the declared defaults', () => {
   const loaded = prefs.load(fakeStorage());
 
   assert.equal(loaded.city, '');
+  assert.equal(loaded.appearanceAccent, 'violet');
+  assert.equal(loaded.appearanceMotion, 'system');
+  assert.equal(loaded.appearanceContrast, 'standard');
+  assert.equal(loaded.appearanceGlow, 'standard');
   assert.equal(loaded.ttsEngine, 'windows');
   assert.equal(loaded.ttsRate, prefs.DEFAULT_TTS_RATE);
   assert.equal(loaded.nvidiaVoice, prefs.DEFAULT_NVIDIA_VOICE);
@@ -45,6 +49,10 @@ test('stored strings are parsed back into their real types', () => {
 
 test('invalid stored values fall back instead of propagating', () => {
   const loaded = prefs.readFromStorage(fakeStorage({
+    olanga_appearance_accent: 'custom-script',
+    olanga_appearance_motion: 'never-reduce',
+    olanga_appearance_contrast: 'arbitrary-style',
+    olanga_appearance_glow: 'script-value',
     olanga_tts_engine: 'espeak',
     olanga_tts_rate: 'fast',
     olanga_status_light_mode: 'strobe',
@@ -85,6 +93,10 @@ test('retired Terminal preferences are ignored without deleting saved history or
 test('a write followed by a read round-trips', () => {
   const storage = fakeStorage();
   const written = prefs.sanitize({
+    appearanceAccent: 'mint',
+    appearanceMotion: 'reduced',
+    appearanceContrast: 'strong',
+    appearanceGlow: 'off',
     city: '  Portland  ',
     state: 'OR',
     country: 'USA',
@@ -101,6 +113,10 @@ test('a write followed by a read round-trips', () => {
   prefs.writeToStorage(storage, written);
   const reloaded = prefs.load(storage);
 
+  assert.equal(reloaded.appearanceAccent, 'mint');
+  assert.equal(reloaded.appearanceMotion, 'reduced');
+  assert.equal(reloaded.appearanceContrast, 'strong');
+  assert.equal(reloaded.appearanceGlow, 'off');
   assert.equal(reloaded.city, 'Portland');
   assert.equal(reloaded.ttsEngine, 'magpie');
   assert.equal(reloaded.ttsRate, 1.2);
@@ -210,4 +226,22 @@ test('five shortcut slots survive secure-store merge and storage roundtrip', () 
   assert.equal(result.quickActions[0].label, 'My editor');
   assert.equal(result.quickActions[0].prompt, initial.quickActions[0].prompt);
   assert.notEqual(prefs.defaults().quickActions[0].label, 'My editor');
+});
+
+test('appearance choices survive secure merges and invalid additions preserve earlier preferences', () => {
+  for (const appearanceAccent of ['violet', 'blue', 'mint', 'rose', 'amber']) {
+    const stored = fakeStorage({ olanga_appearance_accent: appearanceAccent, olanga_appearance_motion: 'reduced', olanga_city: 'Seattle', olanga_tts_rate: '0.9', olanga_status_light_size_v2: '1' });
+    const legacy = prefs.load(stored);
+    assert.equal(legacy.appearanceAccent, appearanceAccent);
+    assert.equal(legacy.appearanceContrast, 'standard');
+    assert.equal(legacy.appearanceGlow, 'standard');
+    const merged = prefs.merge(legacy, { appearanceContrast: 'strong', appearanceGlow: 'subtle' });
+    prefs.writeToStorage(stored, merged);
+    const reloaded = prefs.load(stored);
+    assert.deepEqual([reloaded.appearanceAccent, reloaded.appearanceMotion, reloaded.appearanceContrast, reloaded.appearanceGlow, reloaded.city, reloaded.ttsRate], [appearanceAccent, 'reduced', 'strong', 'subtle', 'Seattle', 0.9]);
+    const invalid = prefs.merge(reloaded, { appearanceContrast: 'unknown', appearanceGlow: 'everything', appearanceAccent: 'bad-color' });
+    assert.deepEqual([invalid.appearanceAccent, invalid.appearanceContrast, invalid.appearanceGlow], [appearanceAccent, 'strong', 'subtle']);
+  }
+  const invalid = prefs.load(fakeStorage({ olanga_appearance_contrast: 'unknown', olanga_appearance_glow: 'anything', olanga_appearance_accent: '<script>' }));
+  assert.deepEqual([invalid.appearanceAccent, invalid.appearanceContrast, invalid.appearanceGlow], ['violet', 'standard', 'standard']);
 });

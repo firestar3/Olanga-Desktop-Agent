@@ -1,3 +1,11 @@
+@font-face {
+  font-family: 'Outfit';
+  src: url('./assets/fonts/Outfit.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
   font-family: 'Outfit', 'Segoe UI', sans-serif;
@@ -73,6 +81,7 @@ h1 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -.1px; }
 @keyframes thinking { to { transform: rotate(360deg); } }
 @keyframes breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.15); } }
 @keyframes menu-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+body.reduced-motion *, body.reduced-motion *::before, body.reduced-motion *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 @media (forced-colors: active) {
   #quickMenu, .light-surface { background: Canvas; border: 1px solid ButtonText; }

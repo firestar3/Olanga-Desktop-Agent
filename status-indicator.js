@@ -29,6 +29,7 @@
     const open = snapshot.menuOpen === true && state !== 'off';
     document.body.dataset.state = state;
     document.body.classList.toggle('visuals-paused', snapshot.visible === false);
+    document.body.classList.toggle('reduced-motion', snapshot.reducedMotion === true);
     light.hidden = state === 'off';
     light.classList.toggle('hovered', snapshot.hovered === true);
     light.setAttribute('aria-expanded', String(open));

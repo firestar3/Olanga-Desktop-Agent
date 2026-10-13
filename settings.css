@@ -1,0 +1,99 @@
+/* Settings retain Olanga's typography, controls and dark surfaces. */
+.settings-screen-header, .settings-panel { width: 100%; max-width: 880px; }
+.settings-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.settings-screen-description { margin-top: 6px; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+.settings-tabs { display: flex; gap: 4px; margin-top: 20px; padding: 4px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-secondary); }
+.settings-tab { flex: 1; min-width: 0; min-height: 40px; padding: 10px 14px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font: 500 13px var(--font); cursor: pointer; }
+.settings-tab:hover { color: var(--text-primary); background: var(--bg-card); }
+.settings-tab[aria-selected="true"] { color: var(--accent-light); background: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary)); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.settings-save-status { min-height: 18px; margin-top: 10px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.settings-save-status[data-state="error"] { color: var(--danger); }
+.settings-panel { padding: 2px 0; outline: none; }
+.settings-panel[hidden], .settings-back-btn[hidden], #preferencesRetryBtn[hidden] { display: none !important; }
+#settingsScreen .settings-section { margin: 0 0 16px; padding: 20px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-secondary) 72%, transparent); }
+#settingsScreen .settings-section h3 { color: var(--text-primary); font-size: 13px; line-height: 1.5; margin-bottom: 14px; letter-spacing: .75px; }
+#settingsScreen .settings-hint { color: var(--text-secondary); font-size: 12px; line-height: 1.65; }
+#settingsScreen .settings-hint[data-state="error"] { color: var(--danger); }
+#settingsScreen .settings-hint[data-state="success"] { color: var(--text-primary); }
+#settingsScreen .settings-hint:last-child { margin-bottom: 0; }
+#settingsScreen .settings-hint-after { margin-top: 10px; }
+#settingsScreen .voice-settings-row label, .settings-field-label { color: var(--text-secondary); font-size: 12px; text-transform: none; letter-spacing: 0; }
+.settings-field-label { display: block; margin-bottom: 8px; }
+#settingsScreen button, #settingsScreen input, #settingsScreen select, #settingsScreen textarea { font-family: var(--font); }
+#settingsScreen select { width: 100%; min-width: 0; color-scheme: dark; }
+#settingsScreen .rotation-toggle-row { gap: 12px; padding-top: 14px; margin-top: 14px; }
+#settingsScreen .rotation-toggle-row > label[for] { color: var(--text-primary); line-height: 1.5; cursor: pointer; }
+#settingsScreen .toggle-switch { flex: 0 0 36px; }
+#settingsScreen .toggle-switch input:focus-visible + .slider { outline: 2px solid var(--accent-light); outline-offset: 4px; }
+#settingsScreen .toggle-switch input:checked + .slider:before { transform: translateX(16px); }
+#settingsScreen .add-key-row { margin-bottom: 14px; }
+#settingsScreen .add-key-row button { min-height: 42px; flex-shrink: 0; }
+#settingsScreen .key-btn { color: var(--accent-light); min-height: 30px; }
+#settingsScreen .location-inputs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+#settingsScreen .location-inputs input { min-width: 0; width: 100%; }
+#settingsScreen #magpieVoiceSettings { margin-top: 12px; }
+.settings-optional { display: inline-block; margin-left: 6px; color: var(--text-secondary); font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.settings-back-btn { flex-shrink: 0; padding: 9px 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-primary); font: 500 12px var(--font); cursor: pointer; }
+.settings-text-link { display: inline-block; margin-top: 14px; padding: 4px 0; border: 0; background: transparent; color: var(--accent-light); font: 400 12px/1.6 var(--font); text-align: left; cursor: pointer; }
+.settings-text-link:hover, .setup-link:hover { text-decoration: underline; }
+.setup-privacy-link { margin-top: 0; }
+button.setup-link { border: 0; padding: 0; background: transparent; font: inherit; }
+#settingsScreen button:focus-visible, #settingsScreen select:focus-visible, #settingsScreen input:focus-visible, #settingsScreen textarea:focus-visible, #settingsScreen summary:focus-visible, .settings-panel:focus-visible, .setup-privacy-link:focus-visible, button.setup-link:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 3px; }
+#settingsScreen input[type="checkbox"]:focus-visible { outline: none; }
+#settingsScreen .settings-intro-footer { padding-bottom: 8px; }
+@media (max-width: 760px) {
+  .settings-container { padding: 50px 20px 20px 92px; }
+  .settings-tabs { gap: 2px; margin-top: 14px; }
+  .settings-tab { padding: 9px 8px; font-size: 12px; }
+  #settingsScreen .settings-section { padding: 16px; }
+  #settingsScreen .voice-settings-grid, #settingsScreen .location-inputs { grid-template-columns: minmax(0, 1fr); }
+  .settings-heading-row { flex-wrap: wrap; gap: 10px; }
+}
+@media (max-width: 480px) {
+  .settings-container { padding-left: 82px; padding-right: 12px; }
+  .settings-tab { padding: 8px 4px; font-size: 11px; }
+  #settingsScreen .add-key-row { flex-wrap: wrap; }
+  #settingsScreen .add-key-row input { flex-basis: 100%; }
+  #settingsScreen .add-key-row button { width: 100%; }
+}
+
+.privacy-lead { font-size: 21px; font-weight: 500; line-height: 1.4; margin-bottom: 10px; }
+.privacy-facts { margin: 22px 0; }
+.privacy-facts > div { padding: 15px 0; border-top: 1px solid var(--border-subtle); }
+.privacy-facts dt { font-size: 13px; font-weight: 500; margin-bottom: 5px; color: var(--text-primary); }
+.privacy-facts dd, .privacy-document { color: #aaaabd; font-size: 13px; line-height: 1.75; }
+.privacy-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.privacy-full-notice { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border-subtle); }
+.privacy-full-notice summary { color: var(--accent-light); font-size: 13px; cursor: pointer; padding: 4px 0; }
+.privacy-document { user-select: text; overflow-wrap: anywhere; }
+.privacy-document h4 { font-size: 19px; color: var(--text-primary); margin: 22px 0 10px; }
+.privacy-document h5 { font-size: 15px; color: var(--text-primary); margin: 22px 0 8px; }
+.privacy-document p, .privacy-document ul { margin: 10px 0; }
+.privacy-document ul { padding-left: 22px; }
+.privacy-document li { margin: 7px 0; }
+.privacy-document a { color: var(--accent-light); text-decoration: underline; text-underline-offset: 3px; }
+
+/* Before setup, reading the notice does not expose app actions or settings. */
+.settings-tab[hidden], .privacy-actions[hidden], #privacyNoticeContent button[hidden], #privacySetupNote[hidden] { display: none !important; }
+.settings-before-setup #preferencesSaveStatus, .settings-before-setup #preferencesRetryBtn { display: none !important; }
+.settings-before-setup .settings-container { padding-left: 40px; }
+@media (max-width: 760px) { .settings-before-setup .settings-container { padding-left: 20px; } }
+
+/* A static sample shows the selected appearance without adding another loop. */
+.appearance-preview { display: grid; grid-template-columns: 60px minmax(0, 1fr) auto; align-items: center; gap: 18px; margin-top: 18px; padding: 18px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-primary); }
+.appearance-preview figcaption { min-width: 0; }
+.appearance-preview-label { display: block; color: var(--accent-light); font-size: 11px; letter-spacing: .7px; text-transform: uppercase; margin-bottom: 5px; }
+.appearance-preview strong { display: block; color: var(--text-primary); font-size: 14px; font-weight: 500; line-height: 1.5; }
+.appearance-preview-copy { display: block; color: var(--text-secondary); font-size: 12px; line-height: 1.6; margin-top: 2px; }
+.appearance-preview-orb { display: block; width: 54px; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, .15), transparent 60%), radial-gradient(circle at 40% 35%, #a29bfe, #6c5ce7, #4a3fcf); box-shadow: 0 0 22px rgba(108, 92, 231, .4), 0 0 42px rgba(108, 92, 231, .15), inset 0 0 10px rgba(255, 255, 255, .08); }
+.appearance-preview-button { display: inline-block; justify-self: start; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #fff; padding: 10px 14px; font: 500 12px/1.4 var(--font); white-space: nowrap; }
+.appearance-reset-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-top: 16px; }
+#settingsScreen .appearance-reset-row .settings-hint { margin: 0; }
+:root[data-glow="subtle"] .appearance-preview-orb { box-shadow: 0 0 9px rgba(108, 92, 231, .18), inset 0 0 10px rgba(255, 255, 255, .08); }
+:root[data-glow="off"] .appearance-preview-orb { box-shadow: inset 0 0 10px rgba(255, 255, 255, .08); }
+@media (max-width: 600px) {
+  .appearance-preview { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; padding: 14px; }
+  .appearance-preview-orb { width: 42px; }
+  .appearance-preview-button { grid-column: 2; padding: 8px 10px; }
+  .appearance-reset-row .settings-back-btn { max-width: 100%; white-space: normal; text-align: left; }
+}

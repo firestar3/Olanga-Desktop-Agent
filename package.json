@@ -31,7 +31,8 @@
     "verify:package": "node scripts/verify-package.js && node scripts/verify-icons.js --packaged",
     "icons:generate": "electron scripts/generate-icons.js",
     "verify:icons": "node scripts/verify-icons.js",
-    "bench:resources": "node tests/resource-benchmark.js"
+    "bench:resources": "node tests/resource-benchmark.js",
+    "smoke:settings": "electron tests/settings-experience-smoke.js --hidden"
   },
   "keywords": [
     "ai",
@@ -73,7 +74,10 @@
       "extensions/**/*",
       "docs/PHONE_REMOTE.md",
       "assets/icons/icon.ico",
-      "assets/icons/tray.ico"
+      "assets/icons/tray.ico",
+      "settings.css",
+      "PRIVACY.md",
+      "assets/fonts/**/*"
     ],
     "extraResources": [
       {

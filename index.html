@@ -11,8 +11,8 @@
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self' file:;
     script-src 'self' file: 'wasm-unsafe-eval' 'unsafe-eval';
-    style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com;
-    font-src 'self' file: data: https://fonts.gstatic.com;
+    style-src 'self' file: 'unsafe-inline';
+    font-src 'self' file: data:;
     img-src 'self' file: data: blob:;
     media-src 'self' file: data: blob:;
     worker-src 'self' file: blob:;
@@ -25,19 +25,18 @@
   <title>Olanga</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="desktop-workflows.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="settings.css">
+  <script src="./js/appearance.js"></script>
 </head>
 <body>
   <!-- Custom title bar for frameless window -->
   <div class="titlebar" id="titlebar">
     <div class="titlebar-drag"></div>
     <div class="titlebar-controls">
-      <button class="titlebar-btn minimize-btn" id="minimizeBtn" title="Minimize">
+      <button class="titlebar-btn minimize-btn" id="minimizeBtn" aria-label="Minimize Olanga" title="Minimize">
         <svg width="12" height="12" viewBox="0 0 12 12"><rect y="5" width="12" height="2" rx="1" fill="currentColor"/></svg>
       </button>
-      <button class="titlebar-btn close-btn" id="closeBtn" title="Close">
+      <button class="titlebar-btn close-btn" id="closeBtn" aria-label="Hide Olanga to the system tray" title="Close">
         <svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </div>
@@ -112,12 +111,13 @@
         <form class="setup-form" id="setupForm">
           <label class="setup-label" for="apiKeyInput">Gemini API Key</label>
           <input type="password" id="apiKeyInput" name="apiKey" class="setup-input" placeholder="Enter your Gemini key..." autocomplete="off" spellcheck="false">
-          <p class="setup-hint">Get a free key at <span class="setup-link" id="getKeyLink">aistudio.google.com</span></p>
+          <p class="setup-hint">Get a free key at <button type="button" class="setup-link" id="getKeyLink">aistudio.google.com</button></p>
           <label class="setup-label" for="nvidiaKeyInput" style="margin-top:10px;">NVIDIA API Key <span class="setup-optional">(optional — Magpie voice only)</span></label>
           <input type="password" id="nvidiaKeyInput" name="nvidiaKey" class="setup-input" placeholder="NVIDIA key for Magpie voice only..." autocomplete="off" spellcheck="false">
           <button type="submit" class="setup-btn" id="saveKeyBtn">Activate Olanga</button>
           <button type="button" class="setup-btn setup-local-btn" id="startLocalBtn">Use local commands without a key</button>
           <p class="setup-hint">Type app, music, timer, checklist, and volume commands. Add a Gemini key later for questions and cloud speech.</p>
+          <button type="button" class="settings-text-link setup-privacy-link" id="setupPrivacyBtn" data-open-settings-tab="privacy">How Olanga handles your data →</button>
         </form>
       </div>
     </div>
@@ -184,7 +184,7 @@
 
       <!-- Text Command Input -->
       <div class="text-command-wrapper" id="textCommandWrapper">
-        <input type="text" id="textCommandInput" placeholder="Type a command..." autocomplete="off">
+        <input type="text" id="textCommandInput" aria-label="Command" placeholder="Type a command..." autocomplete="off">
         <button id="textCommandBtn" title="Send Command">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -234,7 +234,7 @@
         </div>
         <div class="timers-list" id="timersList"></div>
         <div class="timers-input-wrapper">
-          <input type="text" id="timerInput" placeholder="Set timer (e.g. 3m, 10s)..." />
+          <input type="text" id="timerInput" aria-label="Timer duration" placeholder="Set timer (e.g. 3m, 10s)..." />
           <button id="addTimerBtn" title="Add Timer">+</button>
         </div>
       </div>
@@ -247,7 +247,7 @@
         </div>
         <div class="tasks-list" id="tasksList"></div>
         <div class="tasks-input-wrapper">
-          <input type="text" id="taskInput" placeholder="Add a task..." />
+          <input type="text" id="taskInput" aria-label="New task" placeholder="Add a task..." />
           <button id="addTaskBtn" title="Add Task">+</button>
         </div>
       </div>
@@ -286,7 +286,7 @@
         </div>
       </div>
       <div class="notepad-content-wrapper">
-        <div class="notepad-textarea" id="notepadTextarea" contenteditable="true" placeholder="Start typing your notes..."></div>
+        <div class="notepad-textarea" id="notepadTextarea" contenteditable="true" role="textbox" aria-label="Note contents" aria-multiline="true" placeholder="Start typing your notes..."></div>
         <div class="notepad-ai-sidebar hidden" id="notepadAiSidebar">
           <div class="notepad-ai-header">
             <span class="notepad-ai-title">AI Assistant</span>
@@ -294,7 +294,7 @@
               <span class="notepad-ai-status-dot" id="notepadAiStatusDot"></span>
               <span class="notepad-ai-status-text" id="notepadAiStatusText">Idle</span>
             </div>
-            <button class="notepad-ai-close-btn" id="notepadAiCloseBtn">×</button>
+            <button class="notepad-ai-close-btn" id="notepadAiCloseBtn" aria-label="Close notes assistant">×</button>
           </div>
           <div class="notepad-ai-model-selector">
             <label for="notepadAiModelSelect">Model:</label>
@@ -405,186 +405,167 @@
   <div class="screen hidden" id="settingsScreen">
     <div class="settings-container">
       <div class="settings-screen-header">
-        <h2>Settings</h2>
+        <div class="settings-heading-row">
+          <div><h2>Settings</h2><p class="settings-screen-description">Your preferences, connections and privacy.</p></div>
+          <button type="button" class="settings-back-btn" id="settingsReturnToSetupBtn" hidden>← Back to setup</button>
+        </div>
+        <div class="settings-tabs" role="tablist" aria-label="Settings categories">
+          <button type="button" id="settingsTabUser" class="settings-tab" data-settings-tab="user" role="tab" aria-selected="true" aria-controls="settingsPanelUser" tabindex="0">User preferences</button>
+          <button type="button" id="settingsTabCore" class="settings-tab" data-settings-tab="core" role="tab" aria-selected="false" aria-controls="settingsPanelCore" tabindex="-1">Core settings</button>
+          <button type="button" id="settingsTabPrivacy" class="settings-tab" data-settings-tab="privacy" role="tab" aria-selected="false" aria-controls="settingsPanelPrivacy" tabindex="-1">Privacy</button>
+        </div>
+        <p id="preferencesSaveStatus" class="settings-save-status" role="status" aria-live="polite">Preferences save automatically.</p>
+        <button type="button" id="preferencesRetryBtn" class="settings-text-link" hidden>Try saving preferences again</button>
       </div>
       <div class="settings-scroll">
-      <div class="settings-section">
-        <h3>API Keys</h3>
-        <div class="key-list-container" id="keyListContainer">
-          <!-- Keys rendered here -->
-        </div>
-        <div class="add-key-row">
-          <input type="password" id="newKeyInput" placeholder="Add new Gemini key..." autocomplete="off" spellcheck="false">
-          <button id="addKeyBtn">Add</button>
-        </div>
-        <div class="add-key-row" style="margin-top:10px;">
-          <input type="password" id="nvidiaSettingsKeyInput" aria-label="NVIDIA API key" placeholder="NVIDIA hosted API key (nvapi-...)" autocomplete="off" spellcheck="false">
-          <button id="addNvidiaKeyBtn">Save &amp; Test</button>
-        </div>
-        <p id="nvidiaConnectionStatus" class="settings-hint" role="status" aria-live="polite">Optional. NVIDIA is used only to synthesize the Magpie voice.</p>
-        <button type="button" id="getNvidiaKeyBtn" class="key-btn">Get a NVIDIA key for Magpie ↗</button>
-        <p class="settings-hint">Gemini handles speech understanding, reasoning, screen tasks, Notes and News. Save &amp; Test checks Magpie with a short sample; it does not change your voice engine.</p>
-        <div class="rotation-toggle-row">
-          <label class="toggle-switch">
-            <input type="checkbox" id="rotationToggle">
-            <span class="slider"></span>
-          </label>
-          <span>Enable Key Rotation (auto-switch on Rate Limit)</span>
-        </div>
-      </div>
-
-      <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
-        <h3>Voice Settings</h3>
-        <p class="settings-hint">Choose how Olanga speaks. Windows uses the built-in system voice; Magpie uses NVIDIA cloud TTS.</p>
-        <div class="voice-settings-grid">
-          <div class="voice-settings-row full-width">
-            <label for="speechInputSelect">Speech recognition</label>
-            <select id="speechInputSelect"><option value="cloud">Gemini (cloud)</option><option value="offline">On-device commands (English, review first)</option><option value="offline-general">On-device dictation (English, experimental)</option></select>
-            <p class="settings-hint">On-device recognition asks you to review the transcript before sending. It can be slower and less accurate. Questions and screen tasks still use Gemini; audio stays on this device.</p>
-          </div>
-          <div class="voice-settings-row full-width">
-            <label for="ttsEngineSelect">Voice Engine</label>
-            <select id="ttsEngineSelect">
-              <option value="windows">Windows (built-in)</option>
-              <option value="magpie">NVIDIA Magpie</option>
-            </select>
-          </div>
-          <div class="voice-settings-row full-width">
-            <label for="ttsRateInput">Speech Rate</label>
-            <div class="voice-range-row">
-              <input type="range" id="ttsRateInput" min="0.8" max="1.2" step="0.05" value="1.05">
-              <span id="ttsRateValue">1.05x</span>
+        <div id="settingsPanelUser" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabUser" tabindex="0">
+          <section class="settings-section" aria-labelledby="appearanceSettingsHeading">
+            <h3 id="appearanceSettingsHeading">Appearance</h3>
+            <p class="settings-hint">A little personalization, with the same familiar Olanga layout.</p>
+            <div class="voice-settings-grid">
+              <div class="voice-settings-row">
+                <label for="appearanceAccentSelect">Accent color</label>
+                <select id="appearanceAccentSelect"><option value="violet">Violet · Original</option><option value="blue">Blue</option><option value="mint">Mint</option><option value="rose">Rose</option><option value="amber">Amber</option></select>
+              </div>
+              <div class="voice-settings-row">
+                <label for="appearanceContrastSelect">Window contrast</label>
+                <select id="appearanceContrastSelect" aria-describedby="appearanceScopeHint"><option value="standard">Standard · Original</option><option value="strong">Stronger text &amp; borders</option></select>
+              </div>
+              <div class="voice-settings-row">
+                <label for="appearanceGlowSelect">Orb glow</label>
+                <select id="appearanceGlowSelect" aria-describedby="appearanceGlowHint"><option value="standard">Standard · Original</option><option value="subtle">Subtle</option><option value="off">Off</option></select>
+              </div>
+              <div class="voice-settings-row">
+                <label for="appearanceMotionSelect">Animation</label>
+                <select id="appearanceMotionSelect" aria-describedby="appearanceMotionHint"><option value="system">Follow Windows</option><option value="reduced">Reduce motion</option></select>
+              </div>
             </div>
-          </div>
-          <div class="voice-settings-row full-width">
-            <label for="endOfSpeechSelect">End of speech</label>
-            <select id="endOfSpeechSelect">
-              <option value="standard">Standard (1.5 second pause)</option>
-              <option value="quick">Quick (1 second pause)</option>
-              <option value="fast">Fast (0.7 second pause; may cut off long pauses)</option>
-            </select>
-            <p class="settings-hint">How long Olanga waits after you stop talking before it sends your request.</p>
-          </div>
-        </div>
-        <div class="rotation-toggle-row">
-          <label class="toggle-switch">
-            <input type="checkbox" id="bargeInToggle" checked>
-            <span class="slider"></span>
-          </label>
-          <span>Interrupt a reply by saying “Hey Olanga”</span>
-        </div>
-        <div class="rotation-toggle-row">
-          <label class="toggle-switch">
-            <input type="checkbox" id="streamRepliesToggle" checked>
-            <span class="slider"></span>
-          </label>
-          <span>Streamed replies: start answering before the full reply is ready</span>
-        </div>
-        <div id="magpieVoiceSettings" class="voice-settings-grid" style="margin-top: 12px;">
-          <div class="voice-settings-row full-width">
-            <label for="nvidiaVoiceSelect">Magpie Voice</label>
-            <select id="nvidiaVoiceSelect">
-              <option value="Magpie-Multilingual.EN-US.Sofia">Sofia</option>
-              <option value="Magpie-Multilingual.EN-US.Aria">Aria</option>
-              <option value="Magpie-Multilingual.EN-US.Mia">Mia</option>
-              <option value="Magpie-Multilingual.EN-US.Jason">Jason</option>
-              <option value="Magpie-Multilingual.EN-US.Leo">Leo</option>
-              <option value="Magpie-Multilingual.EN-US.Ray">Ray</option>
-              <option value="Magpie-Multilingual.EN-US.Louise">Louise</option>
-              <option value="Magpie-Multilingual.EN-US.Diego">Diego</option>
-              <option value="Magpie-Multilingual.EN-US.Isabela">Isabela</option>
-              <option value="Magpie-Multilingual.EN-US.Pascal">Pascal</option>
-            </select>
-          </div>
-        </div>
-      </div>
+            <p class="settings-hint settings-hint-after" id="appearanceScopeHint">Accent and contrast apply to Olanga's main window and Workspace. Windows dialogs and the corner light keep their own appearance.</p>
+            <p class="settings-hint" id="appearanceGlowHint">Orb glow adjusts the soft halo on the home screen. The orb's listening, thinking and speaking colors stay the same.</p>
+            <p class="settings-hint" id="appearanceMotionHint">Reduced motion keeps visual effects still. Voice, timers and status updates continue normally.</p>
+            <figure class="appearance-preview" aria-labelledby="appearancePreviewCaption">
+              <span class="appearance-preview-orb" aria-hidden="true"></span>
+              <figcaption id="appearancePreviewCaption"><span class="appearance-preview-label">Preview</span><strong>Your Olanga window</strong><span class="appearance-preview-copy">Surface, text and accent together.</span></figcaption>
+              <span class="appearance-preview-button">Accent sample</span>
+            </figure>
+            <div class="appearance-reset-row"><button type="button" class="settings-back-btn" id="appearanceResetBtn" aria-describedby="appearanceResetHint">Restore appearance defaults</button><p class="settings-hint" id="appearanceResetHint">Only your appearance choices change.</p></div>
+          </section>
 
-      <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
-        <h3>Startup</h3>
-        <p class="settings-hint">Start Olanga with Windows so the wake word is armed without opening it yourself. It launches straight to the system tray.</p>
-        <div class="rotation-toggle-row">
-          <label class="toggle-switch">
-            <input type="checkbox" id="openAtLoginToggle">
-            <span class="slider"></span>
-          </label>
-          <span>Launch at login</span>
+          <section class="settings-section" aria-labelledby="conversationSettingsHeading">
+            <h3 id="conversationSettingsHeading">Conversation</h3>
+            <div class="voice-settings-grid">
+              <div class="voice-settings-row">
+                <label for="ttsRateInput">Speech rate</label>
+                <div class="voice-range-row"><input type="range" id="ttsRateInput" min="0.8" max="1.2" step="0.05" value="1.05" aria-describedby="ttsRateValue"><span id="ttsRateValue">1.05x</span></div>
+              </div>
+              <div class="voice-settings-row">
+                <label for="endOfSpeechSelect">Pause before sending</label>
+                <select id="endOfSpeechSelect" aria-describedby="endOfSpeechHint"><option value="standard">Standard · 1.5 seconds</option><option value="quick">Quick · 1 second</option><option value="fast">Fast · 0.7 seconds</option></select>
+              </div>
+            </div>
+            <p class="settings-hint settings-hint-after" id="endOfSpeechHint">A shorter pause sends your request sooner, but may cut you off if you pause while speaking.</p>
+            <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="bargeInToggle" checked aria-labelledby="bargeInLabel"><span class="slider" aria-hidden="true"></span></label><label for="bargeInToggle" id="bargeInLabel">Interrupt a reply by saying “Hey Olanga”</label></div>
+            <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="streamRepliesToggle" checked aria-labelledby="streamRepliesLabel"><span class="slider" aria-hidden="true"></span></label><label for="streamRepliesToggle" id="streamRepliesLabel">Start speaking before the full reply is ready</label></div>
+            <button type="button" class="settings-text-link" data-open-settings-tab="core">Choose a voice or speech recognition in Core settings →</button>
+          </section>
+
+          <section class="settings-section" aria-labelledby="startupSettingsHeading">
+            <h3 id="startupSettingsHeading">Shortcuts &amp; startup</h3>
+            <div class="voice-settings-row">
+              <label for="pushToTalkSelect">Push-to-talk shortcut</label>
+              <select id="pushToTalkSelect" aria-describedby="pushToTalkHint pushToTalkStatus"><option value="off">Off</option></select>
+              <p class="settings-hint" id="pushToTalkHint">Start talking from any app without the wake word. Press again to send, or use it to interrupt a reply.</p>
+            </div>
+            <p id="pushToTalkStatus" class="settings-hint" role="status" aria-live="polite"></p>
+            <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="openAtLoginToggle" aria-labelledby="openAtLoginLabel" aria-describedby="openAtLoginHint"><span class="slider" aria-hidden="true"></span></label><label for="openAtLoginToggle" id="openAtLoginLabel">Launch at login</label></div>
+            <p class="settings-hint settings-hint-after" id="openAtLoginHint">Olanga starts in the system tray with its wake word ready.</p>
+          </section>
+
+          <section class="settings-section" aria-labelledby="statusLightSettingsHeading">
+            <h3 id="statusLightSettingsHeading">Corner status light</h3>
+            <p class="settings-hint">Hover over the floating light to expand it, then click for shortcuts. Choose All Lights to keep it visible while idle.</p>
+            <div class="status-light-controls"><button type="button" class="status-light-mode-btn" id="statusLightModeBtn" aria-live="polite" aria-label="Corner light visibility">No Constant Light</button><button type="button" class="status-light-mode-btn" id="statusLightSizeBtn" aria-live="polite" aria-label="Corner light size">Small</button></div>
+            <details class="quick-actions-settings"><summary>Customize your five shortcuts</summary><p class="settings-hint">Give each shortcut a name and a request. Try “Desktop task: rewrite the selected paragraph” or “Set a timer for 25 minutes”. Screen edits still require both confirmations.</p><div id="quickActionsEditor" class="quick-actions-editor"></div><button type="button" class="status-light-mode-btn" id="resetQuickActionsBtn">Restore default shortcuts</button><span id="quickActionsSaveStatus" class="settings-hint" role="status"></span></details>
+          </section>
+
+          <section class="settings-section" aria-labelledby="wakeSettingsHeading">
+            <h3 id="wakeSettingsHeading">Wake words</h3>
+            <p class="settings-hint">The built-in phrases stay available. Add your own phrase, then say it five times to teach Olanga its spoken variations.</p>
+            <div class="wake-preset-list" id="wakePresetList"></div><div class="wake-custom-list" id="wakeCustomList"></div><button type="button" class="wake-add-btn" id="addWakeWordBtn">Add custom wake word</button>
+          </section>
+
+          <section class="settings-section" aria-labelledby="optionalSettingsHeading">
+            <h3 id="optionalSettingsHeading">Optional panels</h3>
+            <p class="settings-hint">Choose which extra panels appear in the sidebar.</p>
+            <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="featureNotepadToggle" data-feature="notepadScreen" aria-labelledby="featureNotepadLabel"><span class="slider" aria-hidden="true"></span></label><label for="featureNotepadToggle" id="featureNotepadLabel">Notepad</label></div>
+            <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="featureNewsToggle" data-feature="newsScreen" aria-labelledby="featureNewsLabel"><span class="slider" aria-hidden="true"></span></label><label for="featureNewsToggle" id="featureNewsLabel">News</label></div>
+          </section>
+
+          <section class="settings-section" aria-labelledby="locationSettingsHeading">
+            <h3 id="locationSettingsHeading">Location context</h3>
+            <p class="settings-hint" id="locationSettingsHint">Optional. Used for weather, local news and searches. Add only the area you want Olanga to use.</p>
+            <div class="location-inputs">
+              <div class="voice-settings-row"><label for="cityInput">City</label><input type="text" id="cityInput" placeholder="e.g. Seattle" autocomplete="address-level2" aria-describedby="locationSettingsHint"></div>
+              <div class="voice-settings-row"><label for="stateInput">State or region</label><input type="text" id="stateInput" placeholder="e.g. WA" autocomplete="address-level1"></div>
+              <div class="voice-settings-row"><label for="countryInput">Country</label><input type="text" id="countryInput" placeholder="e.g. USA" autocomplete="country-name"></div>
+            </div>
+          </section>
+          <div class="settings-intro-footer"><button type="button" class="settings-intro-btn" id="viewIntroBtn">View intro</button></div>
         </div>
-      </div>
 
-      <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
-        <h3>Push-to-talk</h3>
-        <p class="settings-hint">Press a shortcut anywhere in Windows to start talking without the wake word. It can also interrupt a reply.</p>
-        <div class="voice-settings-grid">
-          <div class="voice-settings-row full-width">
-            <label for="pushToTalkSelect">Shortcut</label>
-            <select id="pushToTalkSelect"><option value="off">Off</option></select>
-          </div>
+        <div id="settingsPanelCore" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabCore" tabindex="0" hidden>
+          <section class="settings-section" aria-labelledby="geminiSettingsHeading">
+            <h3 id="geminiSettingsHeading">Gemini connection</h3>
+            <p class="settings-hint">Used for cloud speech recognition, questions, screen tasks and AI features in Notes and News. Local commands can run without a key.</p>
+            <div class="key-list-container" id="keyListContainer"></div>
+            <label class="settings-field-label" for="newKeyInput">Gemini API key</label>
+            <div class="add-key-row"><input type="password" id="newKeyInput" placeholder="Paste a Gemini API key" autocomplete="off" spellcheck="false"><button type="button" id="addKeyBtn">Add key</button></div>
+            <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="rotationToggle" aria-labelledby="rotationLabel" aria-describedby="rotationHint"><span class="slider" aria-hidden="true"></span></label><label for="rotationToggle" id="rotationLabel">Switch keys when a rate limit is reached</label></div>
+            <p class="settings-hint settings-hint-after" id="rotationHint">Uses another saved Gemini key when one is temporarily rate limited.</p>
+          </section>
+
+          <section class="settings-section" aria-labelledby="speechSettingsHeading">
+            <h3 id="speechSettingsHeading">Speech &amp; voice engines</h3>
+            <div class="voice-settings-grid">
+              <div class="voice-settings-row full-width"><label for="speechInputSelect">Speech recognition</label><select id="speechInputSelect" aria-describedby="speechInputHint"><option value="cloud">Gemini (cloud)</option><option value="offline">On-device commands (English, review first)</option><option value="offline-general">On-device dictation (English, experimental)</option></select><p class="settings-hint" id="speechInputHint">On-device recognition keeps audio on this device and asks you to review the transcript before sending. It can be slower and less accurate. Questions and screen tasks still use Gemini.</p></div>
+              <div class="voice-settings-row full-width"><label for="ttsEngineSelect">Voice engine</label><select id="ttsEngineSelect" aria-describedby="ttsEngineHint"><option value="windows">Windows (built-in)</option><option value="magpie">NVIDIA Magpie</option></select><p class="settings-hint" id="ttsEngineHint">Windows uses your built-in system voice. Magpie sends reply text to NVIDIA to create speech.</p></div>
+            </div>
+            <div id="magpieVoiceSettings" class="voice-settings-grid"><div class="voice-settings-row full-width"><label for="nvidiaVoiceSelect">Magpie voice</label><select id="nvidiaVoiceSelect"><option value="Magpie-Multilingual.EN-US.Sofia">Sofia</option><option value="Magpie-Multilingual.EN-US.Aria">Aria</option><option value="Magpie-Multilingual.EN-US.Mia">Mia</option><option value="Magpie-Multilingual.EN-US.Jason">Jason</option><option value="Magpie-Multilingual.EN-US.Leo">Leo</option><option value="Magpie-Multilingual.EN-US.Ray">Ray</option><option value="Magpie-Multilingual.EN-US.Louise">Louise</option><option value="Magpie-Multilingual.EN-US.Diego">Diego</option><option value="Magpie-Multilingual.EN-US.Isabela">Isabela</option><option value="Magpie-Multilingual.EN-US.Pascal">Pascal</option></select></div></div>
+          </section>
+
+          <section class="settings-section" aria-labelledby="magpieSettingsHeading">
+            <h3 id="magpieSettingsHeading">NVIDIA connection <span class="settings-optional">Optional</span></h3>
+            <p class="settings-hint">Only needed for the Magpie voice. It does not handle reasoning or control your apps.</p>
+            <label class="settings-field-label" for="nvidiaSettingsKeyInput">NVIDIA API key</label>
+            <div class="add-key-row"><input type="password" id="nvidiaSettingsKeyInput" placeholder="NVIDIA hosted API key (nvapi-...)" autocomplete="off" spellcheck="false" aria-describedby="nvidiaConnectionStatus"><button type="button" id="addNvidiaKeyBtn">Save &amp; test</button></div>
+            <p id="nvidiaConnectionStatus" class="settings-hint" role="status" aria-live="polite">Save &amp; test sends a short sample to NVIDIA. It does not change your voice engine.</p>
+            <button type="button" id="getNvidiaKeyBtn" class="key-btn">Get a NVIDIA key for Magpie ↗</button>
+          </section>
+
+          <section class="settings-section agent-settings" aria-labelledby="intelligenceSettingsHeading">
+            <h3 id="intelligenceSettingsHeading">Intelligence &amp; desktop tasks</h3>
+            <p class="settings-hint">Gemini handles conversation, screen diagnosis, action planning and final responses.</p>
+            <p class="settings-hint">For “fix the bug on my screen”, Olanga diagnoses the issue, asks for approval, edits only the selected window or editor, and captures the result to verify. A spoken yes opens the native edit review; changing scope requires fresh permission.</p>
+            <button type="button" class="settings-text-link" data-open-settings-tab="privacy">Read about data and privacy →</button>
+          </section>
         </div>
-        <p id="pushToTalkStatus" class="settings-hint" role="status" aria-live="polite"></p>
-      </div>
 
-      <div class="settings-section agent-settings">
-        <h3>Intelligence &amp; desktop tasks</h3>
-        <p class="settings-hint">Gemini handles listening, conversation, screen diagnosis, action planning and final responses. NVIDIA is only needed if you select the Magpie voice.</p>
-        <p class="settings-hint">For “fix the bug on my screen”, Olanga diagnoses the issue, asks for approval, edits only the selected window or editor, and captures the result to verify. A spoken yes opens the native edit review; changing scope requires fresh permission.</p>
-      </div>
-
-      <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
-        <h3>Corner Status Light</h3>
-        <p class="settings-hint">A floating light above your windows. Hover to expand, then click for shortcuts. Choose All Lights to keep it available while idle.</p>
-        <div class="status-light-controls">
-          <button type="button" class="status-light-mode-btn" id="statusLightModeBtn" aria-live="polite">No Constant Light</button>
-          <button type="button" class="status-light-mode-btn" id="statusLightSizeBtn" aria-live="polite">Small</button>
+        <div id="settingsPanelPrivacy" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabPrivacy" tabindex="0" hidden>
+          <section class="settings-section privacy-overview" id="privacyNoticeContent" aria-labelledby="privacyNoticeHeading">
+            <h3 id="privacyNoticeHeading">Your data &amp; privacy</h3>
+            <p class="privacy-lead">Local when it can be. Connected when you ask.</p>
+            <p class="settings-hint">Olanga has no automatic analytics uploads. Connected features send the information needed to the service you use. Your provider's own terms apply.</p>
+            <dl class="privacy-facts">
+              <div><dt>Listening &amp; speech</dt><dd>Wake-word recognition runs on this computer. With cloud recognition, your activated request audio goes to Google Gemini. On-device recognition keeps that audio local and asks you to review the text; submitted questions may still use Gemini. Gemini Live streams audio only during a session you start.</dd></div>
+              <div><dt>Answers &amp; context</dt><dd>Gemini requests can include recent conversation, your checklist, saved location and enabled memories. Cloud screen assistance sends captures you approve. Magpie sends reply text to NVIDIA when you choose that voice.</dd></div>
+              <div><dt>Saved on this device</dt><dd>API keys use Windows-backed encryption. Notes, memories, tasks and other saved content are local but are not all encrypted by Olanga. Activity retention and performance measurements are optional.</dd></div>
+              <div><dt>Your controls</dt><dd>Review or delete memories in Workspace. Choose whether to retain activity and diagnostics. Clear individual saved items where you manage them. Removing local data does not remove copies already held by a provider.</dd></div>
+            </dl>
+            <div class="privacy-actions"><button type="button" class="settings-back-btn" data-open-settings-tab="core">Review connected services</button><button type="button" class="settings-back-btn" data-privacy-workspace="5">Manage memories</button><button type="button" class="settings-back-btn" data-privacy-workspace="0">Activity history</button><button type="button" class="settings-back-btn" data-privacy-workspace="4">Local diagnostics</button></div>
+            <p class="settings-hint settings-hint-after">The full notice also covers screen captures, optional work tools, network connections, retention and removing local data.</p>
+            <details id="privacyFullNotice" class="privacy-full-notice"><summary>Read the full privacy notice</summary><div id="privacyFullNoticeBody" class="privacy-document" aria-live="polite"></div></details>
+          </section>
         </div>
-        <details class="quick-actions-settings">
-          <summary>Customize your five shortcuts</summary>
-          <p class="settings-hint">Give each shortcut a name and a request. Try “Desktop task: rewrite the selected paragraph” or “Set a timer for 25 minutes”. Screen edits still require both confirmations.</p>
-          <div id="quickActionsEditor" class="quick-actions-editor"></div>
-          <button type="button" class="status-light-mode-btn" id="resetQuickActionsBtn">Restore default shortcuts</button>
-          <span id="quickActionsSaveStatus" class="settings-hint" role="status"></span>
-        </details>
-      </div>
-
-      <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
-        <h3>Wake Words</h3>
-        <p class="settings-hint">Presets always stay on. Type your intended wake word, then say it five times — Olanga saves your typed phrase plus every spoken variation (up to 6).</p>
-        <div class="wake-preset-list" id="wakePresetList"></div>
-        <div class="wake-custom-list" id="wakeCustomList"></div>
-        <button type="button" class="wake-add-btn" id="addWakeWordBtn">Add Custom Wake Word</button>
-      </div>
-
-      <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
-        <h3>Features</h3>
-        <p class="settings-hint">Olanga keeps the voice assistant front and center. Turn on extra panels as you need them.</p>
-        <div class="rotation-toggle-row">
-          <label class="toggle-switch">
-            <input type="checkbox" id="featureNotepadToggle" data-feature="notepadScreen">
-            <span class="slider"></span>
-          </label>
-          <span>Notepad</span>
-        </div>
-        <div class="rotation-toggle-row">
-          <label class="toggle-switch">
-            <input type="checkbox" id="featureNewsToggle" data-feature="newsScreen">
-            <span class="slider"></span>
-          </label>
-          <span>News</span>
-        </div>
-      </div>
-
-      <div class="settings-section" style="margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
-        <h3>Location Context</h3>
-        <p class="settings-hint">Used for accurate weather and local searches.</p>
-        <div class="location-inputs">
-          <input type="text" id="cityInput" placeholder="City (e.g. Seattle)">
-          <input type="text" id="stateInput" placeholder="State/Region (e.g. WA)">
-          <input type="text" id="countryInput" placeholder="Country (e.g. USA)">
-        </div>
-      </div>
-
-      <div class="settings-intro-footer">
-        <button type="button" class="settings-intro-btn" id="viewIntroBtn">View Intro</button>
-      </div>
       </div>
     </div>
   </div>
@@ -599,7 +580,7 @@
         <p class="wake-capture-status" id="wakeCaptureStatus">Enter the phrase you want Olanga to listen for.</p>
 
         <div class="wake-capture-type-step" id="wakeCaptureTypeStep">
-          <input type="text" class="wake-capture-input" id="wakeCaptureIntendedInput" placeholder="e.g. hey jarvis" autocomplete="off" spellcheck="false">
+          <input type="text" class="wake-capture-input" id="wakeCaptureIntendedInput" aria-label="Custom wake phrase" placeholder="e.g. hey jarvis" autocomplete="off" spellcheck="false">
           <button type="button" class="wake-capture-done" id="wakeCaptureContinueBtn">Continue to recording</button>
         </div>
 
@@ -648,6 +629,8 @@
   <script src="./js/notepad.js"></script>
   <script src="./js/news.js"></script>
   <script src="./js/settings.js"></script>
+  <script src="./js/settings-navigation.js"></script>
+  <script src="./js/privacy.js"></script>
   <script src="./js/workbench.js"></script>
   <script src="./js/schedules.js"></script>
   <script src="./js/workbench-connections.js"></script>

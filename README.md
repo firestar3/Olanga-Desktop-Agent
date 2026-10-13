@@ -78,7 +78,7 @@ Ask questions, request current information through Google Search, or use the opt
 
 Common app, music, volume, timer, reminder, memory and checklist commands use a local intent matcher. Supported typed requests on this path need **zero model calls**. The cloud transcription path can execute a recognized local command after **one transcription call**; reviewed on-device commands need no transcription provider. Commands receive a short local acknowledgment while work starts, followed by the actual action results. Known local requests get a brief description of the intended action; voice acknowledgments vary while transcription is still pending.
 
-**Streamed replies**, on by default in **Settings → Voice Settings**, speak conversational answers sentence by sentence while the rest is being generated. Eligible spoken questions can receive their transcript and answer in one Gemini call. Requests for actions or current information return to the appropriate command or Google Search path; they can require additional calls. Screen tasks and pending clarifications retain their existing review and conversation flow.
+**Streamed replies**, on by default in **Settings → User preferences → Conversation**, speak conversational answers sentence by sentence while the rest is being generated. Eligible spoken questions can receive their transcript and answer in one Gemini call. Requests for actions or current information return to the appropriate command or Google Search path; they can require additional calls. Screen tasks and pending clarifications retain their existing review and conversation flow.
 
 Olanga also tracks a rough transcript locally while you speak. When it recognizes a complete supported command, it can shorten the end-of-speech pause. That rough transcript does not authorize execution: cloud recognition or the editable offline review still determines the submitted request.
 
@@ -91,7 +91,7 @@ Each request tracks actions and speech separately. A completed action stays comp
 1. Download [**Olanga-Setup-1.5.2.exe**](https://github.com/firestar3/Olanga-Desktop-Agent/releases/download/v1.5.2/Olanga-Setup-1.5.2.exe) from the [1.5.2 release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.5.2) and run it. It adds desktop and Start-menu shortcuts.
 2. Choose **Use local commands without a key**, or add your own [Google Gemini API key](https://aistudio.google.com/apikey) for cloud transcription, conversation, screen understanding, planning, and Notes/News AI.
 3. Use the built-in **Windows voice**, or choose **NVIDIA Magpie** in Settings and add a separate [NVIDIA hosted API key](https://build.nvidia.com/settings/api-keys). Use **Save & Test** to verify Magpie synthesis.
-4. Type a request, or enable voice input and say **“Hey Olanga”**, wait for the listening orb, and give your request. **Settings → Speech recognition** offers cloud and on-device modes; on-device modes ask you to review the transcript before sending it. You can also enable a push-to-talk shortcut in Settings.
+4. Type a request, or enable voice input and say **“Hey Olanga”**, wait for the listening orb, and give your request. **Settings → Core settings → Speech recognition** offers cloud and on-device modes; on-device modes ask you to review the transcript before sending it. You can also enable a push-to-talk shortcut in Settings.
 
 **Requirements:** Windows 10/11 x64; a microphone for voice input; internet and available Gemini quota for cloud features. Spotify commands require the Spotify desktop app, signed in. Its collection controls currently depend on English accessible labels. The 1.5.2 installer is **unsigned**; its checksum and signing status are included with the release.
 
@@ -144,14 +144,14 @@ In a small offline comparison, the command vocabulary produced transcripts match
 
 ## Made for everyday use
 
-- **Quick access.** The corner orb opens five customizable shortcuts, responds to number keys 1–5, and can be hidden for five seconds or an hour. Enable **Settings → Corner Status Light → All Lights** to keep it available while idle.
+- **Quick access.** The corner orb opens five customizable shortcuts, responds to number keys 1–5, and can be hidden for five seconds or an hour. Enable **Settings → User preferences → Corner status light → All Lights** to keep it available while idle.
 - **Visible status.** Purple means idle, green means listening, orange means thinking or working, and blue means speaking.
 - **Natural follow-ups.** Olanga remembers recent exchanges and listens for 12 seconds after asking a question. Answer by voice or type later; conversation context expires after 30 minutes of inactivity.
 - **Personal settings.** Choose a voice and speaking rate, add a custom wake phrase, and optionally launch Olanga with Windows.
 - **Cancellation.** Press **Escape** in Olanga to cancel the current request and remaining actions. During approved desktop input, Escape also acts as a global stop shortcut. Closing the window keeps Olanga in the system tray; choose **Quit** there to exit.
-- **Interrupt by voice.** Say “Hey Olanga” while Olanga is talking to stop the reply and start a new request. Turn this off in **Settings → Voice Settings**.
+- **Interrupt by voice.** Say “Hey Olanga” while Olanga is talking to stop the reply and start a new request. Turn this off in **Settings → User preferences → Conversation**.
 - **Push-to-talk.** Choose **Ctrl + Alt + Space**, **Ctrl + Shift + Space** or **Alt + Space** in Settings (off by default). With voice input enabled, press once to listen and again to send; holding the keys is not required. It can interrupt a reply. Settings reports shortcut conflicts, and desktop edit execution keeps priority.
-- **Quicker turn-taking.** **Settings → Voice Settings → End of speech** offers a 1.5-second default pause, or 1-second and 0.7-second options. A recognized complete local command can finish sooner. Shorter pauses may cut off a thought if you pause mid-sentence.
+- **Quicker turn-taking.** **Settings → User preferences → Conversation → Pause before sending** offers a 1.5-second default pause, or 1-second and 0.7-second options. A recognized complete local command can finish sooner. Shorter pauses may cut off a thought if you pause mid-sentence.
 - **Reminder alerts.** Due reminders and alarms speak if Olanga is idle and its voice is unmuted; busy or restored reminders ring instead. Windows notifications appear when Olanga isn't in front, subject to Windows notification settings. Alarm beeps pause while you're talking to Olanga.
 - **Voice fallback.** If Magpie synthesis or playback fails, Olanga can continue through the Windows voice. Short Magpie replies are cached per voice for reuse.
 
@@ -185,7 +185,21 @@ For supported full-field text replacements, the result includes **Before**, **Af
 
 </details>
 
+## Settings that stay out of your way
+
+Settings are organized into three sections in the current source:
+
+- **User preferences** contains your accent color, motion preference, speaking rate, conversation behavior, startup, shortcuts, corner light, wake words, optional panels and location.
+- **Core settings** keeps Gemini and NVIDIA keys, speech recognition and the voice engine together. Provider keys retain their separate save and test controls.
+- **Privacy** explains local storage and connected features, links directly to memory, activity and diagnostic controls, and includes the full [privacy notice](PRIVACY.md) offline. You can read it before completing setup.
+
+Choose violet, blue, mint, rose or amber accents, stronger window contrast, and standard, subtle or disabled orb glow. A live preview shows the choices; Restore appearance resets only the visual preferences. Olanga keeps its typography and orb status colors. Reduced motion follows Windows by default and can be enabled separately. Preferences show saving, saved and retry states; the existing Outfit font is bundled for consistent rendering without a font-server request.
+
+These settings improvements are in source and are not included in the published 1.5.2 installer yet.
+
 ## Providers and privacy
+
+Read the [full privacy notice](PRIVACY.md) for data flows, retention, provider policies and deletion controls.
 
 | Component | What it handles |
 | --- | --- |

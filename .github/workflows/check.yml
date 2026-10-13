@@ -19,6 +19,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - name: Check Settings, appearance and offline privacy notice
+        run: npm run smoke:settings
       - name: Check native update handoff, completion and recovery
         run: npm run smoke:installer
 

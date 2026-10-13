@@ -12,6 +12,8 @@ const APP_PREFS_STORE = 'app_preferences';
 const OPTIONAL_FEATURES = OlangaPrefs.OPTIONAL_FEATURES;
 
 let settingsSaveTimer = null;
+let settingsSaveQueue = Promise.resolve();
+let settingsSaveRevision = 0;
 let savingSettingsGeminiKey = false;
 let speechInputChangeVersion = 0;
 let runtimeFeatures = null;
@@ -67,6 +69,10 @@ function collectPrefsFromUI() {
 
   return {
     ...OlangaPrefs.sanitize({
+      appearanceAccent: document.getElementById('appearanceAccentSelect')?.value || window.OlangaAppearance?.snapshot().appearanceAccent,
+      appearanceMotion: document.getElementById('appearanceMotionSelect')?.value || window.OlangaAppearance?.snapshot().appearanceMotion,
+      appearanceContrast: document.getElementById('appearanceContrastSelect')?.value || window.OlangaAppearance?.snapshot().appearanceContrast,
+      appearanceGlow: document.getElementById('appearanceGlowSelect')?.value || window.OlangaAppearance?.snapshot().appearanceGlow,
       city: cityInput?.value,
       state: stateInput?.value,
       country: countryInput?.value,
@@ -90,16 +96,14 @@ function collectPrefsFromUI() {
 
 function writePrefsToLocalStorage(prefs) {
   try {
-  const clean = OlangaPrefs.applyMigrations(prefs);
-  OlangaPrefs.writeToStorage(localStorage, clean);
-  statusLightMode = clean.statusLightMode;
-  statusLightSize = clean.statusLightSize;
-  quickActions = clean.quickActions;
-  if (Array.isArray(prefs.customWakeWordGroups)) {
-    customWakeWordGroups = prefs.customWakeWordGroups;
-    persistCustomWakeWordGroups();
-  }
-  return true;
+    // This may be an older queued save. Mirror storage only; runtime already
+    // reflects the newest edit and must survive a later storage failure.
+    const clean = OlangaPrefs.applyMigrations(prefs);
+    OlangaPrefs.writeToStorage(localStorage, clean);
+    if (Array.isArray(prefs.customWakeWordGroups)) {
+      localStorage.setItem(CUSTOM_WAKE_WORDS_KEY, JSON.stringify(prefs.customWakeWordGroups));
+    }
+    return true;
   } catch (error) { console.warn('[Olanga] Could not update local preferences:', error.message); return false; }
 }
 
@@ -109,6 +113,7 @@ function endOfSpeechKey() {
 
 function applyPrefsToRuntime(prefs) {
   const clean = OlangaPrefs.applyMigrations(prefs);
+  window.OlangaAppearance?.apply(clean);
   bargeInEnabled = clean.bargeIn;
   streamRepliesEnabled = clean.streamReplies;
   endOfSpeechMs = OlangaPrefs.END_OF_SPEECH_MS[clean.endOfSpeech] || SILENCE_DURATION;
@@ -154,6 +159,11 @@ function applyPrefsToRuntime(prefs) {
 }
 
 function applyPrefsToSettingsUI(prefs) {
+  const appearance = { ...window.OlangaAppearance?.snapshot(), ...prefs };
+  for (const key of ['appearanceAccent', 'appearanceMotion', 'appearanceContrast', 'appearanceGlow']) {
+    const control = document.getElementById(key + 'Select');
+    if (control) control.value = appearance[key] || OlangaPrefs.definition(key).default;
+  }
   if (cityInput) cityInput.value = prefs.city || '';
   if (stateInput) stateInput.value = prefs.state || '';
   if (countryInput) countryInput.value = prefs.country || '';
@@ -187,7 +197,19 @@ function applyPrefsToSettingsUI(prefs) {
   renderQuickActionsEditor();
 }
 
+function setPreferencesSaveStatus(state) {
+  const status = document.getElementById('preferencesSaveStatus');
+  if (status) {
+    status.dataset.state = state;
+    status.textContent = state === 'pending' ? 'Saving preferences…' : state === 'saved' ? 'Preferences saved on this device.' : 'Preferences could not be saved. Try again.';
+  }
+  const retry = document.getElementById('preferencesRetryBtn');
+  if (retry) retry.hidden = state !== 'error';
+}
+
 function scheduleSaveAppSettings() {
+  ++settingsSaveRevision;
+  setPreferencesSaveStatus('pending');
   if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
   settingsSaveTimer = setTimeout(() => {
     settingsSaveTimer = null;
@@ -234,19 +256,39 @@ async function loadAppPreferences() {
   return prefs;
 }
 
-async function saveAppSettings() {
+function saveAppSettings() {
+  if (settingsSaveTimer) { clearTimeout(settingsSaveTimer); settingsSaveTimer = null; }
+  const revision = ++settingsSaveRevision;
+  let prefs;
   try {
-    const prefs = collectPrefsFromUI();
+    prefs = collectPrefsFromUI();
+    // Preview immediately. Serialize durable writes so a slower old save cannot
+    // replace a newer choice, and keep feedback attached to the latest edit.
     applyPrefsToRuntime(prefs);
-    await persistAppPreferences(prefs);
     if (typeof applyFeatureToggles === 'function') applyFeatureToggles();
     if (typeof updateMagpieSettingsVisibility === 'function') updateMagpieSettingsVisibility();
-    return true;
+    setPreferencesSaveStatus('pending');
   } catch (error) {
-    console.warn('[Olanga] Failed to save settings:', error.message);
-    showError('Your settings could not be saved. Keep Olanga open and try again.');
-    return false;
+    console.warn('[Olanga] Could not apply preferences:', error.message);
+    setPreferencesSaveStatus('error');
+    return Promise.resolve(false);
   }
+  const save = settingsSaveQueue.then(async () => {
+    try {
+      await persistAppPreferences(prefs);
+      if (revision === settingsSaveRevision) setPreferencesSaveStatus('saved');
+      return true;
+    } catch (error) {
+      console.warn('[Olanga] Failed to save settings:', error.message);
+      if (revision === settingsSaveRevision) {
+        setPreferencesSaveStatus('error');
+        showError('Your settings could not be saved. Keep Olanga open and try again.');
+      }
+      return false;
+    }
+  });
+  settingsSaveQueue = save.catch(() => {});
+  return save;
 }
 
 async function persistGeminiKeys(keys = apiKeys) {
@@ -384,7 +426,7 @@ function playSetupIntroReplay() {
   setupScreen.classList.add('setup-intro-replay');
   restartSetupIntro();
 
-  const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const prefersReduced = window.OlangaAppearance?.isReducedMotion() ?? window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   introReplayTimer = window.setTimeout(() => {
     returnHomeFromIntroReplay();
   }, prefersReduced ? 700 : SETUP_INTRO_REPLAY_MS);
@@ -524,7 +566,7 @@ function renderKeyList() {
       <span class="key-item-text">Key ${i + 1}: ...${escapeHTML(k.slice(-6))}</span>
       <div class="key-item-actions">
         <button class="key-btn select" data-key-index="${i}">Select</button>
-        <button class="key-btn delete" data-key-index="${i}">Del</button>
+        <button class="key-btn delete" data-key-index="${i}" aria-label="Remove Gemini key ${i + 1}">Remove</button>
       </div>
     `;
     keyListContainer.appendChild(div);
@@ -789,6 +831,22 @@ async function init() {
   if (nvidiaVoiceSelect) {
     nvidiaVoiceSelect.addEventListener('change', scheduleSaveAppSettings);
   }
+  for (const id of ['appearanceAccentSelect', 'appearanceMotionSelect', 'appearanceContrastSelect', 'appearanceGlowSelect']) {
+    document.getElementById(id)?.addEventListener('change', () => {
+      window.OlangaAppearance?.apply(collectPrefsFromUI());
+      scheduleSaveAppSettings();
+    });
+  }
+  document.getElementById('appearanceResetBtn')?.addEventListener('click', () => {
+    const defaults = OlangaPrefs.defaults();
+    for (const key of ['appearanceAccent', 'appearanceMotion', 'appearanceContrast', 'appearanceGlow']) {
+      const input = document.getElementById(key + 'Select');
+      if (input) input.value = defaults[key];
+    }
+    window.OlangaAppearance?.apply(collectPrefsFromUI());
+    scheduleSaveAppSettings();
+  });
+  document.getElementById('preferencesRetryBtn')?.addEventListener('click', saveAppSettings);
   document.getElementById('bargeInToggle')?.addEventListener('change', scheduleSaveAppSettings);
   document.getElementById('streamRepliesToggle')?.addEventListener('change', scheduleSaveAppSettings);
   // Typing is a strong hint that a request is coming; warm the connection.
@@ -973,6 +1031,7 @@ function updateStatusLightModeButton() {
   if (!btn) return;
   const mode = OlangaStatusLight.normalizeMode(statusLightMode);
   btn.textContent = OlangaStatusLight.MODE_LABELS[mode];
+  btn.setAttribute('aria-label', 'Corner light visibility: ' + btn.textContent);
   btn.dataset.mode = mode;
 }
 
@@ -991,6 +1050,7 @@ function updateStatusLightSizeButton() {
   if (!btn) return;
   const size = OlangaStatusLight.normalizeSize(statusLightSize);
   btn.textContent = OlangaStatusLight.SIZE_LABELS[size];
+  btn.setAttribute('aria-label', 'Corner light size: ' + btn.textContent);
   btn.dataset.size = size;
 }
 
@@ -1138,12 +1198,15 @@ floatingIcons.forEach(icon => {
   icon.addEventListener('click', () => {
     const targetScreen = icon.getAttribute('data-screen');
 
+    // Reselecting Settings must not reload stale runtime values over unsaved edits.
+    if (targetScreen === 'settingsScreen' && !settingsScreen.classList.contains('hidden')) return;
+
     // Update active state
     floatingIcons.forEach(i => i.classList.remove('active'));
     icon.classList.add('active');
 
     // Persist location before leaving Settings (in case blur didn't fire).
-    if (window.saveLocationSettings) {
+    if (targetScreen !== 'settingsScreen' && !settingsScreen.classList.contains('hidden') && window.saveLocationSettings) {
       window.saveLocationSettings();
     }
 

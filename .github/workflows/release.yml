@@ -65,6 +65,9 @@ jobs:
       - name: Check renderer races and storage recovery
         run: npm run smoke:renderer
 
+      - name: Check Settings, appearance and offline privacy notice
+        run: npm run smoke:settings
+
       - name: Check manual update controls and theme consistency
         run: npm run smoke:updates
 

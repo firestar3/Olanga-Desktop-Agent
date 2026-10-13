@@ -575,12 +575,12 @@ function handleVoskResult(text, isFinal = false, words) {
     if (Date.now() - lastIdleTime < 1000) return; // 1-second cooldown to prevent immediate re-triggering
 
     text = text.toLowerCase();
-    console.log(`[Olanga Vosk] Hears: "${text}"`);
+    // Background recognition text is private; never copy it into console logs.
 
     // Word-boundary match so "they" does not trigger on "hey"
     const activeWakeWords = typeof getActiveWakeWords === 'function' ? getActiveWakeWords() : PRESET_WAKE_WORDS;
     if (activeWakeWords.some(ww => new RegExp(`\\b${ww.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text))) {
-        console.log(`[Olanga] Wake word detected locally! Transcript: "${text}"`);
+        console.log('[Olanga] Wake word detected locally.');
 
         setState(State.LISTENING);
         // Word timestamps are relative to this recognizer. Reuse only samples
@@ -775,7 +775,7 @@ function handleWakeWordCaptureResult(text, isFinal) {
   wakeCaptureLastAccepted = normalized;
   wakeCaptureLastAcceptedAt = now;
   wakeCaptureSamples.push(normalized);
-  console.log(`[Olanga] Wake capture sample ${wakeCaptureSamples.length}: "${normalized}"`);
+  console.log(`[Olanga] Wake capture sample ${wakeCaptureSamples.length} accepted.`);
   renderWakeCaptureUi();
 
   if (voskRecognizer) {
@@ -923,7 +923,7 @@ function finishWakeWordCapture() {
     } catch (_) {}
   }
 
-  console.log('[Olanga] Custom wake word saved:', group);
+  console.log('[Olanga] Custom wake word saved.');
   closeWakeWordCaptureScreen();
 }
 

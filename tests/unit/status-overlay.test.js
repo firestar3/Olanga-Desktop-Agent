@@ -100,6 +100,7 @@ test('controller construction never touches screen before Electron is ready', ()
   overlay.setState('listening');
   overlay.setMode('all');
   overlay.setSize('large');
+  overlay.setReducedMotion(true);
   overlay.destroy();
   assert.equal(ipcMain.listenerCount('status-overlay-action'), 0);
 });
@@ -317,4 +318,28 @@ test('unchanged overlay state does not repeatedly send and repaint its snapshot'
   assert.equal(f.window.snapshots.length, before);
   f.send('ready');
   assert.equal(f.window.snapshots.length, before + 1, 'a fresh renderer always receives its initial snapshot');
+});
+
+
+test('reduced motion survives readiness and renderer replacement without altering status or menu behavior', (t) => {
+  const f = fixture(t);
+  f.overlay.setMode('all'); f.send('ready');
+  assert.equal(f.latest().reducedMotion, false);
+  f.overlay.setState('thinking'); f.send('toggle');
+  f.overlay.setReducedMotion(true);
+  assert.equal(f.latest().reducedMotion, true);
+  assert.equal(f.latest().state, 'thinking');
+  assert.equal(f.latest().menuOpen, true);
+  assert.equal(f.window.focused, true);
+  const sent = f.window.snapshots.length;
+  for (const value of [true, undefined, null, 1, 'false', {}]) f.overlay.setReducedMotion(value);
+  assert.equal(f.window.snapshots.length, sent, 'Unchanged and non-boolean updates cannot repaint or disable the preference');
+  f.window.destroy();
+  const replacement = f.overlay.create();
+  f.ipcMain.emit('status-overlay-action', { sender: replacement.webContents, senderFrame: replacement.webContents.mainFrame }, { type: 'ready' });
+  assert.equal(replacement.snapshots.at(-1).reducedMotion, true);
+  assert.equal(replacement.snapshots.at(-1).state, 'thinking');
+  f.overlay.setReducedMotion(false);
+  assert.equal(replacement.snapshots.at(-1).reducedMotion, false);
+  assert.equal(replacement.visible, true);
 });

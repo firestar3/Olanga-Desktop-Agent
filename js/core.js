@@ -405,7 +405,7 @@ function startOrbAnimation() {
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    if (!reducedMotion?.matches) animationFrameId = requestAnimationFrame(draw);
+    if (!(window.OlangaAppearance?.isReducedMotion() ?? reducedMotion?.matches)) animationFrameId = requestAnimationFrame(draw);
   }
 
   refreshOrbAnimation = () => {
@@ -420,12 +420,14 @@ function startOrbAnimation() {
   }) : null;
   observer?.observe(canvas);
   reducedMotion?.addEventListener?.('change', refreshOrbAnimation);
+  window.addEventListener('olanga-appearance-changed', refreshOrbAnimation);
   const unsubscribe = window.OlangaVisibility.subscribe(refreshOrbAnimation);
   stopOrbAnimation = () => {
     if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
     unsubscribe();
     observer?.disconnect();
+    window.removeEventListener('olanga-appearance-changed', refreshOrbAnimation);
     reducedMotion?.removeEventListener?.('change', refreshOrbAnimation);
     refreshOrbAnimation = () => {};
   };
@@ -480,6 +482,7 @@ function showError(message) {
 
   const toast = document.createElement('div');
   toast.className = 'error-toast';
+  toast.setAttribute('role', 'alert');
   toast.textContent = message;
   document.body.appendChild(toast);
 

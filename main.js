@@ -1130,6 +1130,9 @@ trustedMainIpc.on('status-indicator-set-size', (_event, size) => {
 });
 
 trustedMainIpc.on('status-overlay-set-quick-actions', (_event, actions) => statusOverlay.setQuickActions(actions));
+trustedMainIpc.on('status-overlay-set-reduced-motion', (_event, enabled) => {
+  if (typeof enabled === 'boolean') statusOverlay.setReducedMotion(enabled);
+});
 
 trustedMainIpc.handle('get-open-at-login', () => getOpenAtLogin());
 

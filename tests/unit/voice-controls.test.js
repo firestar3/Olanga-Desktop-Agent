@@ -5,10 +5,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 function fixture(options = {}) {
-  const calls = { stopped: 0, cancelled: 0, recordings: 0, errors: [], focused: 0, expanded: 0 };
+  const calls = { stopped: 0, cancelled: 0, recordings: 0, errors: [], logs: [], focused: 0, expanded: 0 };
   const node = () => ({ textContent: '', classList: { add() {}, remove() {} } });
   const context = vm.createContext({
-    console: { log() {}, warn() {} }, window: { electronAPI: { expandWindow: () => calls.expanded++ }, OlangaDesktop: { isBusy: () => !!options.desktopBusy } },
+    console: { log(...values) { calls.logs.push(values); }, warn() {} }, window: { electronAPI: { expandWindow: () => calls.expanded++ }, OlangaDesktop: { isBusy: () => !!options.desktopBusy } },
     document: { getElementById: id => (id === 'textCommandInput' ? { focus: () => calls.focused++ } : null) },
     State: { IDLE: 'idle', LISTENING: 'listening', THINKING: 'thinking', SPEAKING: 'speaking' },
     currentState: options.state || 'speaking', isMicMuted: !!options.muted, isRecording: false, hasSpokenDuringRecording: false,
@@ -118,4 +118,30 @@ test('local speech cannot wake the normal assistant and explicit recording stops
   f.context.cancelRecording(); f.context.currentState = 'idle';
   f.context.handleVoskResult('hey olanga', true);
   assert.equal(f.calls.recordings, 2, 'Wake recognition resumes after local playback stops');
+});
+
+test('voice diagnostics never expose background speech, command text or custom wake phrases', () => {
+  const idle = fixture({ state: 'idle' });
+  idle.context.handleVoskResult('private background sentinel', true);
+  assert.equal(idle.context.currentState, 'idle');
+  assert.equal(idle.calls.logs.length, 0, 'Background speech produces no console transcript');
+  idle.context.handleVoskResult('hey olanga private command sentinel', true);
+  assert.equal(idle.calls.recordings, 1, 'Wake detection and recording still work');
+  assert.ok(idle.calls.logs.length > 0, 'Content-free lifecycle events remain available');
+
+  const custom = fixture({ state: 'idle' });
+  const heard = { textContent: '' }, saved = [];
+  custom.context.getWakeCaptureEls = () => ({ heard });
+  custom.context.renderWakeCaptureUi = () => {};
+  custom.context.closeWakeWordCaptureScreen = () => {};
+  custom.context.customWakeWordGroups = [];
+  custom.context.addCustomWakeWordGroup = (phrases, label) => { const group = { phrases, label }; saved.push(group); return group; };
+  vm.runInContext("wakeCapturePhase = 'record'; wakeCaptureIntended = 'private intended sentinel';", custom.context);
+  custom.context.handleWakeWordCaptureResult('private spoken sentinel', true);
+  custom.context.finishWakeWordCapture();
+  assert.equal(heard.textContent, 'private spoken sentinel', 'The intentional capture preview retains its transcript');
+  assert.equal(saved[0].label, 'private intended sentinel');
+  assert.equal(saved[0].phrases[1], 'private spoken sentinel');
+  assert.ok(custom.calls.logs.length > 0);
+  assert.doesNotMatch(JSON.stringify([...idle.calls.logs, ...custom.calls.logs]), /sentinel|private (?:background|command|intended|spoken)/i);
 });
