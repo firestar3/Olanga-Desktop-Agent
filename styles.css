@@ -4443,3 +4443,50 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
   .notepad-ai-message .notepad-ai-label,
   .voice-refresh-btn:hover
 ) { color: var(--accent-light); }
+
+.workspace-memory-tools { margin-top: 16px; align-items: flex-end; }
+
+/* Compact windows reflow existing controls without changing their theme. */
+.notepad-container, .notepad-header, .notepad-content-wrapper,
+.notepad-textarea, .notepad-ai-sidebar { min-width: 0; }
+.notepad-ai-input, .text-command-wrapper input, #taskInput, #timerInput { min-width: 0; }
+#addTaskBtn, #addTimerBtn { flex-shrink: 0; }
+.notepad-header, .notepad-tabs-wrapper { flex-shrink: 0; }
+@media (max-width: 1000px) {
+  #notepadScreen .notepad-header { align-items: flex-start; flex-direction: column; gap: 12px; }
+  #notepadScreen .notepad-actions { width: 100%; flex-wrap: wrap; }
+  #notepadScreen .notepad-divider { display: none; }
+}
+@media (max-width: 760px) {
+  #notepadScreen .notepad-container { padding: 50px 16px 20px 82px; overflow-y: auto; }
+  #notepadScreen .notepad-content-wrapper { flex: 0 0 auto; flex-direction: column; overflow: visible; }
+  #notepadScreen .notepad-textarea { flex: none; min-height: 260px; max-height: 65vh; }
+  #notepadScreen .notepad-ai-sidebar { width: 100%; min-height: 330px; flex: none; }
+  #notepadScreen .notepad-ai-header { gap: 8px; flex-wrap: wrap; }
+}
+@media (max-width: 760px), (max-height: 760px) {
+  #mainScreen .assistant-container { padding: 48px 24px 18px; overflow-y: auto; }
+  #mainScreen .assistant-container > :not(.transcript-area) { flex-shrink: 0; }
+  #mainScreen .top-bar { margin-bottom: 8px; gap: 10px; flex-wrap: wrap; }
+  #mainScreen .clock-display { font-size: 20px; padding: 6px 16px; }
+  #mainScreen .date-display { font-size: 11px; padding: 3px 12px 6px; }
+  #mainScreen .orb-container { width: 128px; height: 128px; margin-bottom: 8px; }
+  #mainScreen .orb { width: 96px; height: 96px; }
+  #mainScreen .orb-glow { width: 128px; height: 128px; }
+  #mainScreen .assistant-name { font-size: 30px; margin-bottom: 8px; }
+  #mainScreen .transcript-area { flex: 0 0 auto; max-height: 30vh; padding: 0; }
+  #mainScreen .transcript-user.hidden, #mainScreen .transcript-ai.hidden { display: none; }
+  #mainScreen .hint { padding: 10px 14px; font-size: 13px; line-height: 1.45; }
+  #mainScreen .text-command-wrapper { margin-top: 12px; }
+  #mainScreen .bottom-controls-row { margin-top: 12px; }
+  #mainScreen .mic-toggle-btn { width: 48px; height: 48px; }
+}
+@media (max-width: 1000px) {
+  #mainScreen .assistant-container { overflow-y: auto; }
+  #mainScreen .timers-card-wrapper, #mainScreen .tasks-container {
+    position: static; width: min(400px,100%); flex: none; margin-top: 16px;
+  }
+}
+@media (max-width: 760px) {
+  #mainScreen .assistant-container { padding-left: 82px; padding-right: 14px; }
+}

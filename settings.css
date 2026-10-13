@@ -1,6 +1,8 @@
 /* Settings retain Olanga's typography, controls and dark surfaces. */
-.settings-screen-header, .settings-panel { width: 100%; max-width: 880px; }
-.settings-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.settings-container { min-width: 0; padding: 48px 32px 24px 104px; }
+.settings-screen-header, .settings-panel { width: 100%; max-width: none; }
+.settings-screen-header { padding-right: 20px; }
+.settings-scroll { width: 100%; min-width: 0; padding: 4px 12px 20px 4px; }.settings-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .settings-screen-description { margin-top: 6px; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
 .settings-tabs { display: flex; gap: 4px; margin-top: 20px; padding: 4px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-secondary); }
 .settings-tab { flex: 1; min-width: 0; min-height: 40px; padding: 10px 14px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font: 500 13px var(--font); cursor: pointer; }
@@ -8,16 +10,16 @@
 .settings-tab[aria-selected="true"] { color: var(--accent-light); background: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary)); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
 .settings-save-status { min-height: 18px; margin-top: 10px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .settings-save-status[data-state="error"] { color: var(--danger); }
-.settings-panel { padding: 2px 0; outline: none; }
+.settings-panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; padding: 2px 0; outline: none; }
 .settings-panel[hidden], .settings-back-btn[hidden], #preferencesRetryBtn[hidden] { display: none !important; }
-#settingsScreen .settings-section { margin: 0 0 16px; padding: 20px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-secondary) 72%, transparent); }
-#settingsScreen .settings-section h3 { color: var(--text-primary); font-size: 13px; line-height: 1.5; margin-bottom: 14px; letter-spacing: .75px; }
-#settingsScreen .settings-hint { color: var(--text-secondary); font-size: 12px; line-height: 1.65; }
+#settingsScreen .settings-section { min-width: 0; margin: 0; padding: 24px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-secondary) 72%, transparent); }
+#settingsScreen .settings-section h3 { color: var(--text-primary); font-size: 14px; line-height: 1.5; margin-bottom: 16px; letter-spacing: .75px; }
+#settingsScreen .settings-hint { color: var(--text-secondary); font-size: 13px; line-height: 1.65; }
 #settingsScreen .settings-hint[data-state="error"] { color: var(--danger); }
 #settingsScreen .settings-hint[data-state="success"] { color: var(--text-primary); }
 #settingsScreen .settings-hint:last-child { margin-bottom: 0; }
 #settingsScreen .settings-hint-after { margin-top: 10px; }
-#settingsScreen .voice-settings-row label, .settings-field-label { color: var(--text-secondary); font-size: 12px; text-transform: none; letter-spacing: 0; }
+#settingsScreen .voice-settings-row label, .settings-field-label { color: var(--text-secondary); font-size: 13px; text-transform: none; letter-spacing: 0; }
 .settings-field-label { display: block; margin-bottom: 8px; }
 #settingsScreen button, #settingsScreen input, #settingsScreen select, #settingsScreen textarea { font-family: var(--font); }
 #settingsScreen select { width: 100%; min-width: 0; color-scheme: dark; }
@@ -40,23 +42,44 @@
 button.setup-link { border: 0; padding: 0; background: transparent; font: inherit; }
 #settingsScreen button:focus-visible, #settingsScreen select:focus-visible, #settingsScreen input:focus-visible, #settingsScreen textarea:focus-visible, #settingsScreen summary:focus-visible, .settings-panel:focus-visible, .setup-privacy-link:focus-visible, button.setup-link:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 3px; }
 #settingsScreen input[type="checkbox"]:focus-visible { outline: none; }
-#settingsScreen .settings-intro-footer { padding-bottom: 8px; }
+#settingsScreen .settings-intro-footer { margin-top: 0; padding-bottom: 8px; }
+@media (min-width: 1100px) {
+  .settings-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+  #settingsScreen .settings-section { padding: 26px; }
+  #settingsScreen .settings-section[aria-labelledby="locationSettingsHeading"],
+  .settings-intro-footer { grid-column: 1 / -1; }
+  #settingsPanelPrivacy { grid-template-columns: minmax(0, 1fr); }
+  .privacy-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
+}
+@media (min-width: 1800px) {
+  .settings-container { padding-right: 40px; padding-left: 120px; }
+  #settingsPanelUser { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 @media (max-width: 760px) {
-  .settings-container { padding: 50px 20px 20px 92px; }
+  .settings-container { padding: 48px 20px 20px 92px; }
+  .settings-screen-header { padding-right: 16px; }
   .settings-tabs { gap: 2px; margin-top: 14px; }
   .settings-tab { padding: 9px 8px; font-size: 12px; }
-  #settingsScreen .settings-section { padding: 16px; }
+  .settings-panel { gap: 16px; }
+  #settingsScreen .settings-section { padding: 18px; }
   #settingsScreen .voice-settings-grid, #settingsScreen .location-inputs { grid-template-columns: minmax(0, 1fr); }
   .settings-heading-row { flex-wrap: wrap; gap: 10px; }
 }
 @media (max-width: 480px) {
-  .settings-container { padding-left: 82px; padding-right: 12px; }
+  .settings-container { padding-left: 82px; padding-right: 12px; padding-bottom: 16px; }
+  .settings-screen-header { padding-right: 8px; }
+  .settings-scroll { padding-right: 4px; }
   .settings-tab { padding: 8px 4px; font-size: 11px; }
+  #settingsScreen .settings-section { padding: 16px; }
   #settingsScreen .add-key-row { flex-wrap: wrap; }
   #settingsScreen .add-key-row input { flex-basis: 100%; }
   #settingsScreen .add-key-row button { width: 100%; }
 }
-
+@media (max-height: 650px) {
+  .settings-container { padding-top: 40px; padding-bottom: 16px; }
+  .settings-tabs { margin-top: 12px; }
+  .settings-screen-header { margin-bottom: 8px; }
+}
 .privacy-lead { font-size: 21px; font-weight: 500; line-height: 1.4; margin-bottom: 10px; }
 .privacy-facts { margin: 22px 0; }
 .privacy-facts > div { padding: 15px 0; border-top: 1px solid var(--border-subtle); }
@@ -97,3 +120,13 @@ button.setup-link { border: 0; padding: 0; background: transparent; font: inheri
   .appearance-preview-button { grid-column: 2; padding: 8px 10px; }
   .appearance-reset-row .settings-back-btn { max-width: 100%; white-space: normal; text-align: left; }
 }
+
+/* Let fields shrink with their card while keeping the familiar input surface. */
+#settingsScreen .voice-settings-grid { gap: 16px 20px; }
+#settingsScreen .voice-settings-grid + .voice-settings-grid { margin-top: 18px; }
+#settingsScreen .voice-settings-row, #settingsScreen .voice-range-row { min-width: 0; }
+#settingsScreen .voice-range-row input[type="range"] { min-width: 0; width: 100%; }
+#settingsScreen .voice-settings-row input:not([type]) { min-width: 0; width: 100%; min-height: 42px; padding: 10px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px; }
+#settingsScreen .voice-settings-row input:not([type]):focus { border-color: var(--accent); }
+.privacy-overview > .settings-hint, .privacy-lead, .privacy-document { max-width: 92ch; }
+.privacy-facts dd { max-width: 76ch; }

@@ -3,6 +3,7 @@
   const store = OlangaProductivity.createStore(localStorage);
   window.OlangaWorkspace = store;
   window.OlangaActivity = store;
+  store.subscribeMemory(detail => window.dispatchEvent(new CustomEvent('olanga:memories-changed', { detail })));
   let dialogSequence = 0;
   window.reviewOfflineTranscript = (transcript, signal) => new Promise(resolve => {
     const review = document.createElement('dialog'); review.className = 'workspace-dialog';
@@ -32,24 +33,27 @@
   panel.id = 'workspaceDialog';
   panel.setAttribute('aria-labelledby', 'workspaceTitle');
   panel.innerHTML = `<header><div><p class="workspace-eyebrow">YOUR DESKTOP</p><h2 id="workspaceTitle">Workspace</h2></div><button type="button" id="workspaceClose" aria-label="Close workspace">×</button></header>
-    <nav aria-label="Workspace sections">${['Activity', 'Routines', 'Saved names', 'Apps & updates', 'Diagnostics', 'Memories', 'Health'].map((title, i) => `<button type="button" data-workspace-tab="${i}" aria-pressed="${i === 0}">${title}</button>`).join('')}</nav>
-    <p id="workspaceStatus" role="status" aria-live="polite"></p>
-    <section data-workspace-page="0"><div class="workspace-heading"><h3>Recent activity</h3><button type="button" id="activityClear">Clear</button></div><p class="workspace-help">Current-session receipts show actual results. Saved history keeps only operation types and statuses, without prompts, screenshots, task names, or document text.</p><label class="workspace-check"><input type="checkbox" id="saveActivity"> Keep activity after restart</label><div id="activityList"></div></section>
+    <nav aria-label="Workspace sections">${['Activity', 'Routines', 'Saved names', 'Apps & updates', 'Diagnostics', 'Memories', 'Health', 'Backups'].map((title, i) => `<button type="button" data-workspace-tab="${i}" aria-pressed="${i === 0}">${title}</button>`).join('')}</nav>
+    <div class="workspace-actions" aria-label="Popular tools"><button type="button" id="workspaceProjects">Projects</button><button type="button" id="workspaceSchedules">Schedules</button><button type="button" id="workspaceUpdates">Updates</button></div>
+    <p id="workspaceStatus" role="status" aria-live="polite"></p><div id="workspaceRecoveryNotice" hidden><p class="workspace-error" id="workspaceRecoveryMessage" role="alert"></p><button type="button" id="workspaceRecoveryOpen">Review storage recovery</button></div>
+    <section data-workspace-page="0"><div class="workspace-heading"><h3>Recent activity</h3><button type="button" id="activityClear">Clear</button></div><p class="workspace-help">Current-session receipts show actual results. Saved history keeps only operation types and statuses, without prompts, screenshots, task names, or document text.</p><label class="workspace-check"><input type="checkbox" id="saveActivity"> Keep activity after restart</label><div id="activityList"></div><h3>Try a request</h3><p class="workspace-help">Choose an example, edit it, then send when ready. Selecting an example runs nothing.</p><div id="workspaceExamples" class="workspace-actions"></div></section>
     <section data-workspace-page="1" hidden><h3>Routines</h3><p class="workspace-help">Save common local commands, one per line. Review every run before it starts. Interrupted runs never restart automatically.</p><form id="routineForm"><label for="routineName">Name</label><input id="routineName" maxlength="100" required placeholder="Focus time"><label for="routineLines">Commands</label><textarea id="routineLines" rows="5" required placeholder="Open Spotify&#10;Set volume to 25%&#10;Set a timer for 25 minutes called Focus"></textarea><div class="workspace-actions"><button type="submit">Save routine</button><button type="button" id="routineReset">New routine</button></div></form><div id="routineList"></div><h3>Previous runs</h3><div id="routineRuns"></div></section>
     <section data-workspace-page="2" hidden><h3>Saved names</h3><p class="workspace-help">Choose your own names for supported apps and private Spotify playlists. Olanga remembers only what you save here.</p><label class="workspace-check"><input type="checkbox" id="memoryEnabled"> Use my saved names</label><form id="memoryForm"><label for="memoryKind">Type</label><select id="memoryKind"><option value="aliases">App alias</option><option value="playlists">Playlist preference</option></select><label for="memoryAlias">Your name</label><input id="memoryAlias" maxlength="100" required placeholder="work browser"><label for="memoryTarget">App or private playlist name</label><input id="memoryTarget" maxlength="100" required placeholder="Chrome"><button type="submit">Save name</button></form><div id="memoryList"></div><button type="button" id="memoryClear">Delete all saved names</button></section>
     <section data-workspace-page="3" hidden><div class="workspace-heading"><h3>App capabilities</h3><button type="button" id="appsRefresh">Refresh</button></div><p class="workspace-help">Check which supported apps Windows can find. Other app names can still use Windows Search, with an unverified result.</p><div id="capabilitiesList">Select Refresh to check installed apps.</div><div class="release-card"><div class="workspace-heading"><h3>Olanga updates</h3><span id="releaseVersion" class="release-version"></span></div><p class="workspace-help">Check when you want, download here, then choose when to install. Olanga never checks, downloads or installs updates automatically.</p><p id="releaseStatus" role="status" aria-live="polite">Check for a newer version of Olanga.</p><progress id="releaseProgress" class="release-progress" max="100" value="0" aria-label="Update download progress" hidden></progress><p id="releaseDetail" class="release-detail" hidden></p><p id="releaseWarning" class="release-warning" hidden></p><div class="workspace-actions release-actions"><button type="button" id="checkRelease">Check for updates</button><button type="button" id="downloadUpdate" class="workspace-primary" hidden>Download update</button><button type="button" id="cancelUpdate" hidden>Cancel download</button><button type="button" id="installUpdate" class="workspace-primary" hidden>Install & restart</button><button type="button" id="releaseNotes" hidden>Release notes</button></div></div></section>
     <section data-workspace-page="4" hidden><h3>Performance</h3><label class="workspace-check"><input type="checkbox" id="diagnosticsEnabled"> Collect local performance measurements</label><p class="workspace-help">Stores timings and success/error categories only. Nothing is uploaded. Turning this off deletes measurements.</p><div class="workspace-actions"><button type="button" id="timingsClear">Clear measurements</button><button type="button" id="timingsExport">Export measurements</button></div><div id="timingList"></div></section>
-    <section data-workspace-page="5" hidden><h3>Memories</h3><p class="workspace-help">Things you asked Olanga to remember, for example “remember that my locker code is 4312”. Olanga never adds memories on its own. While enabled, memories are sent to Gemini with your requests so answers can use them.</p><label class="workspace-check"><input type="checkbox" id="factsEnabled"> Use my memories in answers</label><form id="factForm"><label for="factText">Add a memory</label><input id="factText" maxlength="300" required placeholder="My sister's birthday is June 5"><button type="submit">Save memory</button></form><div id="factList"></div><button type="button" id="factsClear">Delete all memories</button></section>
-    <section data-workspace-page="6" hidden><div class="workspace-heading"><h3>Health check</h3><button type="button" id="healthRun">Run check</button></div><p class="workspace-help">Checks the microphone, wake word, speech, voice, Gemini and storage without changing anything. The connection test sends one short request to Gemini.</p><p id="healthSummary" class="health-summary" role="status" aria-live="polite"></p><div id="healthList"></div><button type="button" id="healthTest">Test Gemini connection</button></section>`;
+    <section data-workspace-page="5" hidden><h3>Memories</h3><p class="workspace-help">Things you explicitly asked Olanga to remember, for example “remember that I prefer brief answers”. Olanga never adds memories on its own. While enabled, memories are sent to Gemini with your requests so answers can use them.</p><label class="workspace-check"><input type="checkbox" id="factsEnabled"> Use my memories in answers</label><form id="factForm"><label for="factText">Add a memory</label><input id="factText" maxlength="300" required placeholder="My sister's birthday is June 5"><button type="submit">Save memory</button></form><div class="workspace-actions workspace-memory-tools"><div><label for="factSearch">Search memories</label><input type="search" id="factSearch" maxlength="300" placeholder="Find a saved detail"></div><div><label for="factSort">Sort</label><select id="factSort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="alphabetical">A–Z</option></select></div></div><p id="factCount" class="workspace-help" role="status"></p><div id="factList"></div><button type="button" id="factsClear">Delete all memories</button></section>
+    <section data-workspace-page="6" hidden><div class="workspace-heading"><h3>Health check</h3><button type="button" id="healthRun">Run check</button></div><p class="workspace-help">Checks the microphone, wake word, speech, voice, Gemini and storage without changing anything. The connection test sends one short request to Gemini.</p><p id="healthSummary" class="health-summary" role="status" aria-live="polite"></p><div id="healthList"></div><button type="button" id="healthTest">Test Gemini connection</button></section>
+    <section data-workspace-page="7" hidden><h3>Workspace backups</h3><p class="workspace-help">Export memories, saved app and playlist names, and routine definitions. Files stay on your device unless you share them. Backups do not include API keys, settings, timers, notes, checklist tasks, schedules, activity or run receipts.</p><div class="workspace-actions"><button type="button" id="workspaceExport">Export personal content</button><button type="button" id="workspaceImport">Choose backup to review</button><input type="file" id="workspaceImportFile" aria-label="Choose a Workspace backup" accept=".json,application/json" hidden style="display: none"></div><p class="workspace-help">Import replaces these three collections after you review them. Existing content is copied locally first. Imported routines never run automatically; each run still requires review.</p><div id="workspaceRecoveryControls" hidden><h3>Recover Workspace storage</h3><p class="workspace-help">Ordinary commands still work in this session. Saving Workspace changes is paused to protect the original record. Retry reading it, or save a verified recovery copy before choosing a reset. Recovery copies may include private activity details; keep them private.</p><div class="workspace-actions"><button type="button" id="workspaceRecoveryRetry">Retry reading storage</button><button type="button" id="workspaceRecoveryBackup">Save recovery copy</button><button type="button" id="workspaceRecoveryDownload" hidden>Download recovery copy</button><button type="button" id="workspaceRecoveryReset" hidden>Review reset</button></div><p id="workspaceRecoveryCopyStatus" class="workspace-help" role="status"></p></div><h3>Local recovery copies</h3><p class="workspace-help">These retain the original Workspace record before a restore or reset, including any saved activity or run details. They stay on this device until you delete them. Review restores only the personal content listed above.</p><button type="button" id="workspaceRecoveryRefresh">Refresh copies</button><div id="workspaceRecoveryCopies"></div></section>`;
   document.body.append(panel);
   const status = panel.querySelector('#workspaceStatus');
   function message(text, error = false) { status.textContent = text; status.classList.toggle('workspace-error', error); }
-  function guarded(action) { return async () => { try { await action(); } catch (error) { message(error.message || 'That change could not be completed.', true); } }; }
+  function guarded(action) { return async () => { try { await action(); } catch (error) { render(); message(error.message || 'That change could not be completed.', true); } }; }
   let editingRoutine = null, editingMemory = null;
   function open(tab = '0') {
     for (const page of panel.querySelectorAll('[data-workspace-page]')) page.hidden = page.dataset.workspacePage !== String(tab);
     for (const tabButton of panel.querySelectorAll('[data-workspace-tab]')) tabButton.setAttribute('aria-pressed', String(tabButton.dataset.workspaceTab === String(tab)));
     if (!panel.open) panel.showModal();
+    if (String(tab) === '7') renderRecoveryCopies();
     if (String(tab) === '6') runHealthCheck().catch(error => message(error.message || 'The health check could not run.', true));
   }
   window.openOlangaWorkspace = open;
@@ -62,14 +66,25 @@
   document.getElementById('transcriptArea')?.append(peek);
   function row(title, subtitle) { const item = el('div', undefined, 'workspace-item'); const content = el('div'); content.append(el('strong', title), el('p', subtitle, 'workspace-help')); item.append(content); return item; }
   function render() {
-    const state = store.snapshot();
+    const state = store.snapshot(), recovery = store.recoveryStatus();
+    panel.querySelector('#workspaceRecoveryNotice').hidden = !recovery.blocked;
+    panel.querySelector('#workspaceRecoveryMessage').textContent = recovery.message;
+    panel.querySelector('#workspaceRecoveryControls').hidden = !recovery.blocked;
+    panel.querySelector('#workspaceExport').disabled = recovery.blocked;
+    panel.querySelector('#workspaceImport').disabled = recovery.blocked;
+    panel.querySelector('#workspaceRecoveryDownload').hidden = !recovery.backupKey;
+    panel.querySelector('#workspaceRecoveryReset').hidden = !recovery.backupKey;
+    panel.querySelector('#workspaceRecoveryCopyStatus').textContent = recovery.backupKey ? 'A verified copy of the original record is saved on this device. You can also download it before resetting.' : '';
     for (const [nodeId, key] of [['saveActivity', 'saveActivity'], ['memoryEnabled', 'memoryEnabled'], ['diagnosticsEnabled', 'diagnostics'], ['factsEnabled', 'factsEnabled']]) panel.querySelector('#' + nodeId).checked = state[key];
     const factList = panel.querySelector('#factList'); factList.replaceChildren();
-    for (const fact of state.facts.slice().reverse()) {
+    const search = panel.querySelector('#factSearch').value.trim().toLocaleLowerCase(), sort = panel.querySelector('#factSort').value;
+    const visibleFacts = state.facts.filter(fact => fact.text.toLocaleLowerCase().includes(search)).sort((a, b) => sort === 'alphabetical' ? a.text.localeCompare(b.text) : sort === 'oldest' ? a.at - b.at : b.at - a.at);
+    panel.querySelector('#factCount').textContent = visibleFacts.length + ' of ' + state.facts.length + ' saved memories';
+    for (const fact of visibleFacts) {
       const item = row(fact.text, `Saved ${new Date(fact.at).toLocaleDateString()}`);
       item.append(button('Delete', guarded(() => store.deleteFact(fact.id)))); factList.append(item);
     }
-    if (!state.facts.length) factList.append(el('p', 'Nothing saved yet. Say “remember that…” or add a memory above.', 'workspace-help'));
+    if (!visibleFacts.length) factList.append(el('p', state.facts.length ? 'No memories match your search.' : 'Nothing saved yet. Say “remember that…” or add a memory above.', 'workspace-help'));
     const activity = panel.querySelector('#activityList'); activity.replaceChildren();
     const latest = state.activity.at(-1);
     const currentStep = latest?.steps.find(step => step.state === 'working') || latest?.steps.findLast(step => step.state !== 'pending' && step.state !== 'skipped');
@@ -109,6 +124,86 @@
     if (!state.timings.length) timings.append(el('p', 'No measurements collected.', 'workspace-help'));
   }
   store.subscribe(render); render();
+  panel.querySelector('#factSearch').addEventListener('input', render);
+  panel.querySelector('#factSort').addEventListener('change', render);
+  panel.querySelector('#workspaceUpdates').addEventListener('click', () => open('3'));
+  panel.querySelector('#workspaceRecoveryOpen').addEventListener('click', () => open('7'));
+  for (const [control, destination] of [['workspaceProjects', 'projects'], ['workspaceSchedules', 'schedules']]) panel.querySelector('#' + control).addEventListener('click', guarded(() => {
+    if (typeof window.openOlangaWorkbench !== 'function') throw new Error('Work tools are still loading. Try again in a moment.');
+    panel.close(); window.openOlangaWorkbench(destination);
+  }));
+  for (const [label, example] of [['Focus timer', 'Set a timer for 25 minutes called Focus'], ['Spotify + volume', 'Play Spotify and raise the volume to 75%'], ['Remember a preference', 'Remember that I prefer brief answers']]) {
+    const chip = button(label, () => {
+      const input = document.getElementById('textCommandInput'); if (!input) return;
+      panel.close(); document.querySelector('.floating-icon[data-screen="mainScreen"]')?.click();
+      input.value = example; input.dataset.localPrefill = 'true';
+      try { input.focus(); input.setSelectionRange(0, example.length); } finally { delete input.dataset.localPrefill; }
+    });
+    chip.setAttribute('aria-label', 'Use example: ' + example); panel.querySelector('#workspaceExamples').append(chip);
+  }
+  function downloadJson(text, filename) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const link = el('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function confirmWorkspace(titleText, details, label, action) {
+    const review = el('dialog', undefined, 'workspace-dialog'); review.id = 'workspaceBackupReview';
+    const title = el('h2', titleText); title.id = 'workspaceBackupReviewTitle'; review.setAttribute('aria-labelledby', title.id);
+    const error = el('p', '', 'workspace-error'); error.setAttribute('role', 'alert');
+    const controls = el('div', undefined, 'workspace-actions');
+    const approve = button(label, async () => {
+      approve.disabled = true;
+      try { await action(); review.close(); } catch (failure) { error.textContent = failure.message || 'Nothing could be restored.'; approve.disabled = false; }
+    });
+    controls.append(button('Cancel', () => review.close()), approve);
+    review.append(title, ...details, error, controls); document.body.append(review);
+    review.addEventListener('close', () => review.remove(), { once: true }); review.showModal();
+  }
+  panel.querySelector('#workspaceExport').addEventListener('click', guarded(() => downloadJson(JSON.stringify(store.exportPersonal(), null, 2), 'olanga-workspace-backup.json')));
+  let importReadSequence = 0;
+  panel.querySelector('#workspaceImport').addEventListener('click', () => { importReadSequence++; const input = panel.querySelector('#workspaceImportFile'); input.value = ''; input.click(); });
+  function showImportPreview(text) {
+    const preview = store.previewImport(text, OlangaIntents.parse);
+    const details = [el('p', 'Replace saved memories, app and playlist names, and routine definitions with the content below. Other settings and content stay as they are. A verified local recovery copy is required before replacement. Nothing will run.', 'workspace-help')];
+    const names = { facts: 'Memories', aliases: 'App names', playlists: 'Playlist names', routines: 'Routines' };
+    for (const kind of Object.keys(names)) {
+      const group = el('details'), summary = el('summary', names[kind] + ': ' + preview.currentCounts[kind] + ' current → ' + preview.counts[kind] + ' in backup');
+      group.append(summary);
+      for (const item of preview.content[kind]) group.append(row(item.text || item.alias || item.name, item.target || (item.lines ? item.lines.join(' · ') : 'Saved ' + new Date(item.at).toLocaleDateString())));
+      details.push(group);
+    }
+    confirmWorkspace('Review Workspace restore', details, 'Replace saved Workspace content', () => {
+      store.importPersonal(preview.token, OlangaIntents.parse); editingRoutine = null; editingMemory = null;
+      renderRecoveryCopies();
+      message('Personal Workspace content restored. Routines have not run. The previous record is retained as a local recovery copy.');
+    });
+  }
+  panel.querySelector('#workspaceImportFile').addEventListener('change', guarded(async () => {
+    const sequence = ++importReadSequence, file = panel.querySelector('#workspaceImportFile').files[0]; if (!file) return;
+    if (file.size > 1024 * 1024) throw new Error('Choose a Workspace backup smaller than 1 MB.');
+    const text = await file.text();
+    if (sequence !== importReadSequence) return;
+    showImportPreview(text);
+  }));
+  function renderRecoveryCopies() {
+    const list = panel.querySelector('#workspaceRecoveryCopies'); list.replaceChildren();
+    try {
+      const copies = store.listRecoveryCopies();
+      if (!copies.length) list.append(el('p', 'No recovery copies saved.', 'workspace-help'));
+      for (const copy of copies) {
+        const item = row('Recovery copy', new Date(copy.createdAt).toLocaleString()), controls = el('div', undefined, 'workspace-actions');
+        controls.append(button('Download', guarded(() => downloadJson(store.recoveryBackupText(copy.key), 'olanga-workspace-recovery.json'))), button('Review personal content', guarded(() => showImportPreview(JSON.stringify(store.exportRecoveryPersonal(copy.key, OlangaIntents.parse))))), button('Delete copy', () => confirmWorkspace('Delete this recovery copy?', [el('p', 'This deletes only the selected recovery copy. Current Workspace content is unchanged. Download the copy first if you need to keep its original record.', 'workspace-help')], 'Delete recovery copy', () => { store.deleteRecoveryCopy(copy.key); renderRecoveryCopies(); message('Recovery copy deleted.'); })));
+        item.append(controls); list.append(item);
+      }
+    } catch (error) { list.append(el('p', error.message, 'workspace-error')); }
+  }
+  panel.querySelector('#workspaceRecoveryRefresh').addEventListener('click', renderRecoveryCopies);
+  panel.querySelector('#workspaceRecoveryRetry').addEventListener('click', guarded(() => message(store.retryRecovery() ? 'Workspace storage is readable again.' : 'The original record still needs recovery. It has not been replaced.', !!store.recoveryStatus().blocked)));
+  panel.querySelector('#workspaceRecoveryBackup').addEventListener('click', guarded(() => { store.createRecoveryBackup(); renderRecoveryCopies(); message('Original Workspace record copied and verified on this device.'); }));
+  panel.querySelector('#workspaceRecoveryDownload').addEventListener('click', guarded(() => downloadJson(store.recoveryBackupText(store.recoveryStatus().backupKey), 'olanga-workspace-recovery.json')));
+  panel.querySelector('#workspaceRecoveryReset').addEventListener('click', guarded(() => {
+    const key = store.recoveryStatus().backupKey;
+    confirmWorkspace('Reset unreadable Workspace storage?', [el('p', 'The verified recovery copy is retained. Reset clears Workspace memories, saved names, routines, activity, measurements and their Workspace preferences. Timers, notes, checklist tasks, schedules, API keys and appearance settings are outside this reset. You can import a personal Workspace backup afterward.', 'workspace-help')], 'Reset Workspace storage', () => { store.resetAfterBackup(key); renderRecoveryCopies(); message('Workspace storage reset. The original recovery copy is retained on this device.'); });
+  }));
   const providerInfo = el('div'); providerInfo.id = 'providerUsage';
   const providerRefresh = button('Refresh Gemini usage', guarded(async () => {
     const usage = await window.electronAPI.providerStatus();
@@ -139,7 +234,7 @@
       online: navigator.onLine, speechInput: store.snapshot().speechInput, storage: { writable }, app: appInfo,
       microphone: { inputs, active: !!(micStream && micStream.active !== false), muted: !!isMicMuted },
       wakeWord: { ready: !!isVoskReady },
-      gemini: { configured: !!status.configured || !!apiKey, recent: Array.isArray(status.recent) ? status.recent : [], test: lastGeminiTest },
+      gemini: { configured: !!status.configured || !!apiKey, recent: Array.isArray(status.recent) ? status.recent : [], test: isCurrentGeminiTest(lastGeminiTest) ? lastGeminiTest : null },
       voice: { engine: ttsEngine, magpieKey: !!nvidiaApiKey, magpieCoolingDown: typeof magpieUnavailableUntil === 'number' && magpieUnavailableUntil > Date.now(), windowsVoices: synthesis?.getVoices?.().length ?? null, muted: !!isTtsMuted },
       pushToTalk: typeof pushToTalkStatus === 'object' ? pushToTalkStatus : null
     };
@@ -158,16 +253,40 @@
     summary.textContent = OlangaHealth.summarize(checks);
   }
   panel.querySelector('#healthRun').addEventListener('click', guarded(runHealthCheck));
+  let healthTestPending = null;
+  // Result bindings are deliberately private: diagnostics export only the
+  // ordinary ok/ms/message result, never credentials or key identifiers.
+  const healthTestBindings = new WeakMap();
+  function healthCredentialSnapshot() { return { keys: [...apiKeys], key: apiKey, index: currentKeyIndex }; }
+  function sameHealthCredentials(snapshot) {
+    return !!snapshot && snapshot.key === apiKey && snapshot.index === currentKeyIndex && snapshot.keys.length === apiKeys.length && snapshot.keys.every((key, index) => key === apiKeys[index]);
+  }
+  function isCurrentGeminiTest(result) {
+    const binding = result && healthTestBindings.get(result);
+    return !!binding?.selectionUnchanged && sameHealthCredentials(binding.selection);
+  }
+  function testGeminiConnection() {
+    if (healthTestPending && sameHealthCredentials(healthTestPending.selection)) return healthTestPending.promise;
+    const selection = healthCredentialSnapshot(), pending = { selection, promise: null };
+    let used = { keyIndex: selection.index, selectionUnchanged: true };
+    pending.promise = (async () => {
+      const started = performance.now(); let result;
+      try {
+        await callGeminiGenerate(OlangaGemini.RESPONSE_MODEL, { contents: [{ parts: [{ text: 'Reply with the single word OK.' }] }], generationConfig: { maxOutputTokens: 64, thinkingConfig: { thinkingLevel: 'MINIMAL' } } }, { timeoutMs: 20000, onKeyResult: value => { used = value; } });
+        result = { ok: true, ms: performance.now() - started, message: 'Gemini connection is ready.' };
+      } catch (error) { result = { ok: false, ms: performance.now() - started, message: error.message || 'The connection test failed.' }; }
+      healthTestBindings.set(result, { selectionUnchanged: used.selectionUnchanged, selection: { ...selection, index: used.keyIndex, key: selection.keys[used.keyIndex] } });
+      if (isCurrentGeminiTest(result)) lastGeminiTest = result;
+      return result;
+    })().finally(() => { if (healthTestPending === pending) healthTestPending = null; });
+    healthTestPending = pending;
+    return pending.promise;
+  }
+  window.OlangaWorkspaceHealth = { testGemini: testGeminiConnection, isCurrentTest: isCurrentGeminiTest, runCheck: runHealthCheck };
   panel.querySelector('#healthTest').addEventListener('click', guarded(async () => {
     const control = panel.querySelector('#healthTest'); control.disabled = true;
     panel.querySelector('#healthSummary').textContent = 'Testing the Gemini connection…';
-    const started = performance.now();
-    try {
-      await callGeminiGenerate(OlangaGemini.RESPONSE_MODEL, { contents: [{ parts: [{ text: 'Reply with the single word OK.' }] }], generationConfig: { maxOutputTokens: 64, thinkingConfig: { thinkingLevel: 'MINIMAL' } } }, { timeoutMs: 20000 });
-      lastGeminiTest = { ok: true, ms: performance.now() - started };
-    } catch (error) { lastGeminiTest = { ok: false, message: error.message || 'The connection test failed.' }; }
-    finally { control.disabled = false; }
-    await runHealthCheck();
+    try { await testGeminiConnection(); await runHealthCheck(); } finally { control.disabled = false; }
   }));
   panel.querySelector('#activityClear').addEventListener('click', guarded(() => store.clearActivity()));
   panel.querySelector('#memoryClear').addEventListener('click', guarded(() => { store.clearMemory(); editingMemory = null; panel.querySelector('#memoryForm').reset(); message('Saved app and playlist names deleted.'); }));

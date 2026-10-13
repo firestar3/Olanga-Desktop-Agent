@@ -942,126 +942,8 @@ async function synthesizeNvidiaTtsOnce(apiKey, functionId, text, voiceName, lang
   throw lastError || new Error('No NVIDIA TTS function id is available for this account');
 }
 
-function decodeHtmlEntities(text) {
-  const namedEntities = {
-    amp: '&',
-    lt: '<',
-    gt: '>',
-    quot: '"',
-    apos: "'",
-    nbsp: ' '
-  };
-
-  return String(text || '')
-    .replace(/&#(\d+);/g, (_, decimal) => String.fromCharCode(Number(decimal)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-    .replace(/&([a-z]+);/gi, (_, entity) => namedEntities[entity.toLowerCase()] || `&${entity};`);
-}
-
-function stripHtml(text) {
-  return decodeHtmlEntities(String(text || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
-}
-
-function parseRssFeed(xmlText, feedLabel, maxItems = 6) {
-  const items = [];
-  const itemRegex = /<item\b[^>]*>([\s\S]*?)<\/item>/gi;
-  let match;
-
-  while ((match = itemRegex.exec(xmlText)) !== null && items.length < maxItems) {
-    const itemXml = match[1];
-    const titleMatch = itemXml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    const linkMatch = itemXml.match(/<link[^>]*>([\s\S]*?)<\/link>/i);
-    const descriptionMatch = itemXml.match(/<description[^>]*>([\s\S]*?)<\/description>/i);
-    const pubDateMatch = itemXml.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i);
-    const sourceMatch = itemXml.match(/<source[^>]*>([\s\S]*?)<\/source>/i);
-
-    const title = stripHtml(titleMatch?.[1] || '');
-    const link = decodeHtmlEntities((linkMatch?.[1] || '').trim());
-    const description = stripHtml(descriptionMatch?.[1] || '');
-    const pubDate = pubDateMatch?.[1] ? new Date(pubDateMatch[1]).toISOString() : null;
-    const source = stripHtml(sourceMatch?.[1] || feedLabel || 'News');
-
-    if (!title) continue;
-
-    items.push({
-      title,
-      link,
-      description,
-      pubDate,
-      source
-    });
-  }
-
-  return items;
-}
-
-function buildGoogleNewsRssUrl(query) {
-  const normalizedQuery = String(query || '').trim();
-  const searchQuery = normalizedQuery ? `${normalizedQuery} when:1d` : 'top news when:1d';
-  return `https://news.google.com/rss/search?q=${encodeURIComponent(searchQuery)}&hl=en-US&gl=US&ceid=US:en`;
-}
-
-async function fetchNewsBundle(payload = {}) {
-  const city = String(payload.city || '').trim();
-  const state = String(payload.state || '').trim();
-  const country = String(payload.country || '').trim();
-  const topics = Array.isArray(payload.topics)
-    ? payload.topics.map(topic => String(topic || '').trim()).filter(Boolean)
-    : [];
-
-  const locationParts = [city, state, country].filter(Boolean);
-  const locationLabel = locationParts.length > 0 ? locationParts.join(', ') : 'your area';
-  const countryLabel = country || 'United States';
-  const topicQueries = topics.length > 0 ? topics.flatMap((topic) => ([
-    `${locationLabel} ${topic}`,
-    `${countryLabel} ${topic}`,
-    topic
-  ])) : [];
-  const queries = [
-    `${countryLabel} news`,
-    'top stories',
-    `${locationLabel} news`,
-    ...topicQueries,
-    'breaking news'
-  ];
-
-  const feeds = await Promise.all(
-    queries.map(async (query) => {
-      const response = await fetch(buildGoogleNewsRssUrl(query), {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Olanga Desktop Assistant)'
-        }
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`News feed error: ${response.status} ${errorText}`.trim());
-      }
-
-      const xmlText = await response.text();
-      return parseRssFeed(xmlText, query, 5);
-    })
-  );
-
-  const seen = new Set();
-  const articles = [];
-  for (const feedItems of feeds) {
-    for (const article of feedItems) {
-      const dedupeKey = `${article.title.toLowerCase()}|${article.link}`;
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      articles.push(article);
-    }
-  }
-
-  return {
-    locationLabel,
-    countryLabel,
-    topics,
-    generatedAt: new Date().toISOString(),
-    articles: articles.slice(0, 16)
-  };
-}
+const { createNewsService } = require('./desktop/news-service');
+const newsService = createNewsService({ fetchImpl: (url, options) => net.fetch(url, { ...options, credentials: 'omit' }) });
 
 const gotTheLock = app.requestSingleInstanceLock();
 
@@ -1069,8 +951,9 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
-    // Someone tried to run a second instance, we should focus our window.
+    const updateAttempt = updateReadiness.acceptLaunchArguments(commandLine);
     showMainWindow();
+    if (updateAttempt) void confirmUpdatedApplication();
   });
 
   app.whenReady().then(() => {
@@ -1236,6 +1119,8 @@ const { createManualUpdater, createElectronUpdateFetch } = require('./desktop/ma
 const { createInstallerLauncher, readInstallResult } = require('./desktop/update-installer');
 const releaseService = createReleaseService({ getInstalledVersion: () => app.getVersion(), fetchImpl: (...args) => net.fetch(...args) });
 const updatesDir = path.join(app.getPath('userData'), 'updates');
+const { createUpdateReadiness } = require('./desktop/update-readiness');
+const updateReadiness = createUpdateReadiness({ updatesDir, appExe: app.getPath('exe'), currentVersion: app.getVersion(), getMainWindow: () => mainWindow });
 const installerLauncher = createInstallerLauncher({ quit: () => app.quit(), appExe: app.getPath('exe'), currentVersion: app.getVersion(), updatesDir });
 const manualUpdater = createManualUpdater({
   releaseService,
@@ -1252,7 +1137,29 @@ const manualUpdater = createManualUpdater({
 // These endpoints accept no URL, path or installer arguments from the renderer.
 // Download and installation happen only after their separate user actions.
 trustedMainIpc.handle('check-release', () => manualUpdater.check({ force: true }));
-trustedMainIpc.handle('update-state', () => manualUpdater.getState());
+function currentManualUpdateState() {
+  const state = manualUpdater.getState();
+  const result = readInstallResult(updatesDir, app.getVersion());
+  return result && state.phase === 'idle' ? { ...state, message: result.message, installationResult: result } : state;
+}
+async function confirmUpdatedApplication(sender) {
+  const result = await updateReadiness.confirmReady(sender);
+  if (result.ready) {
+    // The supervisor commits its receipt after reading our acknowledgment.
+    // This bounded follow-up exists only during an explicitly started update.
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const state = currentManualUpdateState();
+      if (!state.installationResult?.pending) {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-state-changed', state);
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  return result;
+}
+trustedMainIpc.handle('update-renderer-ready', event => confirmUpdatedApplication(event.sender));
+trustedMainIpc.handle('update-state', currentManualUpdateState);
 trustedMainIpc.handle('update-download', () => manualUpdater.download());
 trustedMainIpc.handle('update-cancel', () => manualUpdater.cancel());
 trustedMainIpc.handle('update-install', () => manualUpdater.install());
@@ -1312,7 +1219,7 @@ trustedMainIpc.handle('request-screenshot', async () => {
 });
 
 trustedMainIpc.handle('fetch-news-bundle', async (event, payload = {}) => {
-  return fetchNewsBundle(payload);
+  return newsService.fetchBundle(payload);
 });
 
 trustedMainIpc.handle('nvidia-tts-config', async (event, payload = {}) => {

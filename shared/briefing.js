@@ -38,9 +38,10 @@
     if (timer.kind === 'reminder') return `a reminder in ${remaining(timer.endTime - now)} to ${label}`;
     return `${label.toLowerCase() === 'timer' ? 'a timer' : `the ${label} timer`} with ${remaining(timer.endTime - now)} left`;
   }
-  function compose({ now = new Date(), timers = [], tasks = [], headlines = [], weather = '' } = {}) {
+  function compose({ now = new Date(), timers = [], tasks = [], headlines = [], weather = '', preferredAddress = '' } = {}) {
     const time = now.getTime();
-    const sentences = [`${greeting(now.getHours())}, Boss. It's ${clock(time)} on ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.`];
+    const address = clean(preferredAddress).replace(/[\x00-\x1f\x7f]/g, '').slice(0, 40);
+    const sentences = [`${greeting(now.getHours())}${address ? ', ' + address : ''}. It's ${clock(time)} on ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.`];
     const forecast = clean(weather);
     if (forecast) sentences.push(/[.!?]$/.test(forecast) ? forecast : `${forecast}.`);
     const open = tasks.filter(task => task && !task.completed && clean(task.text));

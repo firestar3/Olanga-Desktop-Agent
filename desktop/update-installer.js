@@ -15,11 +15,20 @@ function readInstallResult(updatesDir, installedVersion) {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8192) return null;
     const result = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
-    if (result.schema !== 1 || !parseVersion(result.version) || !['installed', 'restarted', 'failed'].includes(result.stage)) return null;
-    if (!Number.isFinite(Date.parse(result.updatedAt)) || Date.now() - Date.parse(result.updatedAt) > 7 * 86400000) return null;
-    const succeeded = result.stage !== 'failed' && compareVersions(String(installedVersion), result.version) >= 0;
-    return { ok: succeeded, version: result.version,
-      message: succeeded ? `Olanga ${installedVersion} is installed. Your update is complete.`
+    if (![1, 2].includes(result.schema) || !parseVersion(result.version) || !['installing', 'installed', 'restarted', 'failed'].includes(result.stage)) return null;
+    const age = Date.now() - Date.parse(result.updatedAt);
+    if (!Number.isFinite(age) || age < -60000 || age > 7 * 86400000) return null;
+    const succeeded = result.schema === 2 && result.stage === 'restarted' && result.rendererReady === true && compareVersions(String(installedVersion), result.version) === 0;
+    const awaitingRestart = result.schema === 2 && ['installing', 'installed'].includes(result.stage);
+    // A killed supervisor or interrupted Windows session cannot leave the UI
+    // waiting indefinitely. Installer prompts get longer than app startup.
+    const pending = awaitingRestart && age <= (result.stage === 'installing' ? 30 * 60000 : 150000);
+    return { ok: succeeded, pending, version: result.version,
+      message: succeeded ? `Olanga ${installedVersion} is installed and ready. Your update is complete.`
+        : pending ? (result.stage === 'installing' ? `Olanga ${result.version} is installing…` : `Olanga ${result.version} is installed. Waiting for startup verification…`)
+        : awaitingRestart ? 'The previous update did not confirm a completed restart. Check for updates or open GitHub Releases to try again.'
+        : result.schema === 1 && result.stage !== 'failed' ? `Olanga ${installedVersion} is installed. This older update record does not include startup verification.`
+        : ['app-ready-timeout', 'app-restart-failed'].includes(result.code) ? `Olanga ${result.version} did not finish starting after the update. Reopen Olanga, or check for updates to try again.`
         : `The update to Olanga ${result.version} did not finish. Your app has reopened. Check for updates to try again.` };
   } catch { return null; }
 }
@@ -31,9 +40,10 @@ function createInstallerLauncher({
   appExe = process.execPath, currentVersion, updatesDir,
   helperSource = supervisorPath, powershellPath = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
   readyTimeoutMs = 15000, pollMs = 100, parentPid = process.pid,
-  showProgress = true,
+  showProgress = true, restartTimeoutMs = 45000,
 } = {}) {
   if (typeof quit !== 'function') throw new TypeError('An application quit callback is required.');
+  if (!Number.isInteger(restartTimeoutMs) || restartTimeoutMs < 1000 || restartTimeoutMs > 120000) throw new TypeError('The restart readiness timeout must be bounded.');
   let active = null;
 
   return async function launchInstaller(filePath, version, verification = {}) {
@@ -59,7 +69,7 @@ function createInstallerLauncher({
       let child, launchError = null, exited = false, exitCode = null;
       try {
         await fs.promises.copyFile(helperSource, copiedHelper, fs.constants.COPYFILE_EXCL);
-        await fs.promises.writeFile(configPath, JSON.stringify({ schema: 1, token, parentPid, appExe, currentVersion,
+        await fs.promises.writeFile(configPath, JSON.stringify({ schema: 2, token, parentPid, appExe, currentVersion, createdAt: new Date().toISOString(), restartTimeoutMs,
           parentExe: process.execPath, installer: filePath, version, sha256: verification.sha256.toLowerCase(), showProgress }), { flag: 'wx', mode: 0o600 });
         const helperEnv = { ...process.env, PSModulePath: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules') };
         // A development shell's PowerShell 7 module path or Electron Node mode

@@ -122,6 +122,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   arrangeApp: (payload) => ipcRenderer.invoke('arrange-app', payload),
   closeApp: (appName) => ipcRenderer.invoke('close-app', appName),
   requestScreenshot: () => ipcRenderer.invoke('request-screenshot'),
+  confirmUpdateReady: () => ipcRenderer.invoke('update-renderer-ready'),
   fetchNewsBundle: (payload) => ipcRenderer.invoke('fetch-news-bundle', payload),
   nvidiaTtsConfig: (payload) => ipcRenderer.invoke('nvidia-tts-config', payload),
   nvidiaTtsSynthesize: (payload) => ipcRenderer.invoke('nvidia-tts-synthesize', payload),

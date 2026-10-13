@@ -315,17 +315,35 @@ function noteIsUnchanged(tab, original) {
 const MAX_MESSAGES = 15;
 const COMPACT_COUNT = 10;
 
-// Toggle AI sidebar
-notepadAiToggleBtn.addEventListener('click', () => {
-  notepadAiSidebarOpen = !notepadAiSidebarOpen;
-  notepadAiSidebar.classList.toggle('hidden', !notepadAiSidebarOpen);
-});
-
-// Close AI sidebar
-notepadAiCloseBtn.addEventListener('click', () => {
-  notepadAiSidebarOpen = false;
-  notepadAiSidebar.classList.add('hidden');
-});
+notepadAiToggleBtn.setAttribute('aria-controls', 'notepadAiSidebar');
+notepadAiToggleBtn.setAttribute('aria-expanded', 'false');
+let notepadAiEditorSelection = null;
+function setNotepadAiSidebarOpen(open) {
+  if (open) {
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    notepadAiEditorSelection = range && notepadTextarea.contains(range.commonAncestorContainer)
+      ? { range: range.cloneRange(), tabId: currentTabId, html: notepadTextarea.innerHTML } : null;
+  }
+  notepadAiSidebarOpen = open;
+  notepadAiSidebar.classList.toggle('hidden', !open);
+  notepadAiToggleBtn.setAttribute('aria-expanded', String(open));
+  if (!open && notepadAiEditorSelection) {
+    const { range, tabId, html } = notepadAiEditorSelection;
+    if (tabId === currentTabId && html === notepadTextarea.innerHTML &&
+        range.startContainer.isConnected && range.endContainer.isConnected &&
+        notepadTextarea.contains(range.startContainer) && notepadTextarea.contains(range.endContainer)) {
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    notepadAiEditorSelection = null;
+  }
+  // Focusing the revealed input also scrolls stacked compact layouts into view.
+  (open ? notepadAiInput : notepadAiToggleBtn).focus();
+}
+notepadAiToggleBtn.addEventListener('click', () => setNotepadAiSidebarOpen(!notepadAiSidebarOpen));
+notepadAiCloseBtn.addEventListener('click', () => setNotepadAiSidebarOpen(false));
 
 // Send AI message
 notepadAiSendBtn.addEventListener('click', sendNotepadAiMessage);

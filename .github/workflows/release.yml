@@ -71,6 +71,13 @@ jobs:
       - name: Check manual update controls and theme consistency
         run: npm run smoke:updates
 
+      - name: Check responsive layouts and review dialogs
+        run: npm run smoke:layout
+      - name: Check Workspace recovery and News reading
+        run: |
+          npm run smoke:recovery
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run smoke:news
       - name: Check native update handoff, completion and recovery
         run: npm run smoke:installer
 
@@ -160,7 +167,14 @@ jobs:
           $notes = "<!-- olanga-artifact-verification -->`n$signingText`n`nCompare the downloaded installer's SHA-256 with the attached SHA256SUMS file. A matching checksum detects changed bytes; it is not a publisher signature. See RELEASE-METADATA.json for this build's recorded checks.`n`nUpdates are manual. Automatic download, installation, and rollback remain disabled.`n"
           $versionNotes = Join-Path 'docs/releases' "$version.md"
           if (Test-Path -LiteralPath $versionNotes -PathType Leaf) {
-            $notes = (Get-Content -LiteralPath $versionNotes -Raw).TrimEnd() + "`n`n" + $notes
+            # Source Markdown is relative to docs/releases. Published notes must
+            # resolve documentation against this exact release tag (or the
+            # checked-out commit for an unpublished manual workflow run).
+            $notesRef = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } else { $env:GITHUB_SHA }
+            $preparedNotes = Join-Path (Resolve-Path dist).Path 'RELEASE-NOTES.md'
+            node scripts/prepare-release-notes.js $versionNotes $preparedNotes $env:GITHUB_REPOSITORY $notesRef
+            if ($LASTEXITCODE -ne 0) { throw 'Could not prepare version-specific release note links.' }
+            $notes = (Get-Content -LiteralPath $preparedNotes -Raw).TrimEnd() + "`n`n" + $notes
           }
           [IO.File]::WriteAllText((Join-Path (Resolve-Path dist).Path 'RELEASE-NOTES.md'), $notes, $utf8)
           Write-Host "Release artifact: $installerName ($signingStatus). SHA256SUMS was generated from the completed installer."

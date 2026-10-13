@@ -1086,11 +1086,13 @@ test('a keyless briefing combines local records with headlines and never calls a
   const requested = [];
   context.window.electronAPI.fetchNewsBundle = async payload => { requested.push(payload.topics.length); return { articles: [{ title: 'Rates hold steady - Reuters' }, { title: 'Storm heads north' }] }; };
   await context.processTextCommandWithGemini('brief me');
-  assert.match(calls.spoken[0], /^Good (morning|afternoon|evening), Boss\.|^Hello, Boss\./);
+  assert.match(calls.spoken[0], /^(Good (morning|afternoon|evening)|Hello)\./);
   assert.match(calls.spoken[0], /You have 1 open task: Buy milk\. Coming up: the Tea timer with 4 minutes left\. In the news: Rates hold steady\. Storm heads north\.$/);
   assert.deepEqual(requested, [0]);
+  context.window.OlangaResponsePreferences = { snapshot: () => ({ preferredAddress: 'Aarav' }) };
   context.window.electronAPI.fetchNewsBundle = async () => { throw new Error('Offline'); };
   await context.processTextCommandWithGemini('daily briefing');
+  assert.match(calls.spoken[1], /^(Good (morning|afternoon|evening)|Hello), Aarav\./);
   assert.doesNotMatch(calls.spoken[1], /In the news/);
   assert.deepEqual(calls.errors, []);
 });
@@ -1201,4 +1203,214 @@ test('ambiguous contextual correction asks for explicit setting and performs no 
   context.sendTextToGemini = () => { throw new Error('Ambiguous correction must not reach a model action route'); };
   await context.processTextCommandWithGemini('actually 30');
   assert.deepEqual(calls.media, []); assert.match(calls.spoken[0], /Which setting/);
+});
+
+
+test('verified result and action completion are visible while acknowledgment audio is stalled', async () => {
+  const { context, calls } = harness();
+  const request = context.beginAssistantRequest();
+  let release; request.acknowledgement = new Promise(resolve => { release = resolve; });
+  const pending = context.finishAssistantTurn('System volume is 75%.', false, request);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(context.aiText.textContent, 'System volume is 75%.');
+  assert.notEqual(context.window.OlangaTurns.snapshot().actionsFinishedAt, null);
+  assert.equal(context.window.OlangaTurns.snapshot().phase, 'speaking');
+  assert.deepEqual(calls.spoken, []);
+  release(); await pending;
+  assert.deepEqual(calls.spoken, ['System volume is 75%.']);
+  assert.equal(context.window.OlangaTurns.snapshot().outcome, 'completed');
+});
+
+test('memory removal clears dependent conversation and cancels a reply using removed context', () => {
+  const { context } = harness();
+  let state = { factsEnabled: true, facts: [{ id: 'one', text: 'My locker code is 4312' }, { id: 'two', text: 'I prefer tea' }] };
+  context.window.OlangaWorkspace = { snapshot: () => state, memoryContext: () => state.factsEnabled ? state.facts.map(item => item.text) : [] };
+  vm.runInContext('conversationMemorySnapshot = savedMemorySnapshot()', context);
+  const request = context.beginAssistantRequest();
+  context.rememberConversationMessage('user', 'What is my code?');
+  assert.match(context.buildHistoryContext(), /4312/);
+  context.rememberConversationMessage('model', 'It is four three one two.');
+  state = { ...state, facts: state.facts.slice(1) };
+  context.handleConversationMemoryChange({ reason: 'deleted', removedIds: ['one'] });
+  assert.equal(request.signal.aborted, true);
+  assert.equal(context.recentConversation().length, 1);
+  assert.equal(context.recentConversation()[0].text, 'What is my code?');
+  const next = context.buildAnswerBody('What do you remember?');
+  assert.doesNotMatch(JSON.stringify(next), /4312|four three one two/);
+  assert.match(JSON.stringify(next), /prefer tea/);
+  assert.equal(state.facts.length, 1);
+});
+
+test('disabling memories removes their earlier conversation context without deleting saved facts', () => {
+  const { context } = harness();
+  let state = { factsEnabled: true, facts: [{ id: 'private', text: 'My test location is Sentinel Bay' }] };
+  context.window.OlangaWorkspace = { snapshot: () => state, memoryContext: () => state.factsEnabled ? state.facts.map(item => item.text) : [] };
+  vm.runInContext('conversationMemorySnapshot = savedMemorySnapshot()', context);
+  context.beginAssistantRequest(); context.buildHistoryContext();
+  context.rememberConversationMessage('model', 'You are near the sentinel harbor.');
+  state = { ...state, factsEnabled: false };
+  context.handleConversationMemoryChange({ reason: 'disabled', removedIds: [] });
+  assert.doesNotMatch(context.buildHistoryContext(), /sentinel/i);
+  assert.equal(state.facts.length, 1);
+});
+
+test('an explicit forget operation is allowed to finish and does not save its sensitive receipt into conversation', async () => {
+  const { context } = harness();
+  let state = { factsEnabled: true, facts: [{ id: 'secret', text: 'My locker code is 4312' }] };
+  context.window.OlangaWorkspace = { snapshot: () => state, memoryContext: () => state.facts.map(item => item.text) };
+  vm.runInContext('conversationMemorySnapshot = savedMemorySnapshot()', context);
+  const request = context.beginAssistantRequest(); context.buildHistoryContext();
+  request.forgettingMemory = true;
+  request.deletingMemory = true;
+  state = { ...state, facts: [] };
+  context.handleConversationMemoryChange({ reason: 'deleted', removedIds: ['secret'] });
+  assert.equal(request.signal.aborted, false);
+  await context.finishAssistantTurn('Forgotten: My locker code is 4312.', false, request);
+  assert.doesNotMatch(context.buildHistoryContext(), /4312/);
+  assert.equal(context.window.OlangaTurns.snapshot().outcome, 'completed');
+});
+
+test('automatic conversation organization removes adjacent duplicates and remains bounded', () => {
+  const { context } = harness();
+  context.rememberConversationMessage('user', 'Same question');
+  context.rememberConversationMessage('user', 'Same question');
+  assert.equal(context.recentConversation().length, 1);
+  for(let i=0;i<40;i++) context.rememberConversationMessage(i%2?'model':'user', String(i)+' '+ 'x'.repeat(1600));
+  assert.ok(context.recentConversation().length<=24);
+  assert.ok(context.recentConversation().reduce((n,item)=>n+item.text.length,0)<=24000);
+});
+
+test('response preferences change tone without changing action permission rules', () => {
+  const { context } = harness();
+  context.window.OlangaResponsePreferences = { snapshot: () => ({ responseStyle: 'concise', preferredAddress: 'Aarav' }) };
+  const classic = context.buildOlangaSystemInstruction('text'), answer = context.buildAnswerInstruction('text');
+  for(const prompt of [classic, answer]) { assert.match(prompt,/one or two sentences/); assert.match(prompt,/"Aarav"/); assert.match(prompt,/never changes action permissions/); }
+  assert.match(classic,/never proof of execution/);
+  assert.match(answer,/Never claim to have done anything/);
+  context.window.OlangaResponsePreferences = { snapshot: () => ({ responseStyle: 'natural', preferredAddress: '' }) };
+  assert.doesNotMatch(context.buildAnswerInstruction('text'),/Boss/);
+});
+
+test('acknowledgment dispatch and audible start are measured separately and only once', async () => {
+  const { context } = harness();
+  const measured=[]; let speakOptions, finish;
+  context.window.OlangaActivity={ begin:()=>1, finish(){}, timing:(phase)=>measured.push(phase) };
+  context.speakAssistantAcknowledgement=(_text,_signal,options)=> { speakOptions=options; return new Promise(resolve=>{finish=resolve;}); };
+  const request=context.beginAssistantRequest();
+  context.acknowledgeAssistantRequest(request,{goal:'Open Spotify'});
+  assert.deepEqual(measured,['ack-dispatch']);
+  speakOptions.onStart(); speakOptions.onStart();
+  assert.deepEqual(measured,['ack-dispatch','ack-audio-start']);
+  finish(); await request.acknowledgement; await Promise.resolve();
+  assert.deepEqual(measured,['ack-dispatch','ack-audio-start','acknowledgment']);
+  context.cancelAssistantRequest();
+});
+
+test('saving while memory use is disabled still removes dependent paraphrases on deletion', () => {
+  const { context } = harness(); const store = loadWorkspace(context);
+  store.preference('factsEnabled', false);
+  vm.runInContext('conversationMemorySnapshot = savedMemorySnapshot()', context);
+  store.subscribeMemory(context.handleConversationMemoryChange);
+  const request = context.beginAssistantRequest();
+  context.rememberConversationMessage('user', 'remember that my test locker code is 4312');
+  assert.equal(context.rememberUserFact('my test locker code is 4312').ok, true);
+  context.rememberConversationMessage('model', 'Your number is four three one two.');
+  assert.equal(context.recentConversation().length, 2);
+  store.deleteFact(store.snapshot().facts[0].id);
+  assert.equal(request.signal.aborted, true);
+  assert.equal(context.recentConversation().length, 0);
+  assert.doesNotMatch(context.buildHistoryContext(), /4312|four three one two/);
+});
+
+test('deleting a disabled memory cancels a local memory list while its acknowledgment is stalled', async () => {
+  const { context, calls } = harness(); const store = loadWorkspace(context);
+  const fact = store.rememberFact('my fixture town is Sentinel Bay');
+  store.preference('factsEnabled', false);
+  vm.runInContext('conversationMemorySnapshot = savedMemorySnapshot()', context);
+  store.subscribeMemory(context.handleConversationMemoryChange);
+  const request = context.beginAssistantRequest();
+  let release; request.acknowledgement = new Promise(resolve => { release = resolve; });
+  const result = context.describeUserFacts();
+  const finishing = context.finishAssistantTurn(result.message, false, request);
+  assert.match(context.aiText.textContent, /Sentinel Bay/);
+  store.deleteFact(fact.id);
+  assert.equal(request.signal.aborted, true);
+  release();
+  await finishing;
+  assert.equal(context.window.OlangaTurns.snapshot().outcome, 'cancelled');
+  assert.deepEqual(calls.spoken, []);
+  assert.doesNotMatch(context.buildHistoryContext(), /Sentinel Bay/);
+});
+
+test('forget exemption ends with deletion so a later affected response can still be cancelled', async () => {
+  const { context } = harness(); const store = loadWorkspace(context);
+  store.rememberFact('my test code is 4312'); const other = store.rememberFact('my test city is Sentinel Bay');
+  vm.runInContext('conversationMemorySnapshot = savedMemorySnapshot()', context);
+  store.subscribeMemory(context.handleConversationMemoryChange);
+  const request = context.beginAssistantRequest(); context.buildHistoryContext();
+  await context.applyAssistantCommands('[FORGET: test code]', request);
+  assert.equal(request.deletingMemory, false);
+  assert.equal(request.forgettingMemory, true);
+  assert.equal(request.signal.aborted, false);
+  store.deleteFact(other.id);
+  assert.equal(request.signal.aborted, true);
+});
+
+test('deleting an unrelated fact preserves local-command conversation and its running request', () => {
+  const { context } = harness(); const store = loadWorkspace(context);
+  const fact = store.rememberFact('my fixture town is Sentinel Bay');
+  vm.runInContext('conversationMemorySnapshot = savedMemorySnapshot()', context);
+  store.subscribeMemory(context.handleConversationMemoryChange);
+  const request = context.beginAssistantRequest();
+  context.rememberConversationMessage('user', 'Set a tea timer for five minutes');
+  context.rememberConversationMessage('model', 'Tea timer started.');
+  store.deleteFact(fact.id);
+  assert.equal(request.signal.aborted, false);
+  assert.equal(context.recentConversation().length, 2);
+  assert.match(context.buildHistoryContext(), /Tea timer started/);
+});
+
+for (const change of ['deleted', 'disabled']) test('a memory saved during a pending reply is tracked before it is ' + change, async () => {
+  const { context, calls } = harness(); const store = loadWorkspace(context);
+  vm.runInContext('conversationMemorySnapshot = savedMemorySnapshot()', context);
+  store.subscribeMemory(context.handleConversationMemoryChange);
+  context.planTypedLane = () => 'router';
+  let release, started;
+  const ready = new Promise(resolve => { started = resolve; });
+  context.sendTextToGemini = () => {
+    assert.match(context.buildHistoryContext(), /4312/);
+    started();
+    return new Promise(resolve => { release = resolve; });
+  };
+  const pending = context.processTextCommandWithGemini('My fixture locker code is 4312. Spell out the number.');
+  await ready;
+  const request = vm.runInContext('assistantCurrentRequest', context);
+  const fact = store.rememberFact('My fixture locker code is 4312');
+  assert.ok(request.contextMemoryIds.includes(fact.id));
+  if (change === 'deleted') store.deleteFact(fact.id);
+  else store.preference('factsEnabled', false);
+  assert.equal(request.signal.aborted, true);
+  release('RESPONSE: Your code is four three one two.');
+  await pending;
+  assert.deepEqual(calls.spoken, []);
+  assert.doesNotMatch(context.buildHistoryContext(), /4312|four three one two/);
+  assert.doesNotMatch(context.aiText.textContent, /4312|four three one two/);
+  assert.equal(context.window.OlangaTurns.snapshot().outcome, 'cancelled');
+});
+
+test('new memories do not attach unread earlier conversation to a running local request', () => {
+  const { context } = harness(); const store = loadWorkspace(context);
+  vm.runInContext('conversationMemorySnapshot = savedMemorySnapshot()', context);
+  store.subscribeMemory(context.handleConversationMemoryChange);
+  context.rememberConversationMessage('user', 'My fixture town is Sentinel Bay');
+  const request = context.beginAssistantRequest();
+  context.rememberConversationMessage('user', 'Set a tea timer for five minutes');
+  context.rememberConversationMessage('model', 'Tea timer started.');
+  const fact = store.rememberFact('My fixture town is Sentinel Bay');
+  store.deleteFact(fact.id);
+  assert.equal(request.signal.aborted, false);
+  assert.equal(context.recentConversation().length, 2);
+  assert.doesNotMatch(context.buildHistoryContext(), /Sentinel Bay/);
+  assert.match(context.buildHistoryContext(), /Tea timer started/);
+  context.cancelAssistantRequest();
 });

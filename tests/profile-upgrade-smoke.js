@@ -158,19 +158,27 @@ async function stop(instance) {
     for (let attempt = 0; attempt < 20 && !exited(instance.child); attempt++) await pause(100);
     instance.socket.close();
   }
+  let termination = null;
   if (!exited(instance.child) && instance.child.pid) {
-    await new Promise((resolve, reject) => {
-      const stopper = spawn('taskkill.exe', ['/PID', String(instance.child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      stopper.once('error', reject); stopper.once('exit', resolve);
+    // This PID belongs to the child launched above with the verified fixture
+    // profile. Never fall back to an executable-name or global app shutdown.
+    termination = await new Promise(resolve => {
+      let output = '';
+      const stopper = spawn('taskkill.exe', ['/PID', String(instance.child.pid), '/T', '/F'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      stopper.stdout.on('data', value => { output += value; });
+      stopper.stderr.on('data', value => { output += value; });
+      stopper.once('error', error => resolve({ error: error.message }));
+      stopper.once('close', (exitCode, signal) => resolve({ exitCode, signal, output: output.trim().slice(0, 2400) }));
     });
-    for (let attempt = 0; attempt < 30 && !exited(instance.child); attempt++) await pause(100);
+    // Windows can report taskkill completion before Node observes child exit.
+    for (let attempt = 0; attempt < 100 && !exited(instance.child); attempt++) await pause(100);
   }
   for (const item of instance.pending.values()) item.reject(new Error('Fixture process closed'));
   instance.pending.clear();
   fs.writeFileSync(path.join(output, 'profile-upgrade-' + instance.label + '.log'), instance.log);
-  report.stages.push({ label: instance.label, pid: instance.child.pid, exited: exited(instance.child), exitCode: instance.child.exitCode, signalCode: instance.child.signalCode, rendererNetworkRequests: instance.networkRequests });
+  report.stages.push({ label: instance.label, pid: instance.child.pid, exited: exited(instance.child), exitCode: instance.child.exitCode, signalCode: instance.child.signalCode, termination, rendererNetworkRequests: instance.networkRequests });
   if (active === instance) active = null;
-  assert.ok(exited(instance.child), 'Spawned fixture did not exit');
+  assert.ok(exited(instance.child), 'Spawned fixture PID ' + instance.child.pid + ' did not exit: ' + JSON.stringify(termination));
 }
 const snapshotExpression = `(async () => ({
   localSetup: localStorage.getItem('olanga_local_setup'),
@@ -212,6 +220,8 @@ async function quiet(instance, expectedVersion) {
 }
 async function seedOld() {
   const old = await launch(oldExe, oldVersion, 'old');
+  const oldOptionalFeatures = await old.evaluate('[...OlangaPrefs.OPTIONAL_FEATURES]');
+  report.oldOptionalFeatures = oldOptionalFeatures;
   const sentinelPath = path.join(profile, 'terminal-history-must-not-execute.txt');
   const quotePowerShell = value => "'" + value.replace(/'/g, "''") + "'";
   const history = JSON.stringify([{ id: 0, name: 'Preserved upgrade history', cwd: profile, entries: [
@@ -249,18 +259,23 @@ async function seedOld() {
   await reload(old);
   const baseline = await old.evaluate(snapshotExpression);
   check(oldVersion + ': timer, incomplete task and completed task survive reload', baseline.savedTimers.length === 1 && baseline.tasks.length === 2 && baseline.tasks.filter(item => item.completed).length === 1);
-  check(oldVersion + ': fixture retains enabled Terminal and Notepad preferences', ['localPreferences', 'securePreferences'].every(key => baseline[key].features.includes('terminalScreen') && baseline[key].features.includes('notepadScreen')) && baseline.storedFeatures.includes('terminalScreen') && baseline.runtimeFeatures.includes('terminalScreen'));
+  const supportedFeatures = ['terminalScreen', 'notepadScreen'].filter(feature => oldOptionalFeatures.includes(feature));
+  check(oldVersion + ': fixture retains supported feature mirrors and unchanged encrypted legacy preferences',
+    supportedFeatures.includes('notepadScreen') &&
+    [baseline.localPreferences.features, baseline.storedFeatures, baseline.runtimeFeatures].every(features => JSON.stringify(features) === JSON.stringify(supportedFeatures)) &&
+    JSON.stringify(baseline.securePreferences.features) === JSON.stringify(['terminalScreen', 'notepadScreen']));
   check(oldVersion + ': saved Terminal history survives without executing its command', baseline.terminalHistory?.includes('terminal-history-must-not-execute.txt') && baseline.terminalHistory.includes('Saved output must remain inert') && !fs.existsSync(sentinelPath));
   const run = baseline.workspace.runs.find(item => item.id === seeded.runId);
   check(oldVersion + ': interrupted routine preserves completion and marks in-flight step uncertain', run?.state === 'interrupted' && run.steps[0].state === 'completed' && run.steps[1].state === 'uncertain');
   const observations = await quiet(old, oldVersion);
   await stop(old);
-  const seed = { profile, fixtureId, oldVersion, baseline, observations, checks: [...report.checks], stages: [...report.stages], createdAt: new Date().toISOString() };
+  const seed = { profile, fixtureId, oldVersion, oldOptionalFeatures, baseline, observations, checks: [...report.checks], stages: [...report.stages], createdAt: new Date().toISOString() };
   fs.writeFileSync(seedFile, JSON.stringify(seed, null, 2));
   return seed;
 }
 async function upgrade(seed) {
-  assert.ok(seed.baseline.terminalHistory && seed.baseline.storedFeatures?.includes('terminalScreen'), 'Regenerate the old-version fixture to include retired Terminal preferences and history');
+  assert.ok(seed.baseline.terminalHistory && seed.baseline.securePreferences?.features?.includes('terminalScreen'), 'Regenerate the old-version fixture to include retired Terminal preferences and history');
+  report.oldOptionalFeatures = seed.oldOptionalFeatures || null;
   const expected = structuredClone(seed.baseline);
   // Runtime/local mirrors normalize supported features. Preserve the encrypted
   // preference record byte-for-byte in meaning until a later explicit save.
@@ -269,8 +284,19 @@ async function upgrade(seed) {
   expected.runtimeFeatures = expected.runtimeFeatures.filter(feature => feature !== 'terminalScreen');
   const sentinelPath = path.join(profile, 'terminal-history-must-not-execute.txt');
   const next = await launch(newExe, newVersion, 'new');
+  // These are the only additions permitted during this upgrade. Do not derive
+  // expected values from the actual snapshot or rewrite encrypted preferences.
+  const addedDefaults = { appearanceAccent: 'violet', appearanceMotion: 'system', appearanceContrast: 'standard', appearanceGlow: 'standard', responseStyle: 'natural', preferredAddress: '' };
+  const supportedDefaults = await next.evaluate('OlangaPrefs.PREF_DEFS.map(def => def.key)');
+  report.addedPreferenceDefaults = {};
+  for (const [key, value] of Object.entries(addedDefaults)) {
+    if (supportedDefaults.includes(key) && !Object.hasOwn(expected.localPreferences, key)) {
+      expected.localPreferences[key] = value;
+      report.addedPreferenceDefaults[key] = value;
+    }
+  }
   const initial = await next.evaluate(snapshotExpression);
-  same('New packaged build drops only the retired optional flag while preserving every other seeded record and preference', initial, expected);
+  same('New packaged build normalizes the retired flag and known new defaults while preserving encrypted preferences and every seeded record', initial, expected);
   check('New packaged build does not execute saved Terminal history on first launch', !fs.existsSync(sentinelPath));
   const terminal = await next.evaluate(`({
     panel: !!document.getElementById('terminalScreen'),

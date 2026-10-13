@@ -27,6 +27,9 @@ $progressForm = $null
 $progressStatus = $null
 $progressDetail = $null
 $allowProgressClose = $false
+$rendererReady = $false
+$recoveryReady = $false
+$readyProcessId = $null
 
 function Initialize-Progress {
     if (-not $request.showProgress) { return }
@@ -72,7 +75,9 @@ function Write-JsonFile([string]$FilePath, $Value) {
 
 function Write-Result([string]$Stage, [string]$Code) {
     Write-JsonFile $resultPath @{
-        schema = 1; version = $request.version; stage = $Stage; code = $Code
+        schema = 2; version = $request.version; stage = $Stage; code = $Code
+        attemptId = [System.IO.Path]::GetFileName($attemptDirectory)
+        rendererReady = $rendererReady; recoveryReady = $recoveryReady; readyPid = $readyProcessId
         exitCode = $installerExitCode; installedVersion = $installedVersion
         supervisorPid = $PID
         updatedAt = [DateTime]::UtcNow.ToString('o')
@@ -91,25 +96,63 @@ function Get-AppVersion {
 
 function Start-Olanga([string]$LaunchArgument) {
     Assert-AbsoluteFile $request.appExe
-    # Use the exact executable, not a stale shortcut or an Explorer shell broker.
-    # This is the user-facing app. Passing Hidden here can suppress its first
-    # window even when the renderer calls show(), leaving an invisible restart.
-    $launchedApp = Start-Process -FilePath $request.appExe -ArgumentList $LaunchArgument -WorkingDirectory ([System.IO.Path]::GetDirectoryName($request.appExe)) -WindowStyle Normal -PassThru
-    if ($launchedApp.WaitForExit(3000)) {
-        # A second-instance handoff may exit normally. It is valid only if the
-        # intended executable has a real main window in this Windows session.
-        # Orphan Electron renderer/GPU processes must not count as a restart.
-        $currentSession = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
-        $sameApp = @(Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($request.appExe)) -ErrorAction SilentlyContinue | Where-Object {
-            try { $_.Path -eq $request.appExe -and $_.SessionId -eq $currentSession -and $_.MainWindowHandle -ne [IntPtr]::Zero -and -not $_.HasExited } catch { $false }
-        })
-        if ($sameApp.Count -eq 0) { throw 'app-restart-failed' }
+    $attemptId = [System.IO.Path]::GetFileName($attemptDirectory)
+    $nonceBytes = New-Object byte[] 24
+    $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $random.GetBytes($nonceBytes) } finally { $random.Dispose() }
+    $nonce = [BitConverter]::ToString($nonceBytes).Replace('-', '').ToLowerInvariant()
+    $expectedVersion = $request.version
+    if ($LaunchArgument -eq '--update-recovery') {
+        $fileVersion = [version](Get-AppVersion)
+        $expectedVersion = '{0}.{1}.{2}' -f $fileVersion.Major, $fileVersion.Minor, $fileVersion.Build
     }
+    $challengePath = Join-Path $attemptDirectory 'restart-challenge.json'
+    $acknowledgmentPath = Join-Path $attemptDirectory 'app-ready.json'
+    if (Test-Path -LiteralPath $acknowledgmentPath) { Remove-Item -LiteralPath $acknowledgmentPath -Force }
+    Write-JsonFile $challengePath @{
+        schema = 1; attemptId = $attemptId; nonce = $nonce; requestToken = $request.token
+        version = $expectedVersion; mode = $LaunchArgument.Substring(2); createdAt = [DateTime]::UtcNow.ToString('o')
+    }
+    # The nonce belongs to this launch. A surviving process, stale receipt, blank
+    # window or renderer that never initializes cannot complete the update.
+    $launchArguments = @($LaunchArgument, ('--olanga-update-attempt=' + $attemptId), ('--olanga-update-nonce=' + $nonce))
+    $launchedApp = Start-Process -FilePath $request.appExe -ArgumentList $launchArguments -WorkingDirectory ([System.IO.Path]::GetDirectoryName($request.appExe)) -WindowStyle Normal -PassThru
+    $restartClock = [System.Diagnostics.Stopwatch]::StartNew()
+    $currentSession = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+    while ($restartClock.ElapsedMilliseconds -lt [int]$request.restartTimeoutMs) {
+        if (Test-Path -LiteralPath $cancelPath) { throw 'restart-cancelled' }
+        if (Test-Path -LiteralPath $acknowledgmentPath) {
+            try {
+                Assert-AbsoluteFile $acknowledgmentPath
+                if ((Get-Item -LiteralPath $acknowledgmentPath).Length -gt 8192) { throw 'invalid-readiness' }
+                $acknowledgment = [System.IO.File]::ReadAllText($acknowledgmentPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+                if ($acknowledgment.schema -eq 1 -and $acknowledgment.attemptId -eq $attemptId -and $acknowledgment.nonce -eq $nonce -and $acknowledgment.version -eq $expectedVersion -and $acknowledgment.mode -eq $LaunchArgument.Substring(2) -and $acknowledgment.ready -eq $true -and $acknowledgment.rendererReady -eq $true -and $acknowledgment.visible -eq $true) {
+                    $readyProcess = [System.Diagnostics.Process]::GetProcessById([int]$acknowledgment.pid)
+                    if ($readyProcess.Path -eq $request.appExe -and $readyProcess.SessionId -eq $currentSession -and $readyProcess.MainWindowHandle -ne [IntPtr]::Zero -and -not $readyProcess.HasExited) {
+                        $script:readyProcessId = $readyProcess.Id
+                        return
+                    }
+                }
+            } catch { # Partial/unrelated acknowledgments cannot count as readiness.
+            }
+        }
+        if ($launchedApp.HasExited) {
+            $sameApp = @(Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($request.appExe)) -ErrorAction SilentlyContinue | Where-Object {
+                try { $_.Path -eq $request.appExe -and $_.SessionId -eq $currentSession -and $_.MainWindowHandle -ne [IntPtr]::Zero -and -not $_.HasExited } catch { $false }
+            })
+            if ($sameApp.Count -eq 0) { throw 'app-restart-failed' }
+        }
+        Refresh-Progress
+        Start-Sleep -Milliseconds 100
+        $launchedApp.Refresh()
+    }
+    throw 'app-ready-timeout'
 }
 
 try {
     $request = [System.IO.File]::ReadAllText($RequestPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
-    if ($request.schema -ne 1 -or $request.token -notmatch '^[a-f0-9]{48}$' -or $request.version -notmatch '^\d+\.\d+\.\d+$' -or $request.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'invalid-request' }
+    if ($request.schema -ne 2 -or $request.token -notmatch '^[a-f0-9]{48}$' -or $request.version -notmatch '^\d+\.\d+\.\d+$' -or $request.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'invalid-request' }
+    if ($request.restartTimeoutMs -lt 1000 -or $request.restartTimeoutMs -gt 120000 -or [System.IO.Path]::GetFileName($attemptDirectory) -notmatch '^install-attempt-[a-zA-Z0-9]{6,64}$') { throw 'invalid-request' }
     if ([System.IO.Path]::GetFileName($request.installer) -ne ('Olanga-Setup-' + $request.version + '.exe')) { throw 'invalid-installer' }
     Assert-AbsoluteFile $request.installer
     Assert-AbsoluteFile $request.appExe
@@ -153,20 +196,30 @@ try {
     $installerExitCode = $installer.ExitCode
     if ($installerExitCode -ne 0) { throw 'installer-exit-code' }
     $installedVersion = Get-AppVersion
-    if ([version]$installedVersion -lt [version]$request.version) { throw 'installed-version-mismatch' }
+    $installedFileVersion = [version]$installedVersion
+    # Electron writes a three-part string; some Windows build tools include a
+    # zero revision. Both must match the requested stable version exactly.
+    if ($installedFileVersion.ToString(3) -ne $request.version -or $installedFileVersion.Revision -gt 0) { throw 'installed-version-mismatch' }
     Write-Result 'installed' 'version-verified'
     if ($null -ne $progressForm) { $progressStatus.Text = 'Opening Olanga ' + $installedVersion; Refresh-Progress }
     Start-Olanga '--updated'
+    $rendererReady = $true
     Write-Result 'restarted' 'complete'
     exit 0
 } catch {
     if ($null -ne $request) {
-        try { Write-Result 'failed' $_.Exception.Message } catch {}
+        $failureCode = $_.Exception.Message
+        try { Write-Result 'failed' $failureCode } catch {}
         if (-not (Test-Path -LiteralPath $readyPath)) {
             try { Write-JsonFile $readyPath @{ token = $request.token; ready = $false } } catch {}
         }
         if ($parentExited) {
-            try { Start-Olanga '--update-recovery' } catch {
+            try {
+                if ($null -ne $progressForm) { $progressStatus.Text = 'Reopening Olanga'; $progressDetail.Text = 'The update needs attention. Opening the app so you can try again.'; Refresh-Progress }
+                Start-Olanga '--update-recovery'
+                $recoveryReady = $true
+                Write-Result 'failed' $failureCode
+            } catch {
                 if ($null -ne $progressForm) {
                     $progressForm.Hide()
                     [System.Windows.Forms.MessageBox]::Show('Olanga could not reopen after the update. Open Olanga from the Start menu. If it still does not open, download the installer again from the Olanga GitHub Releases page.', 'Olanga update needs attention', 'OK', 'Error') | Out-Null

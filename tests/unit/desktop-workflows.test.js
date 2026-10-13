@@ -259,7 +259,7 @@ test('completed edit shows local before/after and undo without sending the check
 function withActivity(h, persist = true) {
   const { createStore, KEY } = require('../../shared/productivity');
   const saved = new Map();
-  h.store = createStore({ getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value) });
+  h.store = createStore({ getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) });
   if (persist) h.store.preference('saveActivity', true);
   h.context.window.OlangaActivity = h.store;
   h.activity = () => h.store.snapshot().activity;

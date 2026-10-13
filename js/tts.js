@@ -364,7 +364,7 @@ function stopAssistantSpeech() {
 // A receipt should be audible before any remote request starts. Keep this on
 // the local voice even when Magpie is selected, and leave the request's working
 // state alone. The caller awaits it before speaking the completed result.
-function speakAssistantAcknowledgement(text, signal) {
+function speakAssistantAcknowledgement(text, signal, { onStart } = {}) {
   const message = String(text || '').trim();
   if (!message || isTtsMuted || isMuted || currentVolume <= 0 || signal?.aborted) {
     return Promise.resolve(false);
@@ -375,13 +375,14 @@ function speakAssistantAcknowledgement(text, signal) {
   return new Promise((resolve) => {
     let utterance;
     let watchdog;
-    let settled = false;
+    let settled = false, started = false;
     const finish = (completed) => {
       if (settled) return;
       settled = true;
       clearTimeout(watchdog);
       signal?.removeEventListener('abort', interrupt);
       if (utterance) {
+        utterance.onstart = null;
         utterance.onend = null;
         utterance.onerror = null;
       }
@@ -406,6 +407,7 @@ function speakAssistantAcknowledgement(text, signal) {
       if (voice) utterance.voice = voice;
       utterance.rate = Number.isFinite(ttsRate) && ttsRate > 0 ? ttsRate : 1;
       utterance.volume = currentVolume;
+      utterance.onstart = () => { if (!settled && !started && !signal?.aborted) { started = true; try { onStart?.(); } catch (_) {} } };
       utterance.onend = () => finish(true);
       utterance.onerror = () => finish(false);
       // Contextual acknowledgments need room for two short actions at the

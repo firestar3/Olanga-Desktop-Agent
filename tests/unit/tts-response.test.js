@@ -620,3 +620,16 @@ test('response wrapper distinguishes a failed voice from a completed response', 
   const pending = context.speakResponse('Done.'); calls.spoken[0].onerror({ error: 'synthesis-failed' });
   assert.equal((await pending).status, 'failed');
 });
+
+
+test('acknowledgment exposes actual voice start once and ignores late start after cancellation', async () => {
+  const { context, calls } = acknowledgementFixture();
+  const controller = new AbortController();
+  let starts=0;
+  const pending=context.speakAssistantAcknowledgement('Opening Spotify.',controller.signal,{onStart:()=>starts++});
+  const utterance=calls.spoken[0], started=utterance.onstart;
+  started(); started(); assert.equal(starts,1);
+  controller.abort(); await pending;
+  assert.equal(utterance.onstart,null);
+  started(); assert.equal(starts,1);
+});

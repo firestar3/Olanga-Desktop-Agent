@@ -13,7 +13,13 @@ const forbidden = new Set(['provider-generate', 'nvidia-tts-synthesize', 'nvidia
 const handle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, callback) => handle(channel, (event, ...args) => {
   if (forbidden.has(channel)) { report.forbiddenCalls.push(channel); throw new Error('Disabled in renderer race test: ' + channel); }
-  if (channel === 'fetch-news-bundle') return { locationLabel: args[0]?.city || 'Fixture city', topics: ['technology'], generatedAt: new Date().toISOString(), articles: [{ title: 'Fixture headline', description: 'Fixture description', source: 'Fixture', link: 'https://example.com/story' }] };
+  if (channel === 'fetch-news-bundle') {
+    const city = args[0]?.city || 'Fixture headline';
+    return new Promise((resolve, reject) => setTimeout(() => {
+      if (city === 'Slow failure' || city === 'Current failure') { reject(new Error('Fixture offline')); return; }
+      resolve({ locationLabel: city, topics: ['technology'], generatedAt: new Date().toISOString(), articles: [{ title: city, description: 'Fixture description', source: 'Fixture', link: 'https://example.com/story', pubDate: new Date().toISOString(), topics: ['technology'] }] });
+    }, city.startsWith('Slow ') ? 140 : 0));
+  }
   return callback(event, ...args);
 });
 app.on('web-contents-created', (_event, contents) => {
@@ -35,6 +41,22 @@ deadline.unref();
 app.on('will-quit', () => { report.gracefulQuit = true; save(); });
 process.on('uncaughtException', error => { report.error = error.stack; report.passed = false; save(); app.exit(1); });
 async function check(label, fn) { await evaluate(fn); report.checks.push(label); }
+async function reloadInitialized() {
+  await new Promise((resolve, reject) => {
+    const loaded = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => { main.webContents.removeListener('did-finish-load', loaded); reject(new Error('Reload did not finish within 5 seconds')); }, 5000);
+    main.webContents.once('did-finish-load', loaded);
+    main.webContents.reload();
+  });
+  for (let attempt = 0; attempt < 160; attempt++) {
+    const state = await evaluate(() => ({ ready: window.OlangaAppInitialized === true, errors: window.storageStartupErrors || [] }));
+    assert.deepEqual(state.errors, [], 'Startup emitted an error');
+    if (state.ready) return;
+    await pause(25);
+  }
+  throw new Error('Reloaded renderer did not initialize within 4 seconds');
+}
+
 app.whenReady().then(async () => {
   try {
     for (let i = 0; i < 160; i++) {
@@ -162,36 +184,35 @@ app.whenReady().then(async () => {
         }
       } finally { window.FileReader = Reader; HTMLInputElement.prototype.click = click; Storage.prototype.setItem = setItem; }
     });
-    await check('news refreshes ignore stale success and stale failure, and cache failures can retry', async () => {
-      const wait = async count => { for (let i = 0; replies.length < count && i < 100; i++) await new Promise(r => setTimeout(r, 10)); assertRace(replies.length >= count, 'Missing news generation'); };
-      replies.length = 0; const old = loadNewsBrief(true); await wait(1);
-      const latest = loadNewsBrief(true); await wait(2);
-      assertRace(replies[0].options.signal.aborted, 'Old provider request not cancelled');
-      replies[1].resolve('{"title":"Latest brief"}'); await latest;
-      replies[0].resolve('{"title":"Stale brief"}'); await old;
-      assertRace(newsBriefData.title === 'Latest brief', 'Stale success won');
-      replies.length = 0; const failed = loadNewsBrief(true); await wait(1);
-      const newer = loadNewsBrief(true); await wait(2); replies[1].resolve('{"title":"New success"}'); await newer;
-      replies[0].reject(new Error('Stale request failure')); await failed;
-      assertRace(newsBriefData.title === 'New success', 'Stale failure replaced success');
-      replies.length = 0; const currentFailure = loadNewsBrief(true); await wait(1); replies[0].reject(new Error('Fixture offline')); await currentFailure;
-      const retry = loadNewsBrief(false); await wait(2); replies[1].resolve('{"title":"Recovered"}'); await retry;
-      assertRace(newsBriefData.title === 'Recovered', 'Failure cached as a valid brief');
+    await check('news refreshes ignore stale bundles and failures while remaining independent of generation', async () => {
+      replies.length = 0;
+      localStorage.setItem('olanga_city', 'Slow success'); const old = loadNewsBrief(true); const oldController = newsRefreshController;
+      localStorage.setItem('olanga_city', 'Latest headline'); const latest = loadNewsBrief(true); await latest;
+      assertRace(oldController.signal.aborted, 'Old refresh not superseded');
+      await old; assertRace(newsBriefData.sourceArticles[0].title === 'Latest headline', 'Stale success won');
+      localStorage.setItem('olanga_city', 'Slow failure'); const failed = loadNewsBrief(true);
+      localStorage.setItem('olanga_city', 'New success'); const newer = loadNewsBrief(true); await newer; await failed;
+      assertRace(newsBriefData.sourceArticles[0].title === 'New success', 'Stale failure replaced success');
+      localStorage.setItem('olanga_city', 'Current failure'); await loadNewsBrief(true);
+      assertRace(newsBriefData.sourceArticles[0].title === 'New success', 'Failed refresh discarded usable headlines');
+      localStorage.setItem('olanga_city', 'Recovered'); await loadNewsBrief(false);
+      assertRace(newsBriefData.sourceArticles[0].title === 'Recovered', 'Failure cached as a valid brief');
+      assertRace(replies.length === 0, 'Opening News must not call a generation provider');
     });
     await check('news chat cannot double-send or append answers from a superseded brief', async () => {
       replies.length = 0; newsAiInput.value = 'Summarize'; const chat = sendNewsAiMessage();
       newsAiInput.value = 'duplicate'; await sendNewsAiMessage(); assertRace(replies.length === 1, 'Chat sent twice');
       assertRace(replies[0].messages.filter(m => m.content === 'Summarize').length === 1, 'Chat prompt duplicated');
       const refresh = loadNewsBrief(true);
-      for (let i = 0; replies.length < 2 && i < 100; i++) await new Promise(r => setTimeout(r, 10));
-      replies[0].resolve('Answer from old brief'); await chat; replies[1].resolve('{"title":"Fresh context"}'); await refresh;
+      assertRace(replies[0].options.signal.aborted, 'Refresh did not cancel the old question');
+      replies[0].resolve('Answer from old brief'); await chat; await refresh;
       assertRace(!newsAiChat.textContent.includes('Answer from old brief'), 'Stale chat answer shown');
       assertRace(!buildNewsArticleHtml({ sourceArticles: [null, { title: 'Unsafe', link: 'javascript:alert(1)' }] }).includes('javascript:'), 'Unsafe exported news link');
     });
     assert.deepEqual(await evaluate(() => raceErrors), []);
     // Reload malformed saved data through the production startup path.
     await evaluate(() => { localStorage.setItem('olangaNotepadTabs', 'null'); });
-    await main.webContents.reload(); await pause(600);
+    await reloadInitialized();
     assert.equal(await evaluate(() => Array.isArray(notepadTabsData) && notepadTabsData.length > 0 && typeof sendNotepadAiMessage === 'function'), true);
     report.checks.push('malformed saved notes do not break application startup');
     main.webContents.debugger.attach('1.3');
@@ -203,7 +224,7 @@ app.whenReady().then(async () => {
       window.addEventListener('unhandledrejection', event => storageStartupErrors.push(String(event.reason?.message || event.reason)));
       for (const name of ['getItem', 'setItem', 'removeItem']) Storage.prototype[name] = function () { throw new Error('Fixture storage unavailable'); };
     ` });
-    await main.webContents.reload(); await pause(700);
+    await reloadInitialized();
     const blocked = await evaluate(() => ({ errors: storageStartupErrors, notes: notepadTabsData.length, slots: document.querySelectorAll('#quickActionsEditor fieldset').length, setup: typeof handleSaveKey }));
     assert.deepEqual(blocked.errors, []);
     assert.ok(blocked.notes > 0 && blocked.slots === 5 && blocked.setup === 'function', 'Storage failure stopped startup: ' + JSON.stringify(blocked));

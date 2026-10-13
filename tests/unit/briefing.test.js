@@ -17,13 +17,13 @@ test('a briefing speaks the time, open tasks, upcoming timers and top headlines'
     headlines: ['Markets rally after rate decision - Reuters', 'Markets rally after rate decision - AP', 'Storm heads north?'],
     weather: 'Sunny and 72 degrees, with a high of 78'
   });
-  assert.equal(text, "Good morning, Boss. It's 7:30 AM on Saturday, September 26. Sunny and 72 degrees, with a high of 78. " +
+  assert.equal(text, "Good morning. It's 7:30 AM on Saturday, September 26. Sunny and 72 degrees, with a high of 78. " +
     'You have 2 open tasks: Buy milk and Call Alex. Coming up: the Tea timer with 4 minutes left, a reminder in 1 hour 30 minutes to stretch, and your alarm at 7:00 AM. ' +
     'In the news: Markets rally after rate decision. Storm heads north.');
 });
 
 test('a briefing stays useful with no data and caps long lists', () => {
-  assert.equal(compose({ now }), "Good morning, Boss. It's 7:30 AM on Saturday, September 26. Your checklist is clear.");
+  assert.equal(compose({ now }), "Good morning. It's 7:30 AM on Saturday, September 26. Your checklist is clear.");
   const tasks = ['One', 'Two', 'Three', 'Four', 'Five'].map(text => ({ text, completed: false }));
   const text = compose({ now, tasks, timers: [{ label: 'Tea', kind: 'timer', endTime: at(-1), ringing: true }, { label: 'Broken', endTime: 'soon' }] });
   assert.match(text, /You have 5 open tasks: One, Two, and Three, plus 2 more\./);
@@ -37,4 +37,12 @@ test('greetings follow the local hour and headlines drop publishers and punctuat
   assert.equal(headline('Is AI coming for your job?'), 'Is AI coming for your job');
   assert.equal(headline('Exclusive | Council rejects the plan - WSJ'), 'Council rejects the plan');
   assert.equal(headline('Live: Storm updates'), 'Storm updates');
+});
+
+
+test('a briefing uses only the preferred form of address when supplied', () => {
+  assert.match(compose({ now, preferredAddress: 'Aarav' }), /^Good morning, Aarav\./);
+  assert.match(compose({ now }), /^Good morning\./);
+  assert.doesNotMatch(compose({ now }), /Boss/);
+  assert.match(compose({ now, preferredAddress: 'x'.repeat(100) }), new RegExp('^Good morning, x{40}\\.'));
 });

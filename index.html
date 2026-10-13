@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="desktop-workflows.css">
   <link rel="stylesheet" href="settings.css">
+  <link rel="stylesheet" href="news.css">
   <script src="./js/appearance.js"></script>
 </head>
 <body>
@@ -325,14 +326,12 @@
       <div class="news-header">
         <div class="news-header-copy">
           <span class="news-title">News</span>
-          <span class="news-subtitle">A current, location-aware 5-minute read</span>
+          <span class="news-subtitle">Recent headlines, directly from their sources</span>
         </div>
         <div class="news-actions">
           <div class="news-model-selector">
-            <label for="newsModelSelect">Model:</label>
-            <select id="newsModelSelect" disabled>
-              <option value="fast" selected>Fast</option>
-            </select>
+            <label for="newsLengthSelect">Stories</label>
+            <select id="newsLengthSelect"><option value="6">6 · Quick read</option><option value="12" selected>12 · Daily digest</option><option value="18">18 · More to explore</option></select>
           </div>
           <button class="news-btn" id="newsRefreshBtn" title="Refresh the news brief">Refresh</button>
           <button class="news-btn" id="newsExportBtn" title="Export the current brief">Export</button>
@@ -351,19 +350,21 @@
         <button class="news-topic-chip" data-topic="entertainment">Entertainment</button>
       </div>
 
+      <div class="news-reading-controls"><label><input type="checkbox" id="newsUnreadOnlyToggle"> Unread only</label><button type="button" class="news-btn" id="newsClearReadBtn">Clear read markers</button></div>
       <div class="news-meta-row">
         <span class="news-badge" id="newsLocationBadge">Your area</span>
         <span class="news-badge" id="newsUpdatedBadge">Waiting to load…</span>
         <span class="news-badge news-badge-soft" id="newsSourceBadge">No sources yet</span>
       </div>
 
+      <p id="newsStatus" class="news-status" role="status" aria-live="polite"></p>
       <div class="news-content-wrapper">
         <div class="news-article-pane" id="newsArticlePane">
           <div class="news-empty-state hidden" id="newsEmptyState">
             <div class="news-empty-hero">
               <span class="news-empty-kicker">Today’s briefing</span>
-              <h2>Press refresh to generate your news read</h2>
-              <p>We’ll pull the latest headlines, tailor the angle to your location, and turn it into a polished five-minute read.</p>
+              <h2>Your headlines will appear here</h2>
+              <p>Choose topics and refresh. News uses RSS headlines; AI answers run only when you ask.</p>
             </div>
           </div>
           <div class="news-article hidden" id="newsArticle"></div>
@@ -376,7 +377,7 @@
               <span class="notepad-ai-status-dot" id="newsAiStatusDot"></span>
               <span class="notepad-ai-status-text" id="newsAiStatusText">Idle</span>
             </div>
-            <button class="notepad-ai-close-btn" id="newsAiCloseBtn">×</button>
+            <button class="notepad-ai-close-btn" id="newsAiCloseBtn" aria-label="Close News Assistant">×</button>
           </div>
           <div class="notepad-ai-model-selector">
             <label for="newsAiModelSelect">Model:</label>
@@ -391,7 +392,7 @@
             </div>
           </div>
           <div class="notepad-ai-input-wrapper">
-            <input type="text" class="notepad-ai-input" id="newsAiInput" placeholder="Ask a question about the news...">
+            <input type="text" class="notepad-ai-input" id="newsAiInput" aria-label="Ask about these headlines" placeholder="Ask a question about the news...">
             <button class="notepad-ai-send-btn" id="newsAiSendBtn">Send</button>
           </div>
         </div>
@@ -464,6 +465,11 @@
               </div>
             </div>
             <p class="settings-hint settings-hint-after" id="endOfSpeechHint">A shorter pause sends your request sooner, but may cut you off if you pause while speaking.</p>
+            <div class="voice-settings-grid">
+              <div class="voice-settings-row"><label for="responseStyleSelect">Response style</label><select id="responseStyleSelect"><option value="natural">Natural</option><option value="concise">Concise</option></select></div>
+              <div class="voice-settings-row"><label for="preferredAddressInput">What should Olanga call you?</label><input id="preferredAddressInput" maxlength="40" placeholder="Leave blank for no nickname" autocomplete="off"></div>
+            </div>
+            <p class="settings-hint settings-hint-after">Conversation context is organized automatically. Explicit memories stay in Workspace → Memories; deleting one also removes affected recent context on this device.</p>
             <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="bargeInToggle" checked aria-labelledby="bargeInLabel"><span class="slider" aria-hidden="true"></span></label><label for="bargeInToggle" id="bargeInLabel">Interrupt a reply by saying “Hey Olanga”</label></div>
             <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="streamRepliesToggle" checked aria-labelledby="streamRepliesLabel"><span class="slider" aria-hidden="true"></span></label><label for="streamRepliesToggle" id="streamRepliesLabel">Start speaking before the full reply is ready</label></div>
             <button type="button" class="settings-text-link" data-open-settings-tab="core">Choose a voice or speech recognition in Core settings →</button>
@@ -517,6 +523,9 @@
           <section class="settings-section" aria-labelledby="geminiSettingsHeading">
             <h3 id="geminiSettingsHeading">Gemini connection</h3>
             <p class="settings-hint">Used for cloud speech recognition, questions, screen tasks and AI features in Notes and News. Local commands can run without a key.</p>
+            <p id="coreConnectionStatus" class="settings-hint" role="status" aria-live="polite">Checking local connection settings…</p>
+            <button type="button" class="settings-back-btn" id="coreConnectionTestBtn">Test Gemini connection</button>
+            <p class="settings-hint settings-hint-after">Testing sends one short request to Gemini using a saved key. Opening Settings does not send a request.</p>
             <div class="key-list-container" id="keyListContainer"></div>
             <label class="settings-field-label" for="newKeyInput">Gemini API key</label>
             <div class="add-key-row"><input type="password" id="newKeyInput" placeholder="Paste a Gemini API key" autocomplete="off" spellcheck="false"><button type="button" id="addKeyBtn">Add key</button></div>
@@ -627,6 +636,7 @@
   <script src="./shared/action-plan.js"></script>
   <script src="./js/desktop-workflows.js"></script>
   <script src="./js/notepad.js"></script>
+  <script src="./shared/news.js"></script>
   <script src="./js/news.js"></script>
   <script src="./js/settings.js"></script>
   <script src="./js/settings-navigation.js"></script>

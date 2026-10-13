@@ -27,6 +27,8 @@
   const END_OF_SPEECH_MS = Object.freeze({ standard: 1500, quick: 1000, fast: 700 });
 
   const PREF_DEFS = [
+    { key: 'responseStyle', storageKey: 'olanga_response_style', type: 'enum', values: ['natural', 'concise'], default: 'natural' },
+    { key: 'preferredAddress', storageKey: 'olanga_preferred_address', type: 'string', default: '', maxLength: 40 },
     { key: 'appearanceContrast', storageKey: 'olanga_appearance_contrast', type: 'enum', values: ['standard', 'strong'], default: 'standard' },
     { key: 'appearanceGlow', storageKey: 'olanga_appearance_glow', type: 'enum', values: ['standard', 'subtle', 'off'], default: 'standard' },
     { key: 'appearanceAccent', storageKey: 'olanga_appearance_accent', type: 'enum', values: ['violet', 'blue', 'mint', 'rose', 'amber'], default: 'violet' },
@@ -110,7 +112,8 @@
       case 'quickActions':
         return Array.isArray(value) ? quickActions.normalizeQuickActions(value) : undefined;
       case 'string': {
-        const text = String(value).trim();
+        const raw = String(value).trim();
+        const text = def.maxLength ? raw.replace(/[\x00-\x1f\x7f]/g, '').replace(/\s+/g, ' ').slice(0, def.maxLength) : raw;
         if (!text && def.emptyIsDefault) return undefined;
         return text;
       }

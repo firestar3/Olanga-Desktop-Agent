@@ -21,6 +21,13 @@ jobs:
       - run: npm test
       - name: Check Settings, appearance and offline privacy notice
         run: npm run smoke:settings
+      - name: Check responsive layouts and review dialogs
+        run: npm run smoke:layout
+      - name: Check Workspace recovery and News reading
+        run: |
+          npm run smoke:recovery
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run smoke:news
       - name: Check native update handoff, completion and recovery
         run: npm run smoke:installer
 

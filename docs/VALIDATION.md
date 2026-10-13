@@ -1,4 +1,77 @@
-# Settings and privacy — unreleased source, October 12, 2026
+# 1.6.0 validation — October 12, 2026
+
+The 1.6.0 candidate adds protected Workspace storage and personal backups, organized explicit memories, automatic conversation-context cleanup, response preferences, direct Workspace navigation, a source-based News reader and stronger update readiness checks. Completed results appear before acknowledgment speech finishes. Settings retains the shared theme, with User preferences, Core settings and an offline Privacy notice.
+
+These results record local pre-release validation of an **unsigned 1.6.0 build**. Published artifact checksums and remote workflow results are recorded separately on GitHub. The candidate runtime is **Electron 44.7.0**; compatibility results below do not by themselves establish a performance improvement. The isolated real-installer journey passed. Performance measurements are retained as informational evidence; further optimization was deferred to prioritize the core features and layout work.
+
+| Check | Confirmed result |
+| --- | --- |
+| Unit suite | **814 tests passed**, zero failures or skips |
+| Syntax and required assets | **76 JavaScript files passed**; application version **1.6.0** |
+| Settings experience | **20 production-renderer checks passed**, including 18 tab/viewport combinations, keyboard focus scrolling, appearance, offline font/notice access, preference persistence, response preferences and explicit Core connection-test races |
+| Responsive layout and navigation | **91 checks passed across 76 captures** for Home, Notes, News, all Workspace/Work tools sections and review dialogs at narrow, standard, wide and 125% enlarged-text sizes; no horizontal overflow or forbidden external actions |
+| News reader | **8 production-renderer checks passed** for direct headlines, safe links, read markers, failed writes/refresh, saved topics, the 400px layout and explicit AI success/failure/retry with exact source context |
+| Renderer races | **12 checks passed** |
+| Workspace recovery and backups | **11 production-renderer checks passed**, including retained-copy download, reviewed restore and selected-copy deletion across restart |
+| Existing Workspace | **16 checks passed** |
+| Work tools | **12 checks passed** |
+| Manual update UI | **11 scenarios passed** |
+| Resource lifecycle | **7 checks passed**; these are lifecycle regressions, not a CPU/RAM comparison |
+| Native updater | **10 Windows fixture cases passed** using disposable executables and the production supervisor |
+| Packaged profile compatibility | **44 checks passed**, actual **1.5.2 → 1.6.0** executables sharing one disposable profile |
+| Final package contents and artwork | **106 source files, including the bundled speech library**, native helpers, offline model and version matched; transparent application, tray and installer orbs verified at all nine icon sizes; unsigned signing policy verified |
+| Final packaged startup | **22 checks passed in each of hidden, updated and recovery launch modes** |
+| Full fixture NSIS update journey | **10 checks passed** through the real NSIS installer and production updater/renderer; installed archives matched the verified fixture builds |
+| Paired resource comparison | **Not a passing performance gate:** the first pair exceeded 8 of 23 limits; the diagnostic repeat exceeded 3. Functional readiness passed in both. Further optimization is deferred; no new resource-reduction claim is made. |
+
+The isolated NSIS journey used a separate Windows application identity, install directory and disposable profile. Both the baseline and target fixture archives matched 89 production source files plus the test host, and the archives actually installed on disk matched those verified builds. The production updater checked and installed a locally supplied release, then recorded schema-2 readiness for version 1.6.0 only after a usable renderer and visible window were available. All ten journey checks passed in the final frozen-source run; the fixture registry entry and private installation directory were removed afterward. The fixture baseline reports version 1.5.2 but packages the current updater code. This validates the updater shipped in 1.6.0; it does not prove the behavior of an older published helper during an incoming upgrade, live GitHub transport, UAC, signing or rollback.
+## Resource observations and remaining work
+
+Measurements compared the settings checkpoint (e51f6ac, Electron 36.9.5) with the 1.6.0 candidate (Electron 44.7.0) on the same eight-logical-processor Windows machine. Each full pair used separate disposable profiles, synthetic silence, no provider calls and seven visible/tray/voice/muted states. Twenty counter snapshots produce 19 CPU intervals per state; at this small sample count the reported p95 is the largest interval. Private resident memory is a separate end-of-state snapshot, not committed memory or a peak.
+
+The first comparison exceeded eight of the 23 predefined CPU, memory and latency limits. A repeat added screen/animation assertions and renderer performance counters without changing the limits. The earlier Settings spike did not recur: the repeat measured 0.00% mean CPU and 238.06 MiB private resident memory for 1.6.0, compared with 0.30% and 241.20 MiB for the checkpoint. Both had the main screen hidden, no rendered animations, and essentially no renderer work while Settings was open. No persistent Settings drawing loop was identified.
+
+The repeat still exceeded three limits: voice-ready CPU p95 while visible (77.39 versus 55.30 percent of one logical core), voice-ready CPU p95 in the tray (51.84 versus 36.64), and cold-resume p95 (3,693 versus 922 ms). Candidate private resident memory was lower in all seven repeated states, but this does not cancel the CPU or latency exceptions. The first pair had cold-resume p95 of 1,870 versus 1,577 ms, illustrating the variation. Both runtime probes used hardware-accelerated Intel Iris Xe/ANGLE D3D11; no software-rendering fallback explained the difference.
+
+A longer follow-up was started with 60 voice snapshots and additional cold-resume diagnostics. It stopped when the selected screen/viewport changed during the baseline run, correctly failing the screen assertion. No candidate comparison is claimed from that incomplete experiment. Further performance tuning was explicitly deferred in favor of finishing the core features and responsive layouts. These observations precede the final Settings layout adjustment and are not a universal speed or resource guarantee.
+
+The retained reports are build/qa/resources/settings-baseline.json, release-160.json, comparison-160.json, their -confirm counterparts, the incomplete settings-baseline-voice60.json and build/qa/gpu-runtime-comparison.json. Reproduction and optional longer voice sampling are described in [Releasing](RELEASING.md).
+
+The final local installer has SHA-256 **a8a468aa9c752d799cec8f3624c594a8ff953e8ccce05b35898533a3bf761d11**. Package verification, startup checks and the isolated real-installer update journey passed.
+
+## What the new checks establish
+
+**Responsive layouts.** Settings uses the available window with responsive card columns and a fixed header above its scroller; all three tabs were inspected at 400, 768, 1280, 1536 and 2048 pixels and a short-height window. Home command and voice controls remain reachable, Notes toolbars wrap and its AI panel stacks at narrow widths, and task/timer fields can shrink with enlarged text. The separate layout suite captured 76 views at 400×550, 1100×800, 1600×950 and 400×650 with 125% zoom. Notes assistant activation reveals and focuses the input; closing returns focus while preserving unchanged note content/selection and rejecting a stale range after edits or tab changes. It exercises Electron-generated input, not a physical keyboard or a screen-reader conformance audit.
+
+**Workspace storage and recovery.** Unit and renderer fixtures preserve malformed, unsupported-version and unreadable storage instead of allowing ordinary activity to overwrite it. Persistent edits report that recovery is required while session-only activity remains available. Reset requires a verified retained copy and explicit confirmation. Backup tests cover personal-content-only export, invalid inputs, cancelled restoration, changed data invalidating a preview, and a newer file selection winning over a delayed older read. Restoring routine definitions never executes them. Recovery copies survive restart and have separate download/delete controls. The renderer fixture downloaded exact source bytes only to its disposable output, reviewed and cancelled restoration, restored a selected copy, refused damaged data, cancelled deletion and verified that confirmed deletion removed only the selected copy across restart; they can retain older memories and metadata. The personal backup excludes keys, settings, timers, notes, checklist entries, schedules, activity and run receipts.
+
+**Conversation and results.** The assistant keeps bounded recent context and expires inactive context automatically; no **New conversation** button was added. Memory deletion, disabling and replacement invalidate dependent context and pending replies, while a deliberate forget operation can finish. Coverage includes references to a saved fact while memories are disabled, local memory replies and later model replies. A regression also saves a fact after a pending reply has consumed its original conversation message, then deletes or disables it; the request is cancelled and a late paraphrase cannot re-enter context. Unrelated local requests remain active. A stalled acknowledgment cannot delay displaying completed action results; cancellation still prevents stale replies. Audio start and action timing use application events, not an acoustic microphone measurement. Response style and preferred address do not grant action permission.
+
+**Core connection testing and navigation.** Opening Core settings reads configured status without a provider test. Its explicit test is deduplicated, rejects a late result after the key changes, and displays the key that actually succeeded when rotation is used. Tests use fixture keys and responses, not personal credentials or a live provider. Direct Projects, Schedules and Updates destinations dispatch no commands. Example chips only fill the editable input and do not start an action or a connection warmup.
+
+**News.** The reader displays RSS headline information directly rather than waiting for an automatically generated summary. The eight renderer cases cover duplicate filtering, source/date labels, safe external links, read/unread state, atomic storage failures, retained headlines after a failed refresh, preference failure recovery and narrow layout. They also verify the exact headlines, publishers, dates, excerpts and URLs supplied to an explicit AI question, a successful text-only answer, provider failure and explicit retry. Unrelated Home conversation and saved memories are excluded from that News payload. Gemini is used only after an explicit News AI question. Saved topics and bounded read markers remain local; the exact retention and feed reuse behavior are described in [Privacy](../PRIVACY.md). Tests use controlled feeds and provider responses, not live-news accuracy or model-answer evaluations.
+
+**Update readiness and data compatibility.** The supervisor requires an acknowledgment bound to the update attempt and expected installed version after the renderer initializes with visible usable controls. A surviving process alone cannot establish success. Native fixtures exercise the supervisor, while the separate NSIS row above tracks real installation. The packaged profile test preserved a timer deadline, two tasks, aliases, a playlist name, one explicit memory, a routine and its interrupted-run state, activity/diagnostics, shortcuts and encrypted preferences. Only the new local defaults—natural response style and an empty preferred address—were added. Retired Terminal history stayed inert and was not read by the upgraded renderer during observed startup. Both fixture applications exited normally with zero renderer network requests. This is packaged data compatibility, not an installed-user-profile or NSIS upgrade test.
+
+The profile harness previously assumed that every old build still enabled Terminal, which was true of its original 1.4.1 baseline but not the 1.5.2 settings preview. It now checks the old binary's actual supported feature set, preserves the encrypted legacy preference exactly and permits only known new local defaults. No production behavior changed to make this compatibility test pass.
+
+## Dependency review
+
+`npm audit --omit=dev` reported no high or critical advisories and two moderate entries for one inherited UUID advisory: `vosk-browser` 0.0.8 pins `uuid` 9.0.0. The [upstream advisory](https://github.com/advisories/GHSA-w5hq-g745-h8pq) concerns v3/v5/v6 calls with caller-supplied output buffers. Inspection of the shipped Vosk bundle found its recognizer ID generated with `v4()` and no output buffer; Olanga does not import UUID directly. No affected call path was identified in this review, but the dependency audit is not clean and this is not a comprehensive security assessment. Updating a transitive package alone would not replace UUID code already embedded in the Vosk browser bundle.
+
+## Boundaries and retained evidence
+
+The synthetic offline corpus previously matched the expected command action lists for **7/7 recordings** with the command vocabulary, versus **3/7** with general recognition. The out-of-scope question produced no action list. This retained comparison is not a physical-microphone accuracy result or proof of new runtime performance.
+
+The new validation uses disposable profiles, fixture provider responses and fake media where input is needed. It does not use personal API keys, the normal installed profile, a real microphone or live Spotify controls. **Live playback of “Play Spotify and raise the volume to 75%” remains unverified.** Earlier Open Spotify observations below are historical evidence, not acceptance of the Play Spotify path. Hardware, accents, app versions, language, display scaling and account state still affect real use.
+
+Updates remain manual. A checksum confirms bytes, not publisher identity; no signing certificate has been supplied. No automatic rollback, remote CI success, published installer or universal resource reduction is implied by these local checks. Generated profiles, reports, logs, screenshots and packages remain in ignored build directories. Key reports include build/qa/workspace-recovery-smoke.json, build/qa/news-reader-smoke.json and build/qa/profile-upgrade-smoke.json.
+
+---
+
+# Settings and privacy — historical checkpoint e51f6ac, October 12, 2026
+
+This section records the earlier settings checkpoint. Its counts, runtime and unpublished-build statements describe that checkpoint; the 1.6.0 section above records the later work.
 
 The current source adds User preferences, Core settings and Privacy sections, five accent choices, stronger window contrast, adjustable orb glow, a static appearance preview, an appearance-only reset, reduced motion for the main window and corner light, bundled Outfit fonts and an offline privacy notice. The published 1.5.2 installer does not contain these changes yet.
 

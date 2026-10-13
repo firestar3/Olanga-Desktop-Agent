@@ -117,6 +117,7 @@ async function stop() {
       await send('Network.enable'); await send('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
       await waitForRenderer();
       check('Packaged renderer finishes loading settings, workbench and schedules', true);
+      check('Packaged app exposes initialized readiness, organized memory and direct News controls', await evaluate("window.OlangaAppInitialized === true && typeof OlangaWorkspace.subscribeMemory === 'function' && !!document.getElementById('newsUnreadOnlyToggle') && !!document.getElementById('coreConnectionTestBtn') && ![...document.querySelectorAll('button')].some(node => /new conversation/i.test(node.textContent))"));
       const font = await evaluate("(async () => { await document.fonts.ready; return [...document.fonts].some(face => face.family === 'Outfit' && face.status === 'loaded'); })()");
       check('Packaged Outfit font loads offline from the app bundle', font);
       await evaluate("document.getElementById('setupPrivacyBtn').click(); document.getElementById('privacyFullNotice').open = true; void 0");
@@ -153,7 +154,7 @@ async function stop() {
       check('Keyless startup works without opening a microphone', local.visible && !local.key && !local.mic && local.input === 'cloud');
       const update = await evaluate('window.electronAPI.getUpdateState()');
       check('Packaged updater starts idle with no automatic download or install', update.phase === 'idle' && update.status === 'not-checked' && update.installedVersion === report.version && !update.canDownload && !update.canInstall && update.bytesReceived === 0 && update.automaticUpdatesEnabled === false);
-      await evaluate("(() => { OlangaSettingsNavigation.open('user'); for (const [id, value] of Object.entries({ appearanceAccentSelect: 'rose', appearanceContrastSelect: 'strong', appearanceGlowSelect: 'subtle', appearanceMotionSelect: 'reduced' })) { const control = document.getElementById(id); control.value = value; control.dispatchEvent(new Event('change', { bubbles: true })); } })()");
+      await evaluate("(() => { OlangaSettingsNavigation.open('user'); for (const [id, value] of Object.entries({ appearanceAccentSelect: 'rose', appearanceContrastSelect: 'strong', appearanceGlowSelect: 'subtle', appearanceMotionSelect: 'reduced', responseStyleSelect: 'concise', preferredAddressInput: 'Fixture' })) { const control = document.getElementById(id); control.value = value; control.dispatchEvent(new Event('change', { bubbles: true })); } })()");
       for (let attempt = 0; attempt < 80; attempt++) {
         if (await evaluate("document.getElementById('preferencesSaveStatus').dataset.state === 'saved'")) break;
         await pause(50);
@@ -171,6 +172,7 @@ async function stop() {
       }
       check('Packaged reload restores local setup, timers and tasks', restored?.timer && restored?.task && restored?.visible && !restored?.mic);
       check('All four packaged appearance preferences survive a complete renderer reload', await evaluate("document.documentElement.dataset.accent === 'rose' && document.documentElement.dataset.contrast === 'strong' && document.documentElement.dataset.glow === 'subtle' && document.documentElement.dataset.motion === 'reduced' && Object.entries({ appearanceAccentSelect: 'rose', appearanceContrastSelect: 'strong', appearanceGlowSelect: 'subtle', appearanceMotionSelect: 'reduced' }).every(([id, value]) => document.getElementById(id).value === value)"));
+      check('Packaged response preferences survive reload', await evaluate("OlangaResponsePreferences.snapshot().responseStyle === 'concise' && OlangaResponsePreferences.snapshot().preferredAddress === 'Fixture'"));
       const provider = await evaluate('window.electronAPI.providerStatus()');
       check('No saved credential or provider request in test profile', !provider.configured && provider.totals.requests === 0);
       const optional = await evaluate(`(async () => ({ phone: await electronAPI.phoneStatus(), companions: await electronAPI.companionList(), phoneGuide: await electronAPI.workbenchGuide('phone'), companionGuide: await electronAPI.workbenchGuide('companions') }))()`);

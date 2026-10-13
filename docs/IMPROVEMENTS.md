@@ -1,117 +1,65 @@
 # Improving Olanga
 
-Reviewed against the current source on October 12, 2026. The appearance controls below are implemented; the numbered priorities are proposed work, not completed fixes. [Validation](VALIDATION.md) records what has actually been tested, and [Next-level features](NEXT-LEVEL.md) describes capabilities already present.
+Reviewed against the 1.6.0 source on October 12, 2026. This document separates implemented changes from further work. [Validation](VALIDATION.md) records the evidence and remaining limits; [release notes](releases/1.6.0.md) describe this version.
 
-## Appearance added in this source
+## Implemented in 1.6.0
 
-- Five accents: the original violet, blue, mint, rose and amber.
-- Optional stronger text and borders for the main window and Workspace.
-- Standard, subtle or disabled glow around the main orb, preserving its status colors.
-- Reduced motion that respects Windows, plus an explicit reduced-motion option.
-- A static preview and an appearance-only reset. Location, voice, keys and enabled features retain their settings.
+- **Protected Workspace storage.** Malformed records, unsupported versions and failed reads preserve the original data and block persistent edits to the affected record. Session-only work remains available. Recovery requires a verified copy before reset or replacement; copies remain available for download or deletion.
+- **Personal backups.** Versioned exports include explicit memories, saved app and playlist names, and routine definitions. Imports are bounded, validated and previewed before the user confirms replacement. They never execute routines. This is not a full-profile backup: keys, settings, timers, notes, checklist entries, schedules, activity and run receipts are excluded.
+- **Results before speech finishes.** Completed action results appear immediately without waiting for an acknowledgment to finish speaking. Speech remains ordered. Diagnostics distinguish acknowledgment dispatch, playback start, action completion and final-reply playback start.
+- **Verified update readiness.** The updater requires the expected installed version to acknowledge initialized rendering and a visible window with usable controls. Readiness is bound to the particular update attempt; starting a process alone is insufficient. Updates remain manual, and rollback is not automatic.
+- **Clearer memory and conversation controls.** Explicit memories have search and sorting. Deleting, disabling or replacing them prunes dependent local context and cancels a pending reply using them. Recent conversation is bounded and expires automatically; there is no new-conversation step to manage. Natural or concise response style and an optional preferred form of address are separate preferences. These controls do not erase provider copies or retained backups.
+- **Shorter routes through Workspace.** Projects, Schedules and Updates have direct destinations. Examples prefill an editable command without running it. Core settings has an explicit Gemini connection test beside the key; reading connection status does not make a model request.
+- **Direct News reading.** Saved topics, story count, source labels, dates, feed excerpts, duplicate filtering and read/unread controls make headlines useful without an automatic Gemini summary. The user can explicitly ask AI about the loaded headline information. Read markers and feed reuse are bounded as described in [Privacy](../PRIVACY.md).
+- **Consistent visual preferences.** Five accents, stronger window contrast, three orb-glow levels, Windows-aware reduced motion, a preview and an appearance-only reset reuse the existing theme. The Outfit font is bundled locally. Status colors retain their meaning.
 
-The original appearance remains the default. These controls reuse CSS and the existing preference save path; they add no polling or animation loop. This source has not been published in a new installer.
+## Evidence and deployment work still to extend
 
-## What to improve next
+### 1. Exercise Spotify and voice on real devices
 
-### 1. Protect saved data before adding more storage features
+**Why:** command and renderer fixtures can prove parsing, sequencing, cancellation and truthful receipts. They cannot establish Spotify playback, physical microphone accuracy or perceived response time on every computer. The corrected “Play Spotify and raise the volume to 75%” flow still needs authorized live playback acceptance.
 
-**Finding — reproduced bug.** In [the productivity store](../shared/productivity.js), malformed JSON or an unsupported version falls back to defaults in memory. The next ordinary command calls `begin()`, which saves those defaults over the original stored record. An in-memory fixture reproduced the overwrite for malformed JSON and a future-version record. This review did not access a personal profile.
+**Next:** cover cold and warm Spotify startup, signed-out or missing Spotify, no active media session, competing players, English accessibility labels, playback failure and cancellation. Verify actual playback and Windows volume independently. Preserve the explicit volume adjustment when Spotify fails. Then test physical microphones, varied accents, noise, interrupted speech and repeated mute/unmute.
 
-**Change:** preserve the original bytes, distinguish an empty store from an unreadable one, and suspend writes to the affected record until recovery is resolved. Show a clear recovery notice. An isolated recovery copy must succeed before anything replaces the original.
+**Acceptance:** publish failures as well as successes, retain the complete command corpus, and measure first acknowledgment, verified action completion and final speech separately. Keep synthetic audio, native controls and physical voice results distinguishable. No spoken confirmation counts as proof of playback.
 
-**Acceptance:**
-- Invalid JSON, future versions, failed reads and failed recovery writes leave the original record intact after commands and restart.
-- Other working features remain available; a storage problem does not silently pretend a change was saved.
-- Restoring a validated backup is transactional and never runs a restored routine.
-- Expired timers and reminders have explicit restoration behavior.
+### 2. Broaden installer and restart coverage
 
-Once this guard is proven, add versioned export/import for personal content. Exclude credentials by default, explain what a backup contains, and preview conflicts before restoration. This needs migration and privacy tests, not just an export button.
+**Why:** readiness checking closes the process-start gap, but Windows installation still depends on permissions, locks, startup behavior and the previously installed updater. An update into 1.6.0 uses the updater shipped in that earlier version.
 
-### 2. Show verified results as soon as actions finish
+**Next:** extend the isolated Windows matrix for Check → Download → Verify → Install → Shutdown → Reopen using real NSIS packages and fixture profiles. Include interrupted downloads, cancellation, locked files, failed installation, slow or unusable rendering and a previous instance that does not quit. Use [validation](VALIDATION.md) for the exact paths already exercised.
 
-**Finding — concrete delay path.** [`finishAssistantTurn`](../js/assistant.js) waits for the acknowledgment promise before displaying the final answer or marking actions finished. [Windows acknowledgment speech](../js/tts.js) can wait for its 5–12-second watchdog if its completion event is lost. An action can already be finished while Home still shows its working message.
+**Acceptance:** the expected version is usable, profile content survives, and failure leaves a clear recovery result. A release checksum verifies bytes, not publisher identity. Signing support is prepared, but a publisher certificate is still needed. Evaluate rollback separately before promising it.
 
-**Change:** publish result text and verified step outcomes immediately. Keep acknowledgment and final speech in the correct order, but separate visual completion from audio completion. Use the existing turn lifecycle and receipts rather than introducing another state machine. Show useful phases such as opening Spotify, waiting for its player and setting volume.
+### 3. Keep performance gains measurable
 
-**Acceptance:**
-- A deliberately stalled acknowledgment cannot hold back a completed result.
-- Every turn visibly finishes, fails, cancels or asks for input; no silent return to idle.
-- Cancellation cannot reveal a stale result or replay completed actions.
-- Measure acknowledgment dispatch, audible start, action completion and final speech separately. The current acknowledgment timing measures completion.
-- Preserve the existing rule that an explicitly requested volume change can complete even if Spotify playback fails.
+**Why:** large savings in a particular idle or tray state do not establish a 50% reduction in every mode. Voice readiness, unmute and active recognition have different costs.
 
-The corrected “Play Spotify and raise the volume to 75%” path still needs real playback acceptance. Continue fixtures until live testing is authorized, then cover cold/warm launch, missing or signed-out Spotify, no media session, competing players, cancellation and playback failure. Check actual playback and Windows volume; spoken confirmation alone is insufficient.
+**Next:** maintain paired measurements for startup, idle Home, Settings, hidden tray, voice-ready idle, active recognition, unmute, local commands and cloud requests. Hold machine, profile, power conditions and fixtures constant. Check that panels release background work after closing.
 
-### 3. Prove the complete manual update and usable restart
+**Acceptance:** record CPU, memory, wake latency and request latency distributions, including p50 and p95. Keep accuracy and cancellation behavior at least as strong as the baseline. Isolate runtime or speech-engine changes and compare them against the same corpus before including them. Runtime maintenance remains a compatibility decision, not an assumed speed improvement. [Electron performance guidance](https://www.electronjs.org/docs/latest/tutorial/performance).
 
-**Finding — deployment gap.** Installer checks and updater fixtures exist, but [validation](VALIDATION.md) distinguishes those from the complete in-app journey. The [update supervisor](../desktop/update-supervisor.ps1) checks for an existing window when its launched process exits quickly; a surviving but unusable process can still be treated as a completed restart.
+### 4. Extend backup scope only with safe restoration rules
 
-**Change:** require a readiness acknowledgment from the expected installed version after its renderer initializes. Bind it to the update attempt. Keep updates explicitly user initiated.
+**Why:** the new personal backup has a deliberately narrow, visible scope. A complete profile restore would also need to reconcile settings, schedules, timer deadlines, notes, checklist entries and device-specific credentials.
 
-**Acceptance:**
-- In an isolated Windows installation, exercise Check → Download → Verify → Install → Shutdown → Reopen using the real NSIS package.
-- Confirm the expected version is interactive and the fixture profile survives.
-- Cover interrupted downloads, cancellation, locked files, installer failure, slow startup and a process that starts without becoming usable.
-- Provide a clear recovery result when reopening fails; investigate rollback separately before promising it.
-- Keep publisher status accurate. Signing support is prepared, but a signing certificate has not been supplied.
+**Next:** design separate opt-in exports for those collections, with schema migrations, scope previews and conflict handling. Define overdue timer and schedule behavior before importing them. Keep credentials excluded unless a separately designed, protected transfer is explicitly requested.
 
-This is a release gate, not a reason to add automatic background installation.
+**Acceptance:** damaged or newer formats preserve source bytes, failed writes cannot claim success, stale previews are rejected, and importing never runs an action or routine. Test recovery from interrupted writes and repeated restores. Make the retention and deletion of every recovery copy visible.
 
-### 4. Make conversation memory understandable and controllable
+## Larger improvements after those checks
 
-**Opportunity.** Recent conversation expires after inactivity, while enabled saved memories and checklist information can accompany requests. Deleting a saved memory does not remove its earlier appearance from current conversation context.
-
-**Change:** add a visible **New conversation** action and a compact context view explaining which categories can accompany an online request. When deleting a memory, offer to clear the current conversation that may still contain it. Add a preferred form of address and concise/natural response choices; the assistant currently hardcodes “Boss” in its prompts.
-
-**Acceptance:**
-- After clearing context, the next fixture request excludes old sentinel content.
-- Define how clearing affects an in-flight request and pending clarifications.
-- Saved memories remain separate from transient conversation.
-- Wording never implies deletion from a provider's systems.
-- Tone settings cannot change action permissions or the standard for claiming success.
-
-### 5. Bring existing capabilities closer to the user
-
-**Opportunity.** Projects, sessions, schedules and other work tools are nested behind Workspace → Apps & updates → Work tools. Health testing also lives away from the API-key field where connection problems first matter.
-
-**Change:** keep Workspace as the main button, add direct destinations for common tools and offer useful command examples. Place connection status and an explicit test beside Core settings. Examples should fill the command box and remain editable before submission.
-
-**Acceptance:**
-- Projects, Schedules and Updates are reachable within two actions from Workspace.
-- Preserve existing routes while introducing clearer entry points.
-- Keyboard navigation, narrow windows and enlarged text remain usable.
-- Opening navigation starts no microphone capture, provider request or external connection.
-- Clearly distinguish available locally, needs setup, connected and failed. A connection test states that it sends a short request.
-
-This exposes capabilities already implemented; it does not require another tool system.
-
-### 6. Set performance budgets for real use
-
-**Opportunity.** Previous optimization evidence shows large savings in specific idle/tray states; it does not establish a 50% reduction in every mode. Active recognition and microphone reactivation deserve separate measurements.
-
-**Change:** benchmark startup, idle Home, Settings, hidden tray, voice-ready idle, active recognition, unmute, local commands and cloud requests independently. Use the same machine, profile, power conditions and command fixtures for comparisons. Record working set, CPU, wake latency and request latency distributions.
-
-**Acceptance:**
-- Establish reproducible baselines before setting regression thresholds.
-- Keep the original command corpus at least as accurate while improving latency.
-- Check background work after closing each surface and repeated mute/unmute.
-- Measure p50 and p95; a single fast run does not establish a speed improvement.
-- Isolate any speech-engine or Electron migration in a separate change with the full acceptance matrix.
-
-[Electron's performance guidance](https://www.electronjs.org/docs/latest/tutorial/performance) supports profiling actual bottlenecks and avoiding unnecessary work. Also evaluate a move from the current Electron 36.9.5 runtime to a supported release line; [Electron's support policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines) covers the latest three stable major versions. Select the actual target and check native integration compatibility at implementation time.
-
-## Larger improvements after these gates
+These are proposals, not features included in 1.6.0:
 
 - **Document-specific editing with dependable undo.** Track the exact document and changed range, preview a diff, and verify that undo still targets the same content. Existing full-field checkpoints are useful but are not universal document history.
-- **Reviewed shortcuts from successful commands.** Offer to save a proven phrase as a local shortcut, with an editable plan and validation. Suggestions must not silently learn permissions or run themselves.
-- **Better natural speech as an optional package.** Compare candidate offline voices and turn detection on physical microphones, varied accents and noisy rooms. Keep the current engine and timing available; budget download size, memory and wake latency before selecting a replacement.
-- **More verified app adapters.** Add integrations only where app identity and the resulting state can be checked. Document version, language, display-scaling and session assumptions.
+- **Reviewed shortcuts from successful commands.** Offer to save a proven phrase as a local shortcut, with an editable plan and validation. Build on existing routines; never silently learn permissions or run a suggestion.
+- **Optional natural offline speech.** Compare candidate voices and turn detection on physical microphones before selecting a package. Budget download size, memory and wake latency, and retain the current engine and timing options.
+- **More verified app adapters.** Add integrations where app identity and the resulting state can be checked. Document version, language, display-scaling and session assumptions.
 
-Local conversation, streaming replies, document questions, schedules, MCP tools, routines and diagnostics already exist in source. They need clearer access and broader evidence before more overlapping systems are added.
+Local conversation, streaming replies, project questions, schedules, MCP tools, routines and diagnostics already exist. Prefer improving their reliability and discoverability over adding overlapping systems.
 
 ## Rules for each increment
 
-Keep local commands usable during provider failure. Preserve complete compound parsing, independent explicitly requested effects, cancellation and receipt accuracy. No unknown wording may partially execute through the local route. Reviewed routines and desktop changes retain their approval boundaries; context is data, never authorization.
+Keep local commands usable during provider failure. Preserve complete compound parsing, independent explicitly requested effects, cancellation and accurate action receipts. Unknown wording must not partially execute through the local route. Reviewed routines and desktop changes retain their approval boundaries; context is data, never authorization.
 
-Make one behavioral change at a time, compare its acceptance cases with the existing behavior, and record the remaining limits. The reference cases are Spotify plus volume, a cancelled compound, an ambiguous checklist edit, a timer across restart, a provider outage, a stalled speech acknowledgment, damaged storage, an interrupted routine, a conflicted undo and a failed update restart. Fixtures and live tests answer different questions; neither should be presented as proof of universal compatibility.
+Compare each change with the existing acceptance cases and record remaining limits. The reference cases are Spotify plus volume, a cancelled compound, an ambiguous checklist edit, a timer across restart, a provider outage, a stalled acknowledgment, damaged storage, a deleted memory during a reply, an interrupted routine, a conflicted undo and a failed update restart. Fixtures and live tests answer different questions; neither proves universal compatibility.

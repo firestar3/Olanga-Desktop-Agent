@@ -10,6 +10,8 @@ Checking does not download an installer. If a completed installer is cached from
 
 Only **Install & restart** launches an installer, after rehashing the saved file. The renderer cannot supply a download URL, file path or executable arguments. The NSIS update path retains the existing installation directory, installation mode and app data. Starting in 1.5.2, a copied native supervisor must report readiness before Olanga closes. It waits for the app to exit, keeps a progress window visible, checks the installer exit code and installed version, then launches the exact installed executable with --updated. A failed install attempts to reopen the app with --update-recovery and records its result in the private update cache. This is recovery reporting, not automatic rollback. An ordinary app quit never installs anything. The button is available in packaged Windows builds; source checkouts can check and download but cannot install. Complete downloads have bounded local cache metadata and can be recovered by a later explicit Check; startup does not scan files or contact GitHub. Partial downloads restart from the beginning, and abandoned partial files are removed by an explicit Download. Tampered, linked, stale-version or mismatched cache entries cannot become installable. Versions through 1.4.0 need one manual installer update to gain this flow.
 
+From 1.6.0, the restarted application must answer an attempt-specific nonce after initialization. The supervisor checks the expected version, owned executable, visible window and usable renderer controls before writing a verified completion receipt. A stale installing or installed receipt becomes recovery information instead of remaining indefinitely pending. The incoming update still uses the helper shipped in the previously installed version.
+
 Checksum verification does not verify publisher identity. The checked-in publisher policy is disabled, so the current unsigned build does not claim a verified signature. A future build with an explicit publisher pin also requires a valid Authenticode signature with that exact certificate on download, cache recovery and immediately before installation. Native supervisor fixtures cover completed installation, installer failure, unchanged-version rejection, and tampered-file refusal using disposable executables. They do not establish real NSIS upgrade or rollback behavior. See the [GitHub Releases API documentation](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
 
 ## Verify locally
@@ -57,7 +59,7 @@ Before releasing, install the built version and check All Lights mode over anoth
 
 ## Compare packaged resource use
 
-`npm run bench:resources` compares resource use through six states: visible and tray idle without a microphone, visible and tray voice readiness, then tray and visible sustained microphone mute. It uses disposable profiles and Chromium's synthetic silent capture device, blocks provider network requests, and makes no physical microphone recordings, Spotify requests or system-volume changes. GPU acceleration stays enabled. Run each package sequentially on the same Windows desktop, with similar background activity and power settings; avoid simultaneous builds or tests. The final voice-resume check waits for the capture graph and recognition model to be ready.
+`npm run bench:resources` compares resource use through seven states: visible Home and Settings, tray idle without a microphone, visible and tray voice readiness, then tray and visible sustained microphone mute. It uses disposable profiles and Chromium's synthetic silent capture device, blocks provider network requests, and makes no physical microphone recordings, Spotify requests or system-volume changes. GPU acceleration stays enabled. Run each package sequentially on the same Windows desktop, with similar background activity and power settings; avoid simultaneous builds or tests. The final voice-resume check waits for the capture graph and recognition model to be ready.
 
 Preserve the **whole old packaged directory**, including its resources, before building the candidate. The following example requires an existing 1.5.1 package at `dist/win-unpacked/` and the 1.5.2 source checkout. It refuses to replace a saved baseline and writes the new package to a separate directory:
 
@@ -171,3 +173,33 @@ The editable source is assets/icons/orb.svg, matching the idle orb palette in st
 npm run check validates transparent edges and every ICO size. npm run verify:package also compares the icon resources embedded in the built Windows app and installer with that ICO. Windows shortcuts continue to point at the same executable and AppUserModelID. The NSIS installer retains existing shortcut choices and notifies the Windows shell after updating.
 
 The Windows tray uses assets/icons/tray.ico, generated from the same orb palette with a tighter circle and no halo. It is unpacked into app.asar.unpacked for direct native loading. App, installer and shortcut artwork keep their existing icon.ico. Package verification checks the tray asset's source and unpacked bytes separately.
+
+## Verify a complete manual update in isolation
+
+Do not use only NSIS's installation-directory switch to isolate a test: it still shares the production product identity and registry. The fixtures use a separate app ID, executable, NSIS GUID and profile, without Olanga's shortcuts or startup entry.
+
+After freezing production source, build both fixture versions:
+
+```powershell
+$env:OLANGA_UPDATE_FIXTURE_VERSION = '1.5.2'
+node node_modules/electron-builder/cli.js --win nsis --x64 --config tests/fixtures/update-e2e-builder.cjs --publish never
+if ($LASTEXITCODE -ne 0) { throw 'Baseline fixture build failed' }
+$env:OLANGA_UPDATE_FIXTURE_VERSION = '1.6.0'
+node node_modules/electron-builder/cli.js --win nsis --x64 --config tests/fixtures/update-e2e-builder.cjs --publish never
+if ($LASTEXITCODE -ne 0) { throw 'Target fixture build failed' }
+npm run smoke:installer:e2e -- --baseline=build/qa/update-fixture-1.5.2/Olanga-Setup-1.5.2.exe --target=build/qa/update-fixture-1.6.0/Olanga-Setup-1.6.0.exe
+```
+
+The driver verifies fixture identities and packaged source before running. It clicks the production Check, Download and Install controls; the release response and installer transport use local fixture bytes. It verifies the installed version, a usable restart and preserved fixture data, then invokes the fixture-only uninstaller. It refuses an existing fixture registration; inspect any failed-run report before cleanup or a retry.
+
+The baseline fixture packages the **current updater source** with an older version number. This proves the current updater's full flow, not the behavior of every previously released helper. Production source must stay unchanged throughout packaging: editing while ASAR is being written can invalidate the resulting archive. Stop concurrent builds/tests before native timing or resource measurements.
+
+### Apply resource regression budgets
+
+The resource runner records seven phases, including visible Settings, startup readiness and at least three cold microphone-resume samples. It verifies the selected screen and records animation/renderer diagnostics at phase boundaries; cold resumes must start with the model unloaded. Optional OLANGA_BENCH_VOICE_SAMPLES=60 extends only the two voice-ready phases, and OLANGA_BENCH_RESUME_REPS=5 adds resume observations. Use the same settings for both packages and retain earlier failed reports. Reports include CPU p50/p95, total working-set p95 and a separate private resident-memory snapshot. Compare complete paired reports with:
+
+```powershell
+npm run check:performance -- build/qa/resources/baseline.json build/qa/resources/candidate.json build/qa/resources/comparison.json
+```
+
+The checked-in budgets are defined in `tests/helpers/performance-budget.js`. A pass is a regression check on one machine, not a claim of faster performance. Both runs must use the same machine, synthetic microphone and provider-free conditions. Cloud latency, physical voice quality and real Spotify playback require separate authorized tests.

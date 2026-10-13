@@ -11,9 +11,11 @@ app.setPath('userData', fs.mkdtempSync(path.join(output, 'settings-experience-pr
 if (!process.argv.includes('--hidden')) process.argv.push('--hidden');
 const report = { passed: false, checks: [], screenshots: [], externalLinks: [], forbiddenCalls: [], errors: [], preferenceWrites: [], coverage: { realRenderer: true, realPreload: true, isolatedProfile: true, liveProviders: false, microphone: false } };
 const forbidden = new Set(['provider-generate', 'provider-generate-stream', 'nvidia-tts-config', 'nvidia-tts-synthesize', 'open-app', 'arrange-app', 'close-app', 'play-spotify', 'reload-spotify', 'media-control', 'desktop-capture', 'desktop-run', 'desktop-undo', 'execute-command', 'terminal-session-create', 'terminal-session-execute', 'fetch-news-bundle', 'check-release', 'update-download', 'update-install', 'set-open-at-login']);
+let fixtureConnection = false, pendingConnection = null;
 let failNextPrefs = false, holdNextPrefs = false, pendingPrefs = null, main, finished = false;
 const handle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, callback) => handle(channel, async (event, ...args) => {
+  if (channel === 'provider-generate' && fixtureConnection) { report.fixtureConnectionRequests = (report.fixtureConnectionRequests || 0) + 1; return new Promise(resolve => { pendingConnection = resolve; }); }
   if (forbidden.has(channel)) { report.forbiddenCalls.push(channel); throw new Error('External action disabled in Settings smoke: ' + channel); }
   if (channel === 'open-external') { report.externalLinks.push(args[0]); return true; }
   if (channel === 'secure-store-set' && args[0]?.key === 'app_preferences') {
@@ -259,10 +261,9 @@ app.whenReady().then(async () => {
         await saveAppSettings();
         addNotepadAiMessage('Contrast fixture question', 'user');
         addNotepadAiMessage('Contrast fixture reply', 'ai');
-        const fixture = normalizeNewsArticleData({ title: 'Fixture briefing', kicker: 'Fixture update', dek: 'Local test content.', sections: [{ heading: 'Fixture section', paragraphs: ['This fixture never requests live news.'] }] }, 'Fixture area');
-        renderNewsBrief(fixture);
-        newsLastLocationKey = JSON.stringify([getSavedLocationKey(), getSelectedNewsTopics()]);
-        newsEmptyState.classList.remove('hidden');
+        newsBundleData = { generatedAt: new Date().toISOString(), articles: [{ title: 'Fixture headline', link: 'https://example.com/story', source: 'Fixture publisher', sourceUrl: 'https://example.com/', pubDate: new Date().toISOString(), topics: ['technology'], description: 'This fixture never requests live news.' }] };
+        renderNewsBrief(normalizeNewsArticleData(newsBundleData, 'Fixture area'));
+        newsLastLocationKey = JSON.stringify([getSavedLocationKey(), getSelectedNewsTopics(), newsPreferences.limit]);
       });
       await saved();
       report.smallTextContrast = [];
@@ -303,7 +304,7 @@ app.whenReady().then(async () => {
           if (await evaluate(() => document.getElementById('notepadAiSidebar').classList.contains('hidden'))) await click('#notepadAiToggleBtn');
           const noteRatios = await contrast(['#notepadAiChat .user-message .notepad-ai-label', '#notepadAiChat .ai-message .notepad-ai-label']);
           await click('[data-screen="newsScreen"]');
-          const newsRatios = await contrast(['.news-empty-kicker', '.news-kicker']);
+          const newsRatios = await contrast(['.news-publisher-link', '.news-story-meta', '.news-story-excerpt']);
           for (const sample of [...noteRatios, ...newsRatios]) assert.ok(sample.minimum >= 4.5, JSON.stringify({ accent, appearanceContrast, ...sample }));
           report.smallTextContrast.push({ accent, contrast: appearanceContrast, samples: [...noteRatios, ...newsRatios] });
           await click('[data-screen="settingsScreen"]');
@@ -334,7 +335,47 @@ app.whenReady().then(async () => {
       await select('#appearanceMotionSelect', 'reduced'); await saved();
       main.webContents.debugger.detach();
     });
+
+    await check('Response preferences persist and no manual conversation reset is exposed', async () => {
+      await click('#settingsTabUser');
+      await select('#responseStyleSelect', 'concise');
+      await evaluate(() => { const field = document.getElementById('preferredAddressInput'); field.value = 'Aarav'; field.dispatchEvent(new Event('input', { bubbles: true })); });
+      await saved();
+      assert.deepEqual(await evaluate(() => window.OlangaResponsePreferences.snapshot()), { responseStyle: 'concise', preferredAddress: 'Aarav' });
+      assert.equal(report.preferenceWrites.at(-1).preferredAddress, 'Aarav');
+      assert.equal(await evaluate(() => [...document.querySelectorAll('button')].some(node => /new conversation/i.test(node.textContent))), false);
+    });
+    await check('Core connection testing is explicit, deduplicated and ignores a result from an old key', async () => {
+      await click('#settingsTabCore');
+      assert.equal(await evaluate(() => document.getElementById('coreConnectionTestBtn').disabled), true);
+      assert.equal(report.fixtureConnectionRequests || 0, 0);
+      await evaluate(() => { apiKey = 'fixture-key-a'; apiKeys = [apiKey]; currentKeyIndex = 0; refreshCoreConnectionStatus(); });
+      assert.match(await evaluate(() => document.getElementById('coreConnectionStatus').textContent), /not been tested/i);
+      fixtureConnection = true;
+      await click('#coreConnectionTestBtn');
+      await waitFor(() => !!pendingConnection, 'Explicit test did not reach the mocked provider bridge');
+      assert.equal(await evaluate(() => document.getElementById('coreConnectionTestBtn').disabled), true);
+      await evaluate(() => { void testCoreConnection(); apiKey = 'fixture-key-b'; apiKeys = [apiKey]; refreshCoreConnectionStatus(); });
+      assert.equal(report.fixtureConnectionRequests, 1);
+      pendingConnection({ ok: true, text: 'OK', keyIndex: 0 }); pendingConnection = null;
+      await waitFor(() => evaluate(() => !document.getElementById('coreConnectionTestBtn').disabled), 'Test did not finish');
+      assert.match(await evaluate(() => document.getElementById('coreConnectionStatus').textContent), /not been tested/i);
+      await click('#coreConnectionTestBtn');
+      await waitFor(() => !!pendingConnection, 'Second explicit test did not reach the mock');
+      pendingConnection({ ok: true, text: 'OK', keyIndex: 0 }); pendingConnection = null;
+      await waitFor(() => evaluate(() => document.getElementById('coreConnectionStatus').dataset.state === 'success'), 'Successful connection was not displayed');
+      await evaluate(() => { apiKeys = ['fixture-key-a', 'fixture-key-b']; apiKey = apiKeys[0]; currentKeyIndex = 0; renderKeyList(); });
+      await click('#coreConnectionTestBtn');
+      await waitFor(() => !!pendingConnection, 'Rotation test did not reach the mock');
+      pendingConnection({ ok: true, text: 'OK', keyIndex: 1 }); pendingConnection = null;
+      await waitFor(() => evaluate(() => document.getElementById('coreConnectionStatus').dataset.state === 'success'), 'Rotated key was not reported ready');
+      assert.equal(await evaluate(() => document.querySelector('.key-item.active .select')?.dataset.keyIndex), '1', 'The visible active key must match the key that passed the test');
+      fixtureConnection = false;
+      await evaluate(() => { apiKey = ''; apiKeys = []; currentKeyIndex = 0; renderKeyList(); });
+    });
+
     await check('Failed saves stay visible and an explicit retry stores the current preference', async () => {
+      await click('#settingsTabUser');
       failNextPrefs = true;
       await select('#appearanceAccentSelect', 'mint');
       await waitFor(() => evaluate(() => document.getElementById('preferencesSaveStatus').dataset.state === 'error'), 'Save failure was not displayed');
@@ -378,28 +419,78 @@ app.whenReady().then(async () => {
       await evaluate(async original => { statusLightMode = original.mode; quickActions = original.actions; await saveAppSettings(); }, original);
       await saved();
     });
-    await check('Each section fits a narrow window and the Privacy notice remains scrollable', async () => {
+    await check('Settings fills the window and every tab stays readable across narrow, wide and short layouts', async () => {
       await waitFor(() => evaluate(() => !document.querySelector('.error-toast')), 'Dismissed fixture error toast still visible');
-      main.setContentSize(400, 700);
-      for (const tab of ['User', 'Core', 'Privacy']) {
-        await click('#settingsTab' + tab); await pause(80);
-        const fit = await evaluate(tab => {
-          const panel = document.getElementById('settingsPanel' + tab), scroll = document.querySelector('.settings-scroll'), nav = document.querySelector('[role="tablist"]');
-          return { panelWidth: panel.scrollWidth, panelClient: panel.clientWidth, scrollWidth: scroll.scrollWidth, scrollClient: scroll.clientWidth, right: panel.getBoundingClientRect().right, viewport: innerWidth, tabRight: nav.getBoundingClientRect().right, scrollable: scroll.scrollHeight > scroll.clientHeight };
-        }, tab);
-        assert.ok(fit.panelWidth <= fit.panelClient + 1 && fit.scrollWidth <= fit.scrollClient + 1 && fit.right <= fit.viewport + 1 && fit.tabRight <= fit.viewport + 1, JSON.stringify({ tab, ...fit }));
-        if (tab === 'Privacy') assert.equal(fit.scrollable, true);
-        await screenshot('narrow-' + tab.toLowerCase());
+      const appearance = await evaluate(() => window.OlangaAppearance.snapshot());
+      for (const [id, value] of [['appearanceAccentSelect', 'violet'], ['appearanceContrastSelect', 'standard'], ['appearanceGlowSelect', 'standard'], ['appearanceMotionSelect', 'system']]) await select('#' + id, value);
+      await saved();
+      report.settingsLayouts = [];
+      for (const [width, height] of [[400, 700], [768, 800], [1280, 900], [1536, 960], [2048, 1100], [1280, 560]]) {
+        main.setContentSize(width, height);
+        await waitFor(() => evaluate((width, height) => innerWidth === width && innerHeight === height, width, height), 'Settings fixture did not reach requested viewport');
+        for (const tab of ['User', 'Core', 'Privacy']) {
+          await click('#settingsTab' + tab);
+          await evaluate(() => { document.querySelector('.settings-scroll').scrollTop = 0; });
+          const fit = await evaluate(tab => {
+            const panel = document.getElementById('settingsPanel' + tab), scroll = document.querySelector('.settings-scroll'), header = document.querySelector('.settings-screen-header'), container = document.querySelector('.settings-container');
+            const rect = node => { const box = node.getBoundingClientRect(); return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height }; };
+            const cards = [...panel.querySelectorAll(':scope > .settings-section')].map(rect);
+            const overflow = [...panel.querySelectorAll('button, input, select, textarea, summary')].filter(node => node.getClientRects().length && node.getBoundingClientRect().width > 1).filter(node => { const box = node.getBoundingClientRect(); return box.left < -1 || box.right > innerWidth + 1; }).map(node => node.id || node.tagName);
+            return { panelWidth: panel.scrollWidth, panelClient: panel.clientWidth, scrollWidth: scroll.scrollWidth, scrollClient: scroll.clientWidth, panel: rect(panel), header: rect(header), scroll: rect(scroll), container: rect(container), cards, columns: getComputedStyle(panel).gridTemplateColumns.split(' ').length, overflow, scrollable: scroll.scrollHeight > scroll.clientHeight };
+          }, tab);
+          assert.ok(fit.panelWidth <= fit.panelClient + 1 && fit.scrollWidth <= fit.scrollClient + 1 && fit.panel.right <= width + 1 && fit.header.right <= width + 1, JSON.stringify({ width, height, tab, ...fit }));
+          assert.deepEqual(fit.overflow, [], 'Every Settings field must fit at ' + width + 'px: ' + tab);
+          assert.ok(Math.abs(fit.container.width - width) <= 1 && Math.abs(fit.container.height - height) <= 1, 'Settings must fill its viewport');
+          assert.ok(fit.panel.width >= fit.scrollClient - 24, 'Settings must use available content width, without the old narrow cap');
+          assert.ok(fit.scroll.bottom >= height - 30 && fit.scroll.height >= 200 && fit.scroll.top >= fit.header.bottom - 1, 'Settings needs a usable full-height scroller below its fixed header');
+          const expectedColumns = tab === 'Privacy' || width < 1100 ? 1 : tab === 'User' && width >= 1800 ? 3 : 2;
+          assert.equal(fit.columns, expectedColumns, 'Unexpected card columns at ' + width + 'px: ' + tab);
+          if (expectedColumns > 1) assert.ok(Math.abs(fit.cards[0].top - fit.cards[1].top) <= 1 && fit.cards[1].left > fit.cards[0].right, 'Wide cards should share the first row');
+          if (tab === 'Privacy') assert.equal(fit.scrollable, true);
+          report.settingsLayouts.push({ width, height, tab, ...fit });
+          await screenshot('layout-' + width + 'x' + height + '-' + tab.toLowerCase());
+          const focus = await evaluate(tab => {
+            const panel = document.getElementById('settingsPanel' + tab), scroll = document.querySelector('.settings-scroll'), header = document.querySelector('.settings-screen-header');
+            const controls = [...panel.querySelectorAll('button, input, select, textarea, summary, a[href]')].filter(node => !node.disabled && node.getClientRects().length && node.getBoundingClientRect().width > 1);
+            const last = controls.at(-1); last.focus();
+            const target = last.getBoundingClientRect(), box = scroll.getBoundingClientRect();
+            return { focused: document.activeElement === last, visible: target.top >= box.top - 1 && target.bottom <= box.bottom + 1, headerTop: header.getBoundingClientRect().top };
+          }, tab);
+          assert.ok(focus.focused && focus.visible, 'Keyboard focus must reveal the final control in ' + tab + ' at ' + width + 'x' + height);
+          assert.equal(focus.headerTop, fit.header.top, 'Tab navigation must remain fixed while content scrolls');
+        }
       }
-      main.setContentSize(1100, 800);
+      main.setContentSize(1100, 800); await click('#settingsTabUser');
+      for (const [key, value] of Object.entries(appearance)) await select('#' + key + 'Select', value);
+      await saved();
     });
-    await check('Appearance persists after a renderer restart without changing existing voice defaults', async () => {
+    await check('Short Settings windows keep save errors, retry and focused controls reachable', async () => {
+      main.setContentSize(768, 560);
+      await waitFor(() => evaluate(() => innerWidth === 768 && innerHeight === 560), 'Short Settings viewport was not applied');
+      await click('#settingsTabUser');
+      const originalGlow = await evaluate(() => document.getElementById('appearanceGlowSelect').value);
+      failNextPrefs = true;
+      await select('#appearanceGlowSelect', originalGlow === 'subtle' ? 'off' : 'subtle');
+      await waitFor(() => evaluate(() => document.getElementById('preferencesSaveStatus').dataset.state === 'error'), 'Short-window save error did not appear');
+      const retry = await evaluate(() => {
+        const button = document.getElementById('preferencesRetryBtn'), scroll = document.querySelector('.settings-scroll');
+        button.focus();
+        const box = button.getBoundingClientRect(), content = scroll.getBoundingClientRect();
+        return { focused: document.activeElement === button, visible: box.top >= 0 && box.bottom <= content.top && box.right <= innerWidth, scrollHeight: content.height };
+      });
+      assert.ok(retry.focused && retry.visible && retry.scrollHeight >= 200, 'Save retry must stay reachable without consuming the content area');
+      await screenshot('layout-short-save-error');
+      await click('#preferencesRetryBtn'); await saved();
+      await select('#appearanceGlowSelect', originalGlow); await saved();
+      main.setContentSize(1100, 800);
+    });    await check('Appearance persists after a renderer restart without changing existing voice defaults', async () => {
       await click('#settingsTabUser'); await select('#appearanceAccentSelect', 'blue'); await saved();
       main.webContents.reload();
       await waitFor(() => !main.webContents.isLoading(), 'Renderer reload did not finish');
       await waitFor(() => evaluate(() => !!window.OlangaSettingsNavigation && typeof window.loadSettingsValues === 'function'), 'Settings did not reinitialize');
       await click('[data-screen="settingsScreen"]'); await click('#settingsTabUser');
       const prefs = await evaluate(() => ({ accent: document.documentElement.dataset.accent, selected: document.getElementById('appearanceAccentSelect').value, motion: document.getElementById('appearanceMotionSelect').value, contrast: document.getElementById('appearanceContrastSelect').value, glow: document.getElementById('appearanceGlowSelect').value, ttsEngine: document.getElementById('ttsEngineSelect').value, endOfSpeech: document.getElementById('endOfSpeechSelect').value, features: [...document.querySelectorAll('[data-feature]')].filter(node => node.checked).map(node => node.dataset.feature) }));
+      assert.deepEqual(await evaluate(() => window.OlangaResponsePreferences.snapshot()), { responseStyle: 'concise', preferredAddress: 'Aarav' });
       assert.deepEqual(prefs, { accent: 'blue', selected: 'blue', motion: 'reduced', contrast: 'strong', glow: 'off', ttsEngine: 'windows', endOfSpeech: 'standard', features: [] });
     });
     await check('Secure preferences restore appearance when only the local appearance mirror is missing', async () => {
@@ -448,6 +539,7 @@ app.whenReady().then(async () => {
         storedCity: localStorage.getItem('olanga_city'), storedRate: localStorage.getItem('olanga_tts_rate')
       }));
       assert.deepEqual(restored, { accent: 'violet', motion: 'system', contrast: 'standard', glow: 'standard', controls: ['violet', 'system', 'standard', 'standard'], city: 'Fixture city', rate: '0.9', notepad: true, storedCity: 'Fixture city', storedRate: '0.9' });
+      assert.deepEqual(await evaluate(() => window.OlangaResponsePreferences.snapshot()), { responseStyle: 'concise', preferredAddress: 'Aarav' });
       const durable = report.preferenceWrites.at(-1);
       assert.equal(durable.city, 'Fixture city'); assert.equal(durable.ttsRate, 0.9); assert.deepEqual(durable.features, ['notepadScreen']);
       await screenshot('appearance-reset');

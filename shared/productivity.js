@@ -8,7 +8,7 @@
   const STEP_STATES = new Set(['pending', 'working', 'completed', 'failed', 'cancelled', 'uncertain', 'skipped', 'unverified']);
   const MAX_HISTORY = 40;
   const MAX_FACTS = 50;
-  const TIMING_PHASES = ['acknowledgment', 'transcription', 'planning', 'execution', 'first-audio', 'speech', 'total'];
+  const TIMING_PHASES = ['acknowledgment', 'ack-dispatch', 'ack-audio-start', 'actions-finished', 'transcription', 'planning', 'execution', 'first-audio', 'speech', 'total'];
   const clone = value => JSON.parse(JSON.stringify(value));
   const name = value => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 100 && !/[\[\]\r\n\x00-\x1f]/.test(value) ? value.trim() : '';
   // Memories are statements the user explicitly asked Olanga to keep. They are
@@ -77,10 +77,104 @@
     return result;
   }
 
+  const PERSONAL_KEYS = ['facts', 'aliases', 'playlists', 'routines'];
+  const RECOVERY_MESSAGE = 'Workspace storage needs recovery. Your original data is preserved. Open Workspace → Backups to review it; saved changes are paused.';
+  const plain = value => !!value && typeof value === 'object' && !Array.isArray(value);
+  const exactKeys = (value, keys) => plain(value) && Object.keys(value).length === keys.length && Object.keys(value).every(key => keys.includes(key));
+  const personalContent = state => Object.fromEntries(PERSONAL_KEYS.map(key => [key, clone(state[key])]));
+  function validatePersonal(content, parse) {
+    if (!exactKeys(content, PERSONAL_KEYS)) throw new Error('This backup has unsupported personal content.');
+    for (const key of PERSONAL_KEYS) if (!Array.isArray(content[key]) || content[key].length > (key === 'routines' ? 30 : 50)) throw new Error('This backup exceeds the Workspace limits.');
+    const ids = new Set(), texts = new Set();
+    for (const item of content.facts) {
+      if (!exactKeys(item, ['id', 'text', 'at']) || !name(item.id) || name(item.id) !== item.id || !factText(item.text) || factText(item.text) !== item.text || !Number.isFinite(item.at) || item.at < 0 || ids.has(item.id) || texts.has(item.text.toLowerCase())) throw new Error('This backup contains an invalid or duplicate memory.');
+      ids.add(item.id); texts.add(item.text.toLowerCase());
+    }
+    for (const kind of ['aliases', 'playlists']) {
+      const aliases = new Set();
+      for (const item of content[kind]) {
+        if (!exactKeys(item, ['alias', 'target']) || !name(item.alias) || name(item.alias) !== item.alias || !name(item.target) || name(item.target) !== item.target || aliases.has(item.alias.toLowerCase())) throw new Error('This backup contains an invalid or duplicate saved name.');
+        aliases.add(item.alias.toLowerCase());
+        if (kind === 'aliases' && typeof parse === 'function') {
+          const actions = parse('open ' + item.target);
+          if (!Array.isArray(actions) || actions.length !== 1 || actions[0].command !== '[OPEN_APP: ' + item.target + ']') throw new Error('A saved app name in this backup is not supported.');
+        }
+      }
+    }
+    const routines = new Set();
+    for (const item of content.routines) {
+      if (!exactKeys(item, ['id', 'name', 'lines']) || !name(item.id) || name(item.id) !== item.id || routines.has(item.id) || !name(item.name) || name(item.name) !== item.name || !Array.isArray(item.lines) || !item.lines.length || item.lines.length > 12 || item.lines.some(line => typeof line !== 'string' || !line.trim() || line !== line.trim() || line.length > 500 || /[\r\n]/.test(line))) throw new Error('This backup contains an invalid routine.');
+      routines.add(item.id);
+      if (typeof parse !== 'function') throw new Error('Routine validation is unavailable. Reopen Workspace and try again.');
+      let count = 0;
+      for (const line of item.lines) {
+        const actions = parse(line, { aliases: content.aliases, playlists: content.playlists });
+        if (!Array.isArray(actions) || !actions.length) throw new Error('A routine in this backup contains an unsupported command.');
+        count += actions.length;
+      }
+      if (count > 12) throw new Error('A routine in this backup has too many actions.');
+    }
+    return clone(content);
+  }
+  function sameData(left, right) {
+    if (left === right) return true;
+    if (!left || !right || typeof left !== 'object' || typeof right !== 'object' || Array.isArray(left) !== Array.isArray(right)) return false;
+    const keys = Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && sameData(left[key], right[key]));
+  }
   function createStore(storage) {
-    let state;
-    try { state = sanitize(JSON.parse(storage.getItem(KEY) || 'null')); } catch (_) { state = defaults(); }
-    const listeners = new Set();
+    let state = defaults(), recovery = null, originalRaw, recoveryBackup = null;
+    const listeners = new Set(), memoryListeners = new Set(), importPreviews = new Map();
+    function readState() {
+      let raw;
+      try { raw = storage.getItem(KEY); } catch (_) { recovery = { reason: 'read-failed' }; originalRaw = undefined; return false; }
+      originalRaw = raw;
+      if (raw === null) { state = defaults(); recovery = null; return true; }
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch (_) { recovery = { reason: 'malformed' }; return false; }
+      if (!plain(parsed)) { recovery = { reason: 'malformed' }; return false; }
+      if (parsed.version !== 1) { recovery = { reason: 'unsupported-version' }; return false; }
+      state = sanitize(parsed);
+      // A partially damaged personal collection is useful in memory, but must
+      // never be silently normalized over the only original copy.
+      if (PERSONAL_KEYS.some(key => Object.hasOwn(parsed, key) && !sameData(parsed[key], state[key]))) { recovery = { reason: 'malformed' }; return false; }
+      recovery = null; return true;
+    }
+    readState();
+    function requireWritable() { if (recovery) throw new Error(RECOVERY_MESSAGE); }
+    function memoryChanged(previous, reason) {
+      const removedIds = previous.facts.filter(item => !state.facts.some(next => next.id === item.id && next.text === item.text)).map(item => item.id);
+      const addedIds = state.facts.filter(item => !previous.facts.some(old => old.id === item.id && old.text === item.text)).map(item => item.id);
+      if (!removedIds.length && !addedIds.length && previous.factsEnabled === state.factsEnabled && !['restored', 'reset'].includes(reason)) return;
+      const change = { reason: reason || (previous.factsEnabled !== state.factsEnabled ? state.factsEnabled ? 'enabled' : 'disabled' : removedIds.length ? 'deleted' : 'added'), removedIds, addedIds, enabled: state.factsEnabled };
+      for (const listener of [...memoryListeners]) { try { listener(clone(change)); } catch (_) {} }
+    }
+    function backupOriginal() {
+      let raw;
+      try { raw = storage.getItem(KEY); } catch (_) { throw new Error('The original Workspace record still cannot be read. Nothing was replaced. Retry after storage is available.'); }
+      if (originalRaw !== undefined && raw !== originalRaw) throw new Error('Workspace storage changed. Retry recovery before creating a backup.');
+      const key = KEY + '_recovery_' + id();
+      const record = JSON.stringify({ format: 'olanga-workspace-recovery', version: 1, sourceKey: KEY, raw, createdAt: Date.now() });
+      try {
+        if (storage.getItem(key) !== null) throw new Error('Recovery key already exists.');
+        storage.setItem(key, record);
+        if (storage.getItem(key) !== record) throw new Error('Recovery verification failed.');
+      } catch (_) { throw new Error('A verified recovery copy could not be saved. Your original Workspace data has not been replaced.'); }
+      originalRaw = raw; recoveryBackup = { key, raw, record };
+      notify(); return { key };
+    }
+    function readRecoveryCopy(key) {
+      if (typeof key !== 'string' || !key.startsWith(KEY + '_recovery_') || key.length > 200) throw new Error('Invalid recovery copy.');
+      let text, record;
+      try { text = storage.getItem(key); record = JSON.parse(text); } catch (_) { throw new Error('This recovery copy cannot be read.'); }
+      if (!exactKeys(record, ['format', 'version', 'sourceKey', 'raw', 'createdAt']) || record.format !== 'olanga-workspace-recovery' || record.version !== 1 || record.sourceKey !== KEY || record.raw !== null && typeof record.raw !== 'string' || !Number.isFinite(record.createdAt)) throw new Error('This recovery copy is invalid.');
+      return { text, record };
+    }
+    function verifyBackup(key) {
+      if (!recoveryBackup || key !== recoveryBackup.key) throw new Error('Create and verify a recovery copy before resetting Workspace.');
+      try { if (storage.getItem(key) !== recoveryBackup.record || storage.getItem(KEY) !== recoveryBackup.raw) throw new Error('changed'); }
+      catch (_) { throw new Error('The original data or recovery copy changed or cannot be read. Nothing was replaced. Create a fresh recovery copy first.'); }
+    }
     // A view failure must not turn a committed write into an apparent storage
     // failure, nor prevent other views from receiving the committed state.
     function notify() { for (const listener of [...listeners]) { try { listener(); } catch (_) {} } }
@@ -90,9 +184,11 @@
       return candidate;
     }
     function save(required = false) {
+      if (recovery) { if (required) requireWritable(); notify(); return false; }
       try {
         const activity = state.saveActivity ? state.activity.map(entry => ({ id: entry.id, at: entry.at, state: entry.state, steps: entry.steps.map(step => ({ operation: step.operation, state: step.state })) })) : [];
-        storage.setItem(KEY, JSON.stringify({ ...state, activity, timings: state.diagnostics ? state.timings : [] }));
+        const encoded = JSON.stringify({ ...state, activity, timings: state.diagnostics ? state.timings : [] });
+        storage.setItem(KEY, encoded); originalRaw = encoded;
       } catch (_) {
         if (required) throw new Error('Olanga could not save this change. Free some storage and try again.');
         notify();
@@ -101,11 +197,13 @@
       notify();
       return true;
     }
-    function edit(fn) {
+    function edit(fn, reason) {
+      requireWritable();
       const previous = state, draft = clone(state);
       fn(draft);
       state = draft;
       try { save(true); } catch (error) { state = previous; notify(); throw error; }
+      memoryChanged(previous, reason);
     }
     function options() {
       return state.memoryEnabled ? { aliases: clone(state.aliases), playlists: clone(state.playlists) } : {};
@@ -113,6 +211,73 @@
     return {
       snapshot: () => clone(state), options,
       subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      subscribeMemory(listener) { memoryListeners.add(listener); return () => memoryListeners.delete(listener); },
+      recoveryStatus() { return { blocked: !!recovery, reason: recovery?.reason || null, message: recovery ? RECOVERY_MESSAGE : '', backupKey: recoveryBackup?.key || null }; },
+      retryRecovery() {
+        if (!recovery) return true;
+        const previous = state;
+        const ok = readState(); recoveryBackup = null; importPreviews.clear();
+        if (ok) memoryChanged(previous, 'restored');
+        notify(); return ok;
+      },
+      createRecoveryBackup: backupOriginal,
+      recoveryBackupText(key) { return readRecoveryCopy(key).text; },
+      listRecoveryCopies() {
+        const keys = new Set(recoveryBackup ? [recoveryBackup.key] : []);
+        if (Number.isInteger(storage.length) && typeof storage.key === 'function') for (let index = 0; index < storage.length; index++) {
+          const key = storage.key(index); if (typeof key === 'string' && key.startsWith(KEY + '_recovery_')) keys.add(key);
+        }
+        const copies = [];
+        for (const key of keys) { try { const { record } = readRecoveryCopy(key); copies.push({ key, createdAt: record.createdAt }); } catch (_) {} }
+        return copies.sort((a, b) => b.createdAt - a.createdAt);
+      },
+      deleteRecoveryCopy(key) {
+        readRecoveryCopy(key);
+        try { storage.removeItem(key); if (storage.getItem(key) !== null) throw new Error('not removed'); } catch (_) { throw new Error('This recovery copy could not be deleted.'); }
+        if (recoveryBackup?.key === key) recoveryBackup = null;
+        notify();
+      },
+      exportRecoveryPersonal(key, parse) {
+        const { record } = readRecoveryCopy(key);
+        let original;
+        try { original = record.raw === null ? defaults() : JSON.parse(record.raw); } catch (_) { throw new Error('The original record is damaged. Download and keep this recovery copy; it cannot be restored automatically.'); }
+        if (!plain(original) || original.version !== 1) throw new Error('This recovery copy uses an unsupported Workspace version. Keep it for a compatible version.');
+        const content = Object.fromEntries(PERSONAL_KEYS.map(kind => [kind, Object.hasOwn(original, kind) ? original[kind] : []]));
+        return { format: 'olanga-workspace-backup', version: 1, createdAt: Date.now(), content: validatePersonal(content, parse) };
+      },
+      resetAfterBackup(key) {
+        if (!recovery) throw new Error('Workspace does not need a storage reset.');
+        verifyBackup(key);
+        const previous = state, previousRecovery = recovery;
+        state = defaults(); recovery = null;
+        try { save(true); } catch (error) { state = previous; recovery = previousRecovery; notify(); throw error; }
+        importPreviews.clear(); memoryChanged(previous, 'reset');
+        return true;
+      },
+      exportPersonal() {
+        requireWritable();
+        return { format: 'olanga-workspace-backup', version: 1, createdAt: Date.now(), content: personalContent(state) };
+      },
+      previewImport(text, parse) {
+        requireWritable();
+        if (typeof text !== 'string' || text.length > 1024 * 1024) throw new Error('Choose a Workspace backup smaller than 1 MB.');
+        let payload;
+        try { payload = JSON.parse(text); } catch (_) { throw new Error('This file is not valid JSON.'); }
+        if (!exactKeys(payload, ['format', 'version', 'createdAt', 'content']) || payload.format !== 'olanga-workspace-backup' || payload.version !== 1 || !Number.isFinite(payload.createdAt) || payload.createdAt < 0) throw new Error('This is not a supported Olanga Workspace backup.');
+        const content = validatePersonal(payload.content, parse), token = id();
+        importPreviews.clear(); importPreviews.set(token, { content, before: JSON.stringify(personalContent(state)) });
+        return { token, content: clone(content), counts: Object.fromEntries(PERSONAL_KEYS.map(key => [key, content[key].length])), currentCounts: Object.fromEntries(PERSONAL_KEYS.map(key => [key, state[key].length])) };
+      },
+      importPersonal(token, parse) {
+        requireWritable();
+        const preview = importPreviews.get(token);
+        if (!preview || preview.before !== JSON.stringify(personalContent(state))) throw new Error('Workspace changed after preview. Choose the backup again and review the new preview.');
+        const content = validatePersonal(preview.content, parse);
+        const backup = backupOriginal(); verifyBackup(backup.key);
+        edit(data => { for (const key of PERSONAL_KEYS) data[key] = clone(content[key]); }, 'restored');
+        importPreviews.clear();
+        return { backupKey: backup.key, counts: Object.fromEntries(PERSONAL_KEYS.map(key => [key, state[key].length])) };
+      },
       preference(key, value) {
         if (!['memoryEnabled', 'saveActivity', 'diagnostics', 'speechInput', 'factsEnabled'].includes(key)) throw new Error('Unknown preference.');
         if (key === 'speechInput' ? !['cloud', 'offline', 'offline-general'].includes(value) : typeof value !== 'boolean') throw new Error('Invalid preference.');
@@ -164,7 +329,7 @@
         edit(data => { removed = data.facts.find(item => item.id === factId) || null; data.facts = data.facts.filter(item => item.id !== factId); });
         return removed ? clone(removed) : null;
       },
-      clearFacts() { const count = state.facts.length; edit(data => { data.facts = []; }); return count; },
+      clearFacts() { const count = state.facts.length; edit(data => { data.facts = []; }, 'cleared'); return count; },
       memoryContext() { return state.factsEnabled ? state.facts.map(item => item.text) : []; },
       saveRoutine(routine, parse) {
         if (!routine || !Array.isArray(routine.lines) || routine.lines.some(line => typeof line !== 'string')) throw new Error('Give the routine a name and supported commands.');

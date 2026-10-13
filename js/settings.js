@@ -73,6 +73,8 @@ function collectPrefsFromUI() {
       appearanceMotion: document.getElementById('appearanceMotionSelect')?.value || window.OlangaAppearance?.snapshot().appearanceMotion,
       appearanceContrast: document.getElementById('appearanceContrastSelect')?.value || window.OlangaAppearance?.snapshot().appearanceContrast,
       appearanceGlow: document.getElementById('appearanceGlowSelect')?.value || window.OlangaAppearance?.snapshot().appearanceGlow,
+      responseStyle: document.getElementById('responseStyleSelect')?.value || window.OlangaResponsePreferences?.snapshot().responseStyle,
+      preferredAddress: document.getElementById('preferredAddressInput')?.value ?? window.OlangaResponsePreferences?.snapshot().preferredAddress,
       city: cityInput?.value,
       state: stateInput?.value,
       country: countryInput?.value,
@@ -111,9 +113,13 @@ function endOfSpeechKey() {
   return Object.keys(OlangaPrefs.END_OF_SPEECH_MS).find(key => OlangaPrefs.END_OF_SPEECH_MS[key] === endOfSpeechMs) || 'standard';
 }
 
+let responsePreferences = { responseStyle: 'natural', preferredAddress: '' };
+window.OlangaResponsePreferences = Object.freeze({ snapshot: () => ({ ...responsePreferences }) });
+
 function applyPrefsToRuntime(prefs) {
   const clean = OlangaPrefs.applyMigrations(prefs);
   window.OlangaAppearance?.apply(clean);
+  responsePreferences = { responseStyle: clean.responseStyle, preferredAddress: clean.preferredAddress };
   bargeInEnabled = clean.bargeIn;
   streamRepliesEnabled = clean.streamReplies;
   endOfSpeechMs = OlangaPrefs.END_OF_SPEECH_MS[clean.endOfSpeech] || SILENCE_DURATION;
@@ -164,6 +170,10 @@ function applyPrefsToSettingsUI(prefs) {
     const control = document.getElementById(key + 'Select');
     if (control) control.value = appearance[key] || OlangaPrefs.definition(key).default;
   }
+  const response = { ...responsePreferences, ...prefs };
+  const responseStyleSelect = document.getElementById('responseStyleSelect'), preferredAddressInput = document.getElementById('preferredAddressInput');
+  if (responseStyleSelect) responseStyleSelect.value = response.responseStyle;
+  if (preferredAddressInput) preferredAddressInput.value = response.preferredAddress;
   if (cityInput) cityInput.value = prefs.city || '';
   if (stateInput) stateInput.value = prefs.state || '';
   if (countryInput) countryInput.value = prefs.country || '';
@@ -552,7 +562,41 @@ async function changeSpeechInput(select) {
   }
 }
 
+let coreConnectionTestRunning = false;
+let coreConnectionResult = null;
+function refreshCoreConnectionStatus() {
+  const status = document.getElementById('coreConnectionStatus');
+  const button = document.getElementById('coreConnectionTestBtn');
+  if (!status || !button) return;
+  button.disabled = coreConnectionTestRunning || !apiKey;
+  if (coreConnectionTestRunning) return;
+  const last = coreConnectionResult?.isCurrent?.() ? coreConnectionResult : null;
+  status.textContent = last?.message || (apiKey ? 'Key saved. Connection has not been tested in this session.' : 'Local commands are ready. Add a Gemini key for online answers and cloud speech.');
+  status.dataset.state = last ? last.ok ? 'success' : 'error' : '';
+}
+async function testCoreConnection() {
+  if (coreConnectionTestRunning || !apiKey) return;
+  const status = document.getElementById('coreConnectionStatus');
+  const key = apiKey, keys = [...apiKeys], index = currentKeyIndex;
+  const sameSelection = () => apiKey === key && currentKeyIndex === index && keys.length === apiKeys.length && keys.every((item, offset) => item === apiKeys[offset]);
+  coreConnectionTestRunning = true;
+  refreshCoreConnectionStatus();
+  status.textContent = 'Testing the Gemini connection…';
+  status.dataset.state = '';
+  try {
+    if (!window.OlangaWorkspaceHealth?.testGemini) throw new Error('The connection test is unavailable. Open Workspace → Health and try again.');
+    const result = await window.OlangaWorkspaceHealth.testGemini();
+    coreConnectionResult = { isCurrent: () => window.OlangaWorkspaceHealth.isCurrentTest(result), ok: result?.ok === true, message: result?.message || (result?.ok ? 'Gemini responded successfully.' : 'Gemini did not respond successfully. Check the key and connection, then try again.') };
+  } catch (error) { coreConnectionResult = { isCurrent: sameSelection, ok: false, message: error.message || 'Connection test failed. Try again.' }; }
+  finally {
+    coreConnectionTestRunning = false;
+    if (typeof renderKeyList === 'function') renderKeyList();
+    else refreshCoreConnectionStatus();
+  }
+}
+
 function renderKeyList() {
+  refreshCoreConnectionStatus();
   if (!keyListContainer) return;
   keyListContainer.innerHTML = '';
   if (apiKeys.length === 0) {
@@ -695,6 +739,7 @@ async function init() {
   window.loadSettingsValues = function() {
     try {
       renderKeyList();
+      refreshCoreConnectionStatus();
       hydrateKeyInputs(apiKeys, nvidiaApiKey);
       const prefs = {
         city: userCity,
@@ -846,11 +891,14 @@ async function init() {
     window.OlangaAppearance?.apply(collectPrefsFromUI());
     scheduleSaveAppSettings();
   });
+  document.getElementById('coreConnectionTestBtn')?.addEventListener('click', testCoreConnection);
+  document.getElementById('responseStyleSelect')?.addEventListener('change', scheduleSaveAppSettings);
+  document.getElementById('preferredAddressInput')?.addEventListener('input', scheduleSaveAppSettings);
   document.getElementById('preferencesRetryBtn')?.addEventListener('click', saveAppSettings);
   document.getElementById('bargeInToggle')?.addEventListener('change', scheduleSaveAppSettings);
   document.getElementById('streamRepliesToggle')?.addEventListener('change', scheduleSaveAppSettings);
   // Typing is a strong hint that a request is coming; warm the connection.
-  document.getElementById('textCommandInput')?.addEventListener('focus', () => warmProviderConnection());
+  document.getElementById('textCommandInput')?.addEventListener('focus', event => { if (event.target.dataset.localPrefill !== 'true') warmProviderConnection(); });
   document.getElementById('endOfSpeechSelect')?.addEventListener('change', scheduleSaveAppSettings);
   const pushToTalkSelect = document.getElementById('pushToTalkSelect');
   if (pushToTalkSelect) {
@@ -1243,7 +1291,10 @@ floatingIcons.forEach(icon => {
 // ---- Boot ----
 document.addEventListener('DOMContentLoaded', () => {
   initFeatureToggles();
-  init().catch((error) => {
+  init().then(() => {
+    window.OlangaAppInitialized = true;
+    return window.electronAPI?.confirmUpdateReady?.();
+  }).catch((error) => {
     console.error('[Olanga] Initialization failed:', error);
     showError(`Initialization failed: ${error.message}`);
   });

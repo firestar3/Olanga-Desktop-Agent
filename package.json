@@ -1,6 +1,6 @@
 {
   "name": "olanga-control",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "Olanga - Your AI Voice Assistant",
   "main": "main.js",
   "scripts": {
@@ -32,7 +32,12 @@
     "icons:generate": "electron scripts/generate-icons.js",
     "verify:icons": "node scripts/verify-icons.js",
     "bench:resources": "node tests/resource-benchmark.js",
-    "smoke:settings": "electron tests/settings-experience-smoke.js --hidden"
+    "smoke:settings": "electron tests/settings-experience-smoke.js --hidden",
+    "smoke:recovery": "electron tests/workspace-recovery-smoke.js --hidden",
+    "smoke:news": "electron tests/news-reader-smoke.js --hidden",
+    "smoke:installer:e2e": "node tests/update-installer-e2e-smoke.js",
+    "check:performance": "node scripts/check-performance-budget.js",
+    "smoke:layout": "electron tests/visual-layout-smoke.js --hidden"
   },
   "keywords": [
     "ai",
@@ -43,7 +48,7 @@
   "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
-    "electron": "^36.3.1",
+    "electron": "44.7.0",
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
@@ -77,7 +82,8 @@
       "assets/icons/tray.ico",
       "settings.css",
       "PRIVACY.md",
-      "assets/fonts/**/*"
+      "assets/fonts/**/*",
+      "news.css"
     ],
     "extraResources": [
       {
