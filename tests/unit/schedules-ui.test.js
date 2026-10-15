@@ -49,3 +49,14 @@ test('a user-created local briefing notifies once and its controls disable futur
   assert.equal(f.notifications.length, 1);
   assert.equal(f.activeIntervals.size, 0);
 });
+
+test('imported past schedules remain disabled across polling and explicit enable rejects expired one-time reminders', async () => {
+  const f = fixture(); await tick(); const adapter = f.context.window.OlangaSchedulesAdapter;
+  await adapter.suspend(); adapter.replacePaused([{ kind: 'reminder', title: 'Imported past', repeat: 'once', onceAt: f.clock() - 60000, online: false }, { kind: 'briefing', title: 'Imported daily', repeat: 'daily', time: '09:00', online: true }]); adapter.resumePolling();
+  assert.equal(f.activeIntervals.size, 0); assert.equal(f.context.window.OlangaScheduleStore.snapshot().items.every(item => !item.enabled && item.nextAt === null), true);
+  f.setTime(new Date(2026, 8, 30, 9, 0).getTime()); for (const poll of f.intervals) await poll();
+  assert.deepEqual(f.notifications, []); assert.deepEqual(f.providers, []);
+  const items = f.context.window.OlangaScheduleStore.snapshot().items;
+  assert.throws(() => f.context.window.OlangaScheduleStore.enable(items[0].id, true), /passed/);
+  f.context.window.OlangaScheduleStore.enable(items[1].id, true); assert.equal(f.activeIntervals.size, 1); assert.equal(f.context.window.OlangaScheduleStore.snapshot().items[1].enabled, true);
+});

@@ -431,3 +431,18 @@ test('a hung audio resume cannot accumulate contexts and dismissal closes pendin
   assert.equal(closed, 2);
   assert.equal(app.intervals.size, 0);
 });
+
+test('imported overdue timers remain paused across reopen and only explicit resume starts a countdown', () => {
+  const app = harness(); app.context.window.OlangaTimersAdapter.replacePaused([{ label: 'Imported alarm', kind: 'alarm', remainingMs: 0 }]);
+  assert.equal(app.context.activeTimers[0].paused, true); assert.equal(app.alarms, 0); assert.equal(app.timeouts.size, 0);
+  const reopened = harness(app.store, 900000); reopened.context.loadTimers(); reopened.advance(100000);
+  assert.equal(reopened.alarms, 0); assert.equal(reopened.context.activeTimers[0].paused, true);
+  assert.equal(reopened.context.resumeImportedTimer(reopened.context.activeTimers[0].id).ok, true);
+  reopened.advance(999); assert.equal(reopened.alarms, 0); reopened.advance(1); assert.equal(reopened.alarms, 1);
+});
+
+test('a failed imported-timer resume stays paused in memory and durable storage without alerting', () => {
+  const app = harness(); app.context.window.OlangaTimersAdapter.replacePaused([{ label: 'Imported focus', kind: 'timer', remainingMs: 1000 }]);
+  const before = app.store.get('olanga_timers'); app.context.localStorage.setItem = () => { throw Error('full'); };
+  assert.equal(app.context.resumeImportedTimer(app.context.activeTimers[0].id).ok, false); assert.equal(app.context.activeTimers[0].paused, true); assert.equal(app.store.get('olanga_timers'), before); app.advance(100000); assert.equal(app.alarms, 0);
+});

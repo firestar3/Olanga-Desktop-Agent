@@ -69,6 +69,7 @@ function collectPrefsFromUI() {
 
   return {
     ...OlangaPrefs.sanitize({
+      microphoneDeviceId: typeof microphonePreferredDeviceId === 'string' ? microphonePreferredDeviceId : '',
       appearanceAccent: document.getElementById('appearanceAccentSelect')?.value || window.OlangaAppearance?.snapshot().appearanceAccent,
       appearanceMotion: document.getElementById('appearanceMotionSelect')?.value || window.OlangaAppearance?.snapshot().appearanceMotion,
       appearanceContrast: document.getElementById('appearanceContrastSelect')?.value || window.OlangaAppearance?.snapshot().appearanceContrast,
@@ -119,6 +120,7 @@ window.OlangaResponsePreferences = Object.freeze({ snapshot: () => ({ ...respons
 function applyPrefsToRuntime(prefs) {
   const clean = OlangaPrefs.applyMigrations(prefs);
   window.OlangaAppearance?.apply(clean);
+  if (typeof microphonePreferredDeviceId !== 'undefined') microphonePreferredDeviceId = clean.microphoneDeviceId;
   responsePreferences = { responseStyle: clean.responseStyle, preferredAddress: clean.preferredAddress };
   bargeInEnabled = clean.bargeIn;
   streamRepliesEnabled = clean.streamReplies;
@@ -231,7 +233,7 @@ async function persistAppPreferences(prefs) {
   try {
     if (window.electronAPI?.secureStoreSet) {
       await window.electronAPI.secureStoreSet(APP_PREFS_STORE, JSON.stringify(prefs));
-      writePrefsToLocalStorage(prefs);
+      if (!writePrefsToLocalStorage(prefs)) throw new Error('Preferences were saved securely but the local copy could not be updated.');
     } else if (!writePrefsToLocalStorage(prefs)) {
       throw new Error('Preferences could not be saved.');
     }
@@ -1336,3 +1338,35 @@ function renderQuickActionsEditor() {
     container.appendChild(row);
   });
 }
+
+
+// Portable appearance/conversation settings exclude devices, credentials and startup.
+const PORTABLE_PREFERENCE_KEYS = ['appearanceAccent','appearanceMotion','appearanceContrast','appearanceGlow','responseStyle','preferredAddress','ttsRate','endOfSpeech','bargeIn','streamReplies','features'];
+window.OlangaPortablePreferences = Object.freeze({
+  snapshot() { const prefs=collectPrefsFromUI(); return Object.fromEntries(PORTABLE_PREFERENCE_KEYS.map(key=>[key,prefs[key]])); },
+  async apply(values) {
+    if (!values || typeof values!=='object' || Array.isArray(values) || Object.keys(values).length!==PORTABLE_PREFERENCE_KEYS.length || Object.keys(values).some(key=>!PORTABLE_PREFERENCE_KEYS.includes(key))) throw new Error('Only portable appearance and conversation preferences can be restored.');
+    for (const key of PORTABLE_PREFERENCE_KEYS) { const def=OlangaPrefs.definition(key), clean=OlangaPrefs.sanitize({...OlangaPrefs.defaults(),[key]:values[key]})[key]; if(JSON.stringify(clean)!==JSON.stringify(values[key])) throw new Error('A portable preference is invalid: '+key); }
+    if (settingsSaveTimer) { clearTimeout(settingsSaveTimer); settingsSaveTimer=null; }
+    const revision=++settingsSaveRevision;
+    const operation=settingsSaveQueue.then(async()=>{
+      const before=collectPrefsFromUI(),next={...before,...values};
+      try { await persistAppPreferences(next); applyPrefsToRuntime(next); applyPrefsToSettingsUI(next); if(revision===settingsSaveRevision)setPreferencesSaveStatus('saved'); }
+      catch(error){try{await persistAppPreferences(before);applyPrefsToRuntime(before);applyPrefsToSettingsUI(before);}catch(rollbackError){throw new Error('Preferences could not be restored or rolled back. Keep the recovery copy. '+rollbackError.message);}throw error;}
+    });
+    settingsSaveQueue=operation.catch(()=>{});return operation;
+  }
+});
+
+window.OlangaMicrophonePreference = Object.freeze({
+  save(deviceId) {
+    clearTimeout(settingsSaveTimer); settingsSaveTimer = null;
+    const revision = ++settingsSaveRevision;
+    const operation = settingsSaveQueue.then(async () => {
+      const before = collectPrefsFromUI(), next = { ...before, microphoneDeviceId: deviceId };
+      try { await persistAppPreferences(next); if (revision === settingsSaveRevision) setPreferencesSaveStatus('saved'); }
+      catch (error) { try { await persistAppPreferences(before); } catch (_) {} throw error; }
+    });
+    settingsSaveQueue = operation.catch(() => {}); return operation;
+  }
+});

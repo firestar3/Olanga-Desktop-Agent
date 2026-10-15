@@ -1,0 +1,13 @@
+/* Uses the existing Workspace/Notes theme and typography. */
+.backup-center-dialog, .notes-history-dialog { width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto; box-sizing: border-box; }
+.backup-center-dialog fieldset { margin: 16px 0; padding: 12px; border: 1px solid var(--border-color, rgba(255,255,255,.12)); border-radius: 10px; }
+.backup-center-dialog .backup-scope { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 8px 20px; }
+.backup-center-dialog .backup-scope .workspace-check { margin: 2px 0; align-items: center; }
+#backupCenterPreview, #backupCenterRecovery { border-top: 1px solid var(--border-color, rgba(255,255,255,.12)); margin-top: 18px; padding-top: 14px; }
+#backupCenterPreview > .workspace-check { margin-bottom: 10px; }
+#backupCenterRecovery > button, .notes-history-dialog > div > button { margin: 4px 8px 4px 0; }
+.notes-history-dialog .workspace-item { overflow-wrap: anywhere; }
+.notes-recovery-notice { padding: 10px 14px; font-size: 13px; }
+.notes-recovery-notice button { margin-left: 8px; }
+.timer-resume-btn { color: var(--accent-light); background: var(--bg-secondary); border: 1px solid var(--border-color, rgba(255,255,255,.15)); border-radius: 7px; padding: 6px 10px; font: 600 12px var(--font); }
+@media (max-width: 520px) { .backup-center-dialog, .notes-history-dialog { width: calc(100vw - 20px); padding: 18px; } .backup-center-dialog .workspace-actions { flex-wrap: wrap; } }

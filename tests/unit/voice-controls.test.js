@@ -145,3 +145,6 @@ test('voice diagnostics never expose background speech, command text or custom w
   assert.ok(custom.calls.logs.length > 0);
   assert.doesNotMatch(JSON.stringify([...idle.calls.logs, ...custom.calls.logs]), /sentinel|private (?:background|command|intended|spoken)/i);
 });
+test('wake interruption while thinking preserves the conversational follow-up target', () => {
+ const {context,calls}=fixture({state:'thinking'});let preserved=0;context.interruptAssistantForFollowUp=()=>{preserved++;};context.handleVoskResult('hey olanga',true);assert.equal(preserved,1);assert.equal(calls.cancelled,0);assert.equal(context.currentState,'listening');assert.equal(context.isRecording,true);
+});

@@ -151,6 +151,26 @@
       if (previous.items.length >= 20) throw new Error('Remove an old saved session first (20 maximum).');
       writeSaved([...previous.items, { id: crypto.randomUUID(), name, kind: item.kind, items: chosen }]); renderSaved(); showMessage('Selected session saved on this device.');
     }
+    // Named workspaces retain only this session's ID. Every restore resolves its
+    // current saved targets and paired destination again before dispatch.
+    window.OlangaCompanionSessions = {
+      list() { return readSaved().items.map(item => ({ id: item.id, name: item.name, kind: item.kind, count: item.items.length })); },
+      async preview(id) {
+        const item = readSaved().items.find(value => value.id === id);
+        if (!item) throw new Error('This saved companion session no longer exists.');
+        const current = await api.companionList();
+        const candidates = current.connections.filter(connection => connection.kind === item.kind && connection.connected);
+        if (candidates.length !== 1) throw new Error('Connect exactly one matching companion before reviewing this session.');
+        return { id, name: item.name, kind: item.kind, fingerprint: JSON.stringify(item), connectionId: candidates[0].id, targets: item.items.map(value => item.kind === 'browser' ? value.url : value.uri), message: `${item.items.length} ${item.kind === 'browser' ? 'tabs' : 'documents'}; confirm their exact targets in ${candidates[0].name || 'the companion'}.` };
+      },
+      async restore(preview) {
+        const item = readSaved().items.find(value => value.id === preview?.id);
+        if (!item || JSON.stringify(item) !== preview.fingerprint) throw new Error('The saved companion targets changed. Review the workspace again.');
+        const current = await api.companionList(), candidates = current.connections.filter(connection => connection.kind === item.kind && connection.connected);
+        if (candidates.length !== 1 || candidates[0].id !== preview.connectionId) throw new Error('The paired companion changed. Review the workspace again.');
+        return api.companionRequest({ connectionId: preview.connectionId, operation: item.kind === 'browser' ? 'browser.resumeTabs' : 'vscode.resumeDocuments', payload: item.kind === 'browser' ? { tabs: item.items.map(tab => ({ url: tab.url, title: tab.title })) } : { uris: item.items.map(doc => doc.uri) } });
+      }
+    };
     function renderSaved() {
       const previous = readSaved(); saved.replaceChildren();
       if (previous.rejected) { detail(saved, `${previous.rejected} unsupported saved entries were left untouched. Your valid sessions are shown below.`); actions(saved, button('Remove unsupported saved entries', () => { writeSaved(readSaved().items); renderSaved(); })); }

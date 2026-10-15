@@ -26,17 +26,13 @@ const notepadTabAddBtn = document.getElementById('notepadTabAddBtn');
 let notepadTabsData = [];
 let currentTabId = 0;
 
-// Load saved tabs
-try {
-  const saved = JSON.parse(localStorage.getItem('olangaNotepadTabs') || '[]');
-  if (Array.isArray(saved)) notepadTabsData = saved.filter(tab => tab && typeof tab === 'object').map((tab, index) => ({
-    id: index, name: typeof tab.name === 'string' && tab.name.trim() ? tab.name : `Note ${index + 1}`,
-    content: sanitizeNoteHtml(typeof tab.content === 'string' ? tab.content : '')
-  }));
-} catch (error) { console.warn('[Olanga] Could not read saved notes:', error.message); }
-if (!notepadTabsData.length) notepadTabsData = [{ id: 0, name: 'Note 1', content: '' }];
-let nextNotepadTabId = notepadTabsData.length;
+// Notes retain their original unreadable bytes and keep bounded local history.
+const notesStore = OlangaNotes.createStore(localStorage, { sanitize: sanitizeNoteHtml });
+notepadTabsData = notesStore.snapshot().notes;
+let nextNotepadTabId = nextAvailableNoteId();
 let notepadSaveWarningShown = false;
+function nextAvailableNoteId() { const state = notesStore.snapshot(); return OlangaNotes.nextId([...state.notes, ...state.history.versions.map(item => item.note), ...state.history.trash.map(item => item.note)]); }
+
 
 // Pasted and saved rich text may contain arbitrary HTML. Keep formatting, but
 // never restore active elements, remote resources, attributes or event handlers.
@@ -90,7 +86,7 @@ function renderNotepadTabs() {
 
 // Add new tab
 function addNotepadTab() {
-  const newId = nextNotepadTabId++;
+  const newId = nextAvailableNoteId(); nextNotepadTabId = newId + 1;
   const newTab = { id: newId, name: `Note ${notepadTabsData.length + 1}`, content: '' };
   notepadTabsData.push(newTab);
   saveNotepadTabs();
@@ -111,7 +107,7 @@ function deleteNotepadTab(tabId) {
       const active = previous.find(t => t.id == currentTabId);
       if (active) active.content = notepadTextarea.innerHTML;
       notepadTabsData = previous.filter(t => t.id != tabId);
-      if (!saveNotepadTabs()) { notepadTabsData = previous; return; }
+      if (!saveNotepadTabs({ forceVersion: true })) { notepadTabsData = previous; return; }
       if (currentTabId == tabId) switchNotepadTab(notepadTabsData[Math.max(0, tabIndex - 1)].id);
       else renderNotepadTabs();
     }
@@ -137,14 +133,16 @@ function switchNotepadTab(tabId) {
 }
 
 // Save tabs to localStorage
-function saveNotepadTabs() {
+function saveNotepadTabs(options = {}) {
   try {
-    localStorage.setItem('olangaNotepadTabs', JSON.stringify(notepadTabsData));
+    notesStore.save(notepadTabsData, options);
     notepadSaveWarningShown = false;
+    renderNotesRecoveryNotice();
     return true;
   } catch (error) {
-    if (!notepadSaveWarningShown) alert('Your notes could not be saved. Keep this window open and export your note before closing Olanga.');
+    if (!notepadSaveWarningShown) alert('Your notes could not be saved. ' + error.message + ' Keep this window open and export your note before closing Olanga.');
     notepadSaveWarningShown = true;
+    renderNotesRecoveryNotice();
     return false;
   }
 }
@@ -187,7 +185,7 @@ notepadClearBtn.addEventListener('click', () => {
     const currentTab = notepadTabsData.find(t => t.id === currentTabId);
     if (currentTab) {
       currentTab.content = '';
-      saveNotepadTabs();
+      if (!saveNotepadTabs({ forceVersion: true })) { currentTab.content = previous; notepadTextarea.innerHTML = previous; }
     }
   } else if (!notepadTextarea.innerHTML.trim()) {
     notepadTextarea.innerHTML = '';
@@ -232,7 +230,7 @@ notepadImportBtn.addEventListener('click', () => {
       if (!noteIsUnchanged(targetTab, original)) { alert('This note changed while the file was loading. Import again to replace it.'); return; }
       targetTab.content = escapeHTML(String(event.target.result));
       if (currentTabId == targetTab.id) notepadTextarea.innerHTML = targetTab.content;
-      if (!saveNotepadTabs()) {
+      if (!saveNotepadTabs({ forceVersion: true })) {
         targetTab.content = original;
         if (currentTabId == targetTab.id) notepadTextarea.innerHTML = original;
       }
@@ -478,7 +476,7 @@ Current note content:\n\n${noteContent || '(empty)'}`;
         } else {
           currentTab.content = updatedNote;
           if (currentTabId == currentTab.id) notepadTextarea.innerHTML = updatedNote;
-          if (saveNotepadTabs()) addNotepadAiMessage(`Updated "${currentTab.name}".`, 'ai');
+          if (saveNotepadTabs({ forceVersion: true })) addNotepadAiMessage(`Updated "${currentTab.name}".`, 'ai');
         }
       }
     }
@@ -629,3 +627,82 @@ function htmlToPlainText(html) {
   };
   return walk(template.content).replace(/\n$/, '');
 }
+
+
+// History is local, bounded to 15 versions per note / 80 overall, plus 30
+// deleted notes within a 500,000-character text budget. Restore always keeps the current
+// revision first. Retained content can be deleted individually.
+let notesRecoveryNotice;
+function notesDownload(text, filename) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const link = document.createElement('a'); link.href = url; link.download = filename; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function reloadNotesRuntime() {
+  notesStore.reload(); const state = notesStore.snapshot(); notepadTabsData = state.notes;
+  if (!notepadTabsData.some(note => note.id === currentTabId)) currentTabId = notepadTabsData[0].id;
+  nextNotepadTabId = nextAvailableNoteId();
+  notepadTextarea.innerHTML = notepadTabsData.find(note => note.id === currentTabId).content;
+  renderNotepadTabs(); renderNotesRecoveryNotice(); return state;
+}
+function renderNotesRecoveryNotice() {
+  if (!notesRecoveryNotice) return;
+  const state = notesStore.snapshot(); notesRecoveryNotice.hidden = !state.blocked;
+  notesRecoveryNotice.textContent = state.blocked ? 'Saved notes need recovery. The original is preserved; new edits cannot be saved until you review it. ' + state.message : '';
+  if (state.blocked) { const button = document.createElement('button'); button.type = 'button'; button.className = 'notepad-btn'; button.textContent = 'Review recovery'; button.addEventListener('click', () => openNotesHistory()); notesRecoveryNotice.append(button); }
+}
+function openNotesHistory() {
+  const existing = document.getElementById('notesHistoryDialog'); if (existing?.open) { existing.querySelector('h2')?.focus({ preventScroll: true }); return; } if (existing) existing.remove();
+  const previous = document.activeElement;
+  const dialog = document.createElement('dialog'); dialog.className = 'workspace-dialog notes-history-dialog'; dialog.id = 'notesHistoryDialog';
+  const heading = document.createElement('h2'); heading.id = 'notesHistoryHeading'; heading.textContent = 'Note history & recovery'; dialog.setAttribute('aria-labelledby', heading.id);
+  const help = document.createElement('p'); help.className = 'workspace-help'; help.textContent = 'Restore an earlier version or recover a deleted note. Restoring keeps the current version first. History stays on this device.';
+  const retention = document.createElement('details'), summary = document.createElement('summary'), limits = document.createElement('p'); summary.textContent = 'History limits & privacy'; limits.className = 'workspace-help'; limits.textContent = 'Typing is grouped into 30-second checkpoints. Up to 15 versions per note, 80 overall and 30 deleted notes are retained within a 500,000-character text budget. Older copies leave automatically as this budget fills. Delete retained copies below when you no longer need them.'; retention.append(summary, limits);
+  const status = document.createElement('p'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+  const body = document.createElement('div');
+  function button(label, action) { const control = document.createElement('button'); control.type = 'button'; control.textContent = label; control.addEventListener('click', () => { try { action(); status.textContent = ''; render(); } catch (error) { status.textContent = error.message; } }); return control; }
+  function downloadOriginal() { notesDownload(notesStore.originalText(), 'olanga-notes-recovery.json'); }
+  function render() {
+    body.replaceChildren(); const state = notesStore.snapshot();
+    if (state.blocked) {
+      const p = document.createElement('p'); p.className = 'workspace-error'; p.textContent = 'The original notes or history could not be read. Download the untouched original records before starting new notes.'; body.append(p);
+      body.append(button('Download original records', downloadOriginal), button('Start new notes after preserving original', () => { if (confirm('Preserve the original records on this device and start new notes? The recovery copy remains until you delete it.')) { notesStore.resetAfterRecovery(); reloadNotesRuntime(); } }));
+    }
+    if (notesStore.retainedRecovery()) {
+      const p = document.createElement('p'); p.className = 'workspace-help'; p.textContent = 'A copy from a previous recovery is retained. It may include older private notes.'; body.append(p);
+      body.append(button('Download retained recovery', () => notesDownload(notesStore.retainedRecovery(), 'olanga-notes-retained-recovery.json')), button('Delete retained recovery', () => { if (confirm('Permanently delete the retained original note records? Current notes are unchanged.')) notesStore.deleteRecovery(); }));
+    }
+    const current = document.createElement('h3'); current.textContent = 'Versions of ' + (notepadTabsData.find(note => note.id === currentTabId)?.name || 'current note'); body.append(current);
+    const versions = state.history.versions.filter(item => item.note.id === currentTabId).reverse();
+    const empty = text => { const p = document.createElement('p'); p.className = 'workspace-help'; p.textContent = text; body.append(p); };
+    if (!versions.length) empty('No earlier versions of this note yet.');
+    function row(item, list) {
+      const wrapper = document.createElement('div'); wrapper.className = 'workspace-item'; const content = document.createElement('div');
+      const label = document.createElement('strong'); label.textContent = item.note.name + ' · ' + new Date(item.at).toLocaleString();
+      const preview = document.createElement('p'); preview.className = 'workspace-help'; preview.textContent = htmlToPlainText(item.note.content).slice(0, 240) || '(Empty note)';
+      const controls = document.createElement('div'); controls.className = 'workspace-actions';
+      controls.append(button(list === 'trash' ? 'Restore deleted note' : 'Restore this version', () => { if (notepadAiBusy || window.OlangaBackupCenter?.isBusy()) throw new Error('Wait for the current note request or backup restore before restoring a note.'); notesStore[list === 'trash' ? 'restoreDeleted' : 'restoreVersion'](item.key); reloadNotesRuntime(); }), button('Delete retained copy', () => { if (confirm('Permanently delete this retained copy? Current notes are unchanged.')) notesStore.deleteRetained(list, item.key); }));
+      content.append(label, preview, controls); wrapper.append(content); body.append(wrapper);
+    }
+    versions.forEach(item => row(item, 'versions'));
+    const deleted = document.createElement('h3'); deleted.textContent = 'Deleted notes'; body.append(deleted);
+    if (!state.history.trash.length) empty('No deleted notes retained.');
+    state.history.trash.slice().reverse().forEach(item => row(item, 'trash'));
+  }
+  const close = button('Close', () => dialog.close()); close.id = 'notesHistoryClose'; const header = document.createElement('header'); header.append(heading, close); dialog.append(header, help, retention, status, body); document.body.append(dialog);
+  dialog.addEventListener('close', () => { dialog.remove(); if (!document.getElementById('notesHistoryDialog')?.open && previous?.isConnected) previous.focus(); }, { once: true }); render(); dialog.showModal(); heading.tabIndex = -1; heading.focus({ preventScroll: true }); dialog.scrollTop = 0;
+}
+window.openOlangaNotesHistory = openNotesHistory;
+window.OlangaNotesController = {
+  snapshot: () => notesStore.snapshot(),
+  portable() { const state = notesStore.snapshot(); if (state.blocked) throw new Error('Recover saved notes before exporting or replacing them.'); return state.notes; },
+  original() { return { notesRaw: localStorage.getItem(OlangaNotes.KEY), historyRaw: localStorage.getItem(OlangaNotes.HISTORY_KEY) }; },
+  replace(notes) { if (notepadAiBusy) throw new Error('Wait for the current note request before restoring.'); notesStore.save(notes, { forceVersion: true }); return reloadNotesRuntime(); },
+  rollback(saved) { for (const [key, value] of [[OlangaNotes.KEY, saved.notesRaw], [OlangaNotes.HISTORY_KEY, saved.historyRaw]]) { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); if (localStorage.getItem(key) !== value) throw new Error('Note recovery could not be verified.'); } const state = reloadNotesRuntime(); if (state.blocked) throw new Error(state.message); },
+  reload: reloadNotesRuntime,
+  history: openNotesHistory
+};
+notesRecoveryNotice = document.createElement('div'); notesRecoveryNotice.id = 'notesRecoveryNotice'; notesRecoveryNotice.className = 'workspace-error notes-recovery-notice'; notesRecoveryNotice.setAttribute('role', 'alert');
+notepadTextarea.parentElement.parentElement.insertBefore(notesRecoveryNotice, notepadTextarea.parentElement); renderNotesRecoveryNotice();
+const notesHistoryButton = document.createElement('button'); notesHistoryButton.type = 'button'; notesHistoryButton.id = 'notepadHistoryBtn'; notesHistoryButton.className = 'notepad-btn'; notesHistoryButton.textContent = 'History'; notesHistoryButton.addEventListener('click', openNotesHistory);
+notepadRenameBtn?.parentElement.append(notesHistoryButton);

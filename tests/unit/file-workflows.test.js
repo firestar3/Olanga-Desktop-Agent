@@ -16,7 +16,7 @@ async function fixture(t, options = {}) {
   await fs.mkdir(source); await fs.mkdir(destination);
   const file = path.join(source, 'notes.txt'); await fs.writeFile(file, 'Original selected content.');
   const journalPath = path.join(directory, 'history.json');
-  const service = createFileWorkflows({ journalPath, now: options.now });
+  const service = createFileWorkflows({ journalPath, now: options.now, journalFs: options.journalFs, wait: options.wait });
   t.after(() => service.dispose());
   async function rename(name = 'renamed.txt') {
     const selected = await service.selectFiles([file]);
@@ -103,4 +103,57 @@ test('batch operations retain successful receipts when a later file changed', as
   await fs.writeFile(second, 'Changed after preview');
   const result = await service.execute(preview.previewId); assert.equal(result.status, 'partial'); assert.deepEqual(result.receipt.steps.map(step => step.state), ['moved', 'failed']);
   assert.equal((await service.undo(result.receipt.id)).ok, true); assert.equal(await fs.readFile(second, 'utf8'), 'Changed after preview');
+});
+
+function journalFaults({ failState, failCount = 1, code = 'EPERM', enabled = true }) {
+  let failures = 0, attempts = 0; const waits = [];
+  const journalFs = { ...fs, async rename(from, to) {
+    attempts++; const data = JSON.parse(await fs.readFile(from, 'utf8')), step = data.receipts.at(-1)?.steps[0];
+    if (enabled && (failState === '*' || step?.state === failState) && failures < failCount) { failures++; throw Object.assign(new Error('Fixture journal locked'), { code }); }
+    return fs.rename(from, to);
+  } };
+  return { journalFs, wait: async value => { waits.push(value); }, waits, release: () => { enabled = false; }, block: () => { enabled = true; }, failures: () => failures, attempts: () => attempts };
+}
+test('transient journal replacement retries metadata only and preserves checked Undo', async t => {
+  const faults = journalFaults({ failState: 'moved', failCount: 2 }), { service, file, source, journalPath, rename } = await fixture(t, faults);
+  const result = await service.execute((await rename()).previewId); assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(faults.failures(), 2); assert.deepEqual(faults.waits, [25, 50]);
+  assert.equal(result.receipt.steps[0].state, 'moved'); assert.equal(result.receipt.canUndo, true); await assert.rejects(fs.stat(file), { code: 'ENOENT' });
+  assert.equal((await fs.stat(path.join(source, 'renamed.txt'))).nlink, 1); assert.equal(JSON.parse(await fs.readFile(journalPath, 'utf8')).receipts[0].steps[0].state, 'moved');
+  assert.equal((await service.undo(result.receipt.id)).ok, true); assert.equal(await fs.readFile(file, 'utf8'), 'Original selected content.');
+});
+test('an exhausted post-move journal replacement cannot erase the verified move receipt', async t => {
+  const faults = journalFaults({ failState: 'moved', failCount: 6 }), { service, journalPath, rename } = await fixture(t, faults);
+  const result = await service.execute((await rename()).previewId); assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(faults.failures(), 6); assert.equal(result.receipt.steps[0].state, 'moved'); assert.equal(result.receipt.canUndo, true);
+  assert.match(result.receipt.steps[0].message, /moved and verified/); assert.equal(JSON.parse(await fs.readFile(journalPath, 'utf8')).receipts[0].steps[0].state, 'moved');
+});
+test('permanent pre-dispatch journal failure leaves selected files intact without claiming completion', async t => {
+  const faults = journalFaults({ failState: '*', failCount: Infinity }), { service, file, source, rename } = await fixture(t, faults);
+  const result = await service.execute((await rename()).previewId); assert.equal(result.ok, false); assert.equal(result.status, 'persistence-failed'); assert.equal(result.receipt.canUndo, false);
+  assert.equal(faults.attempts(), 6); assert.equal(await fs.readFile(file, 'utf8'), 'Original selected content.'); await assert.rejects(fs.stat(path.join(source, 'renamed.txt')), { code: 'ENOENT' });
+});
+test('permanent post-move persistence failure reports verified effects and stops later file actions', async t => {
+  const faults = journalFaults({ failState: 'moved', failCount: Infinity }), { service, file, source, journalPath } = await fixture(t, faults);
+  const second = path.join(source, 'second.txt'); await fs.writeFile(second, 'Second'); const selected = await service.selectFiles([file, second]);
+  const preview = await service.preview({ selectionId: selected.selectionId, mode: 'rename', names: selected.files.map((item, index) => ({ id: item.id, name: `renamed-${index}.txt` })) });
+  const result = await service.execute(preview.previewId); assert.equal(result.ok, false); assert.equal(result.status, 'persistence-failed'); assert.deepEqual(result.receipt.steps.map(step => step.state), ['moved', 'cancelled']); assert.equal(result.receipt.canUndo, true); assert.match(result.message, /verified in this session/);
+  assert.equal(await fs.readFile(path.join(source, 'renamed-0.txt'), 'utf8'), 'Original selected content.'); assert.equal(await fs.readFile(second, 'utf8'), 'Second'); await assert.rejects(fs.stat(path.join(source, 'renamed-1.txt')), { code: 'ENOENT' });
+  const reopened = createFileWorkflows({ journalPath }); t.after(() => reopened.dispose()); const history = await reopened.listHistory(); assert.equal(history.receipts[0].steps[0].state, 'interrupted'); assert.equal(history.receipts[0].canUndo, false);
+  faults.release(); const undo = await service.undo(result.receipt.id); assert.equal(undo.ok, true, JSON.stringify(undo)); assert.equal(await fs.readFile(file, 'utf8'), 'Original selected content.'); assert.equal(await fs.readFile(second, 'utf8'), 'Second');
+});
+test('a post-undo journal failure cannot relabel an already restored file as moved', async t => {
+  const faults = journalFaults({ failState: 'undone', failCount: 6 }), { service, file, journalPath, rename } = await fixture(t, faults);
+  const moved = await service.execute((await rename()).previewId), result = await service.undo(moved.receipt.id);
+  assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.receipt.steps[0].state, 'undone'); assert.equal(result.receipt.canUndo, false); assert.equal(await fs.readFile(file, 'utf8'), 'Original selected content.'); assert.equal(JSON.parse(await fs.readFile(journalPath, 'utf8')).receipts[0].steps[0].state, 'undone');
+});
+test('nontransient journal errors are not retried and preserve the original selected file', async t => {
+  const faults = journalFaults({ failState: '*', failCount: Infinity, code: 'ENOSPC' }), { service, file, rename } = await fixture(t, faults);
+  const result = await service.execute((await rename()).previewId); assert.equal(result.ok, false); assert.equal(faults.attempts(), 1); assert.deepEqual(faults.waits, []); assert.equal(await fs.readFile(file, 'utf8'), 'Original selected content.');
+});
+
+test('a blocked replacement preserves the existing journal bytes and never removes its durable path', async t => {
+  const faults = journalFaults({ failState: '*', failCount: Infinity, enabled: false }), { service, file, journalPath, rename, directory } = await fixture(t, faults);
+  const first = await service.execute((await rename()).previewId); assert.equal(first.ok, true); assert.equal((await service.undo(first.receipt.id)).ok, true);
+  const original = await fs.readFile(journalPath); faults.block(); const result = await service.execute((await rename('other.txt')).previewId);
+  assert.equal(result.status, 'persistence-failed'); assert.deepEqual(await fs.readFile(journalPath), original); assert.equal(await fs.readFile(file, 'utf8'), 'Original selected content.');
+  assert.equal((await fs.readdir(directory)).some(name => name.startsWith('history.json.') && name.endsWith('.tmp')), false);
 });

@@ -152,6 +152,32 @@ async function stop() {
       await evaluate(`document.getElementById('startLocalBtn').click(); void 0`);
       const local = await evaluate(`({ visible: !document.getElementById('mainScreen').classList.contains('hidden'), key: !!apiKey, mic: !!micStream, input: OlangaWorkspace.snapshot().speechInput })`);
       check('Keyless startup works without opening a microphone', local.visible && !local.key && !local.mic && local.input === 'cloud');
+      check('Packaged conversational memory learns and revises without a provider', await evaluate(`(async () => {
+        isTtsMuted = true;
+        await processTextCommandWithGemini('I live in Seattle');
+        const original = OlangaWorkspace.snapshot().facts.find(fact => fact.slot === 'city');
+        await processTextCommandWithGemini('I now live in Boston');
+        const changed = OlangaWorkspace.snapshot().facts.find(fact => fact.slot === 'city');
+        return original && changed?.id === original.id && changed.text === 'I live in Boston' && changed.source === 'conversation';
+      })()`));
+      check('Packaged learned-memory notices clear when their fact is deleted', await evaluate(`(() => {
+        const fact = OlangaWorkspace.snapshot().facts.find(item => item.slot === 'city');
+        OlangaWorkspace.deleteFact(fact.id);
+        const notice = document.querySelector('.memory-insight'); return notice.hidden && !notice.textContent.includes('Boston') && !OlangaTurns.snapshot().canRepeatResult;
+      })()`));
+      check('Packaged voice control opens the exact routine editor without executing', await evaluate(`(async () => {
+        await processTextCommandWithGemini('Create a routine named Packaged review');
+        return document.getElementById('workspaceDialog').open && !document.querySelector('[data-workspace-page="1"]').hidden && document.getElementById('routineName').value === 'Packaged review' && !activeTasks.some(item => item.text === 'Packaged routine task');
+      })()`));
+      check('Packaged routine review runs once only after an explicit spoken-style confirmation', await evaluate(`(async () => {
+        OlangaWorkspace.saveRoutine({name:'Packaged review',lines:['Add Packaged routine task to my checklist']},OlangaIntents.parse);
+        await processTextCommandWithGemini('Run routine Packaged review');
+        if(!OlangaRoutineControl.hasReview() || activeTasks.some(item=>item.text==='Packaged routine task'))return false;
+        await processTextCommandWithGemini('Run selected steps');
+        await processTextCommandWithGemini('Run selected steps');
+        return activeTasks.filter(item=>item.text==='Packaged routine task').length===1 && /no open review/i.test(aiText.textContent);
+      })()`));
+      check('Packaged backup, history and guided audio modules are available without enabling capture', await evaluate("!!OlangaBackupCenter && typeof openOlangaNotesHistory === 'function' && typeof OlangaAudioInput.testPhrase === 'function' && !!document.getElementById('audioSetupSection') && !micStream"));
       const update = await evaluate('window.electronAPI.getUpdateState()');
       check('Packaged updater starts idle with no automatic download or install', update.phase === 'idle' && update.status === 'not-checked' && update.installedVersion === report.version && !update.canDownload && !update.canInstall && update.bytesReceived === 0 && update.automaticUpdatesEnabled === false);
       await evaluate("(() => { OlangaSettingsNavigation.open('user'); for (const [id, value] of Object.entries({ appearanceAccentSelect: 'rose', appearanceContrastSelect: 'strong', appearanceGlowSelect: 'subtle', appearanceMotionSelect: 'reduced', responseStyleSelect: 'concise', preferredAddressInput: 'Fixture' })) { const control = document.getElementById(id); control.value = value; control.dispatchEvent(new Event('change', { bubbles: true })); } })()");

@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="desktop-workflows.css">
   <link rel="stylesheet" href="settings.css">
+  <link rel="stylesheet" href="backup-center.css">
   <link rel="stylesheet" href="news.css">
   <script src="./js/appearance.js"></script>
 </head>
@@ -469,7 +470,7 @@
               <div class="voice-settings-row"><label for="responseStyleSelect">Response style</label><select id="responseStyleSelect"><option value="natural">Natural</option><option value="concise">Concise</option></select></div>
               <div class="voice-settings-row"><label for="preferredAddressInput">What should Olanga call you?</label><input id="preferredAddressInput" maxlength="40" placeholder="Leave blank for no nickname" autocomplete="off"></div>
             </div>
-            <p class="settings-hint settings-hint-after">Conversation context is organized automatically. Explicit memories stay in Workspace → Memories; deleting one also removes affected recent context on this device.</p>
+            <p class="settings-hint settings-hint-after">Conversation context is organized automatically. Olanga learns clear everyday facts and preferences from conversation. Review, pause or undo learning in Workspace → Memories; deleting a memory clears affected recent context on this device.</p>
             <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="bargeInToggle" checked aria-labelledby="bargeInLabel"><span class="slider" aria-hidden="true"></span></label><label for="bargeInToggle" id="bargeInLabel">Interrupt a reply by saying “Hey Olanga”</label></div>
             <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="streamRepliesToggle" checked aria-labelledby="streamRepliesLabel"><span class="slider" aria-hidden="true"></span></label><label for="streamRepliesToggle" id="streamRepliesLabel">Start speaking before the full reply is ready</label></div>
             <button type="button" class="settings-text-link" data-open-settings-tab="core">Choose a voice or speech recognition in Core settings →</button>
@@ -568,7 +569,7 @@
               <div><dt>Listening &amp; speech</dt><dd>Wake-word recognition runs on this computer. With cloud recognition, your activated request audio goes to Google Gemini. On-device recognition keeps that audio local and asks you to review the text; submitted questions may still use Gemini. Gemini Live streams audio only during a session you start.</dd></div>
               <div><dt>Answers &amp; context</dt><dd>Gemini requests can include recent conversation, your checklist, saved location and enabled memories. Cloud screen assistance sends captures you approve. Magpie sends reply text to NVIDIA when you choose that voice.</dd></div>
               <div><dt>Saved on this device</dt><dd>API keys use Windows-backed encryption. Notes, memories, tasks and other saved content are local but are not all encrypted by Olanga. Activity retention and performance measurements are optional.</dd></div>
-              <div><dt>Your controls</dt><dd>Review or delete memories in Workspace. Choose whether to retain activity and diagnostics. Clear individual saved items where you manage them. Removing local data does not remove copies already held by a provider.</dd></div>
+              <div><dt>Your controls</dt><dd>Learning of clear everyday facts is on by default and runs locally. Say pause learning or forget what you just learned, or review and delete memories in Workspace. Choose whether to retain activity and diagnostics. Clear individual saved items where you manage them. Removing local data does not remove copies already held by a provider.</dd></div>
             </dl>
             <div class="privacy-actions"><button type="button" class="settings-back-btn" data-open-settings-tab="core">Review connected services</button><button type="button" class="settings-back-btn" data-privacy-workspace="5">Manage memories</button><button type="button" class="settings-back-btn" data-privacy-workspace="0">Activity history</button><button type="button" class="settings-back-btn" data-privacy-workspace="4">Local diagnostics</button></div>
             <p class="settings-hint settings-hint-after">The full notice also covers screen captures, optional work tools, network connections, retention and removing local data.</p>
@@ -612,7 +613,11 @@
   <script src="./shared/quick-actions.js"></script>
   <script src="./shared/gemini-request.js"></script>
   <script src="./shared/fast-intents.js"></script>
+  <script src="./shared/memory-learning.js"></script>
   <script src="./shared/productivity.js"></script>
+  <script src="./shared/conversational-controls.js"></script>
+  <script src="./shared/workspaces.js"></script>
+  <script src="./shared/notes-store.js"></script>
   <script src="./shared/nvidia-key.js"></script>
   <script src="./shared/gemini-keys.js"></script>
   <script src="./shared/shortcuts.js"></script>
@@ -624,6 +629,7 @@
   <script src="./shared/turn-corrections.js"></script>
   <script src="./shared/voice-endpoint.js"></script>
   <script src="./shared/schedules.js"></script>
+  <script src="./shared/personal-backup.js"></script>
   <script src="./js/core.js"></script>
   <script src="./js/audio-controls.js"></script>
   <script src="./js/voice.js"></script>
@@ -632,6 +638,7 @@
   <script src="./js/tts.js"></script>
   <script src="./js/timers-tasks.js"></script>
   <script src="./js/productivity.js"></script>
+  <script src="./js/assistant-controls.js"></script>
   <script src="./js/assistant.js"></script>
   <script src="./shared/action-plan.js"></script>
   <script src="./js/desktop-workflows.js"></script>
@@ -640,10 +647,13 @@
   <script src="./js/news.js"></script>
   <script src="./js/settings.js"></script>
   <script src="./js/settings-navigation.js"></script>
+  <script src="./js/audio-setup.js"></script>
   <script src="./js/privacy.js"></script>
   <script src="./js/workbench.js"></script>
   <script src="./js/schedules.js"></script>
   <script src="./js/workbench-connections.js"></script>
+  <script src="./js/workspaces.js"></script>
+  <script src="./js/backup-center.js"></script>
   <script src="./js/phone-controller.js"></script>
 </body>
 </html>

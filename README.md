@@ -28,6 +28,8 @@ Common commands run directly through local controls, with no API key required fo
 
 **Olanga 1.6.0** brings clearer results, personal Workspace backups, organized memories and a faster News panel. Set your conversation style, adjust the familiar interface, and reach Projects, Schedules and Updates straight from Workspace. [What’s new in 1.6.0](docs/releases/1.6.0.md).
 
+**Current source:** the guide below also covers conversational learning, named workspaces, guided audio checks and broader personal backup controls implemented after 1.6.0. These source changes are not part of the published 1.6.0 installer; the release notes describe that stable download.
+
 Use **Workspace** to save app layouts, review file changes, search a project, schedule reminders and connect optional browser, editor and phone companions. Request progress and spoken action results keep you informed as Olanga works.
 
 Local commands, reviewed routines, action results, saved names, memories, spoken briefings and manual in-app updates remain part of the core experience. Optional integrations start only when you choose to use them.
@@ -59,6 +61,14 @@ This example shows a supported two-action request: open Spotify and set the syst
 | “Set an alarm for 7 AM tomorrow.” / “Stop.” | Sets a clock-time alarm. “Stop” dismisses whatever is ringing; otherwise it still pauses music. |
 | “Remember that I prefer concise answers.” | Saves a memory you can review or delete in Workspace. It's included in Gemini context only while enabled. |
 | “What do you remember about me?” / “Forget that I prefer concise answers.” | Lists saved memories or removes a matching fact. |
+| “I live in Seattle.” / “I prefer concise answers.” | Learns a supported everyday detail locally, shows what changed and offers Undo. |
+| “Stop learning.” / “Resume learning.” / “Forget what you just learned.” | Pauses or resumes conversational learning, or undoes the latest learned change. |
+| “Create a routine called Focus.” | Opens the routine editor with the name filled in. You enter and save its exact commands. |
+| “Run routine Focus.” → “Run selected steps.” | Reads the saved routine for review, then runs only the selected steps after confirmation. |
+| “Save workspace named Coursework.” | Opens a named setup. Choose saved components by voice or on screen, then say “save workspace”. |
+| “Resume workspace Coursework.” → “Resume workspace.” | Previews the linked setup, then resumes selected parts after confirmation. Companions and routines retain their own reviews. |
+| “Repeat the last result.” / “Review unfinished steps.” | Repeats the spoken result or opens a review of confirmed unfinished steps. Completed actions are preserved. |
+| “Open voice setup.” / “Open backups.” | Opens guided audio checks or the personal backup and restore center. |
 | “Brief me.” | Speaks the date/time, open tasks and upcoming timers, reminders and alarms, with headlines and weather when available. |
 | “What time is it?” / “What can you do?” | Answers locally, with no model call. |
 | “Open Chrome.” | Uses a known Windows launch target and checks for the expected app window. |
@@ -101,32 +111,39 @@ The Spotify startup and playback corrections have automated fixture coverage. Th
 
 ## Your workspace
 
-Open **Workspace** from the top bar. Direct buttons take you to **Projects**, **Schedules** and **Updates**. Command examples fill the input for you to edit and send; selecting an example does not run it.
+Open **Workspace** from the top bar. Direct buttons take you to **Resume my work**, **Projects**, **Schedules** and **Updates**. Command examples fill the input for you to edit and send; selecting an example does not run it.
 
 Inside Workspace:
 
 - **Activity** shows each action's actual result, including failures, cancellation and unverified outcomes. History is session-only by default. Optional saved history keeps operation types and statuses, without prompts or result text.
-- **Routines** save up to 12 supported local actions, such as opening and arranging apps, setting volume and starting a focus timer. Review the individual steps and choose **Run selected steps** each time. Runs stop on failure. After interruption, completed steps cannot repeat; uncertain steps require your explicit selection after checking what happened.
-- **Saved names** lets you create, edit and delete aliases for supported apps and private Spotify playlists. Enable **Use my saved names** to apply them. Olanga does not infer or save preferences from conversations.
+- **Routines** save up to 12 supported local actions, such as opening and arranging apps, setting volume and starting a focus timer. “Create a routine called Focus” opens the exact-command editor; “edit routine Focus” returns to it. “Run routine Focus” opens a review, and “run selected steps” confirms it. You can include or skip a numbered step by voice. Runs stop on failure. Completed steps cannot repeat during recovery; uncertain steps require you to inspect the result before selecting them on screen.
+- **Saved names** lets you create, edit and delete aliases for supported apps and private Spotify playlists. Enable **Use my saved names** to apply them. These mappings remain explicit; conversational learning does not create app or playlist aliases.
 - **Apps & updates** checks which supported apps Windows can find and which operations are available. Known apps use verified launch targets; other names can use Windows Search with an explicitly unverified result. Arrangement requires exactly one matching window. Check for an Olanga update, download it here, and choose **Install & restart** when you're ready.
 - **Diagnostics** optionally saves timing and outcome measurements locally, with clear and export controls. Disabling it deletes those measurements. Gemini request and token counts are available separately for the current session.
-- **Memories** keeps facts you explicitly save, with search, sorting, add and delete controls. **Use my memories in answers** is on by default. Deleting or disabling memories removes dependent local conversation context and cancels a pending reply that uses them. Ordinary conversation does not silently become saved memory.
-- **Health** reports microphone, wake-word, speech recognition, voice, Gemini, storage, internet and shortcut status, with suggested fixes. Checking status does not call a model. The separate **Test Gemini connection** button sends a short Gemini request; the same test is available beside the key in Core settings.
-- **Backups** exports explicit memories, saved app and playlist names, and routine definitions. Import validates the file, shows what will replace those collections, and waits for confirmation. It never runs imported routines. These are personal Workspace backups; they exclude API keys, settings, timers, notes, checklist entries, schedules, activity and run receipts.
+- **Memories** brings explicit memories and supported details learned in conversation into one searchable list, labeled by their source. Conversational learning and **Use my memories in answers** are on by default and have separate controls. Learned changes appear with Undo; manual memories require an explicit replacement choice. Deleting or disabling memories removes dependent local conversation context and cancels a pending reply that uses them.
+- **Health** reports microphone, wake-word, speech recognition, voice, Gemini, storage, internet and shortcut status, with buttons that open the relevant fix or recovery control. **Core settings → Audio setup** lets you choose a microphone, watch its input level, check a spoken phrase locally and play a reply sample. Opening setup does not enable voice input or run a test. The separate **Test Gemini connection** button sends a short Gemini request; the same test is available beside the key.
+- **Backups** includes **Back up notes, tasks and preferences**, which opens personal backup and restore with six selectable collections: current notes; checklist; timers, reminders and alarms; schedules; portable appearance and conversation preferences; and memories, saved names and routine definitions. Review the counts and select which collections to replace. Imported timers stay paused and schedules disabled until you resume them; restore never runs routines or notifications. The original, narrower **Export personal content** control remains available for Workspace memories, saved names and routines.
 
 If Workspace storage is damaged, unreadable or from an unsupported version, Olanga preserves the original record and pauses changes to that record. Session-only work can continue. Backups provides retry and recovery controls; replacing or resetting data requires a verified recovery copy first. Retained recovery copies can contain older memories and activity metadata until you delete them. [Storage and backup details](PRIVACY.md).
+
+Conversational learning uses local rules for seven categories: name, city, temperature units, measurement units, answer length, favorite color and music genre. It handles clear statements you make directly, skips questions, quotations and sensitive or operational wording, and never learns from AI replies, documents, screenshots or tool results. It does not train a model or grant permission to act.
+
+Up to 50 explicit and learned memories share the same local list. Learning can update its own matching detail; an explicitly saved memory needs your confirmation before replacement. Say “what have you learned about me?”, “what memories did you use?” or “stop learning”. Undo is available for ten minutes in the current session, with up to ten recent learned-change records; you can edit or delete the saved memory afterward. Pausing learning preserves existing memories. For answers, Olanga selects relevant enabled facts within an eight-memory, 1,800-character budget.
+
+Personal backup files are limited to 4 MB and replace only the collections you select. They exclude saved provider credentials, microphone and other device settings, project-folder registrations, named workspace bundles, window and companion sessions, activity, run receipts, note versions and deleted-note history. A verified local copy of the selected originals is retained before replacement, with review, download and deletion controls. These exports are unencrypted files you control; private information you wrote into selected notes or memories remains in that content.
 
 Routines and their recovery records are saved on this device, including the commands you chose. They never run automatically on startup. Timers, reminders, alarms and checklist entries also persist. Overdue timers and reminders ring when Olanga reopens; they cannot alert while the app is closed or Windows is asleep. Relative reminders support up to 24 hours; clock-time reminders and alarms support today or tomorrow. They are not recurring schedules.
 
 ## Work tools
 
-Open **Projects** or **Schedules** directly from Workspace, or choose **Workspace → Apps & updates → Work tools** for the full collection. These tools use the existing theme and start only when you choose an operation.
+Open **Resume my work**, **Projects** or **Schedules** directly from Workspace, or choose **Workspace → Apps & updates → Work tools** for the full collection. Work tools opens on **Resume my work**. These tools use the existing theme and start only when you choose an operation.
 
 | Tool | What you can do |
 | --- | --- |
+| **Resume my work** | Combine an existing window layout, browser session, editor session, project and optional focus routine into one named setup. Review fresh targets before each resume; inspect per-component results and cancel remaining steps. Up to 20 setups and 20 resume records stay local. |
 | **Working sessions** | Save selected supported app windows and their layout. Preview a restore, reuse a verified window or open a missing app, and check each result. Ambiguous window matches require a fresh selection. |
 | **Files** | Choose up to 50 local files, preview renames or moves on the same volume, and apply them without overwriting another file. Checked undo refuses a file that changed after the move. |
-| **Projects** | Index a folder you select, search its text locally, and inspect source paths and line references. A separate button sends only the displayed excerpts and question to Gemini for a cited answer. |
+| **Projects** | Index a folder you select, search its text locally, and inspect source paths and line references. A separate button rechecks the reviewed excerpts before sending them and your question to Gemini. Changed sources require a new search and review. |
 | **Selected content** | Ask about text you paste or explicitly share from a companion. Review the text before sending it to Gemini. Generated answers do not edit the source. |
 | **Schedules** | Save once, daily or weekly reminders and briefings. Notifications work while Olanga is open or in the tray. Missed occurrences are grouped once; online briefing additions require their own opt-in. |
 | **Calendar** | Import an `.ics` snapshot of upcoming one-off events, add a preparation reminder, or explicitly ask Gemini for a checklist. Recurrence rules and live account synchronization are not supported. |
@@ -135,11 +152,17 @@ Open **Projects** or **Schedules** directly from Workspace, or choose **Workspac
 | **MCP tools** | Connect a trusted HTTPS MCP endpoint, inspect its tool schema, and approve the exact arguments for each call. Credentials stay in memory. OAuth and local command servers are not supported. |
 | **Phone remote** | Start a temporary HTTPS session, pair a phone, and send a single app, volume or timer command. Setup requires a local TLS certificate and phone trust; access can be revoked immediately. [Phone setup](docs/PHONE_REMOTE.md). |
 
-**Workspace** is the main button in the top bar. The request card shows progress, completed steps and cancellation.
+**Workspace** is the main button in the top bar. The request card shows readable results for individual actions, cancellation, **Repeat spoken result** and **Review unfinished steps**. A speech failure does not relabel completed actions as failed. Unfinished-step review excludes completed, uncertain and unverified actions; it never retries a whole request automatically.
 
-Project indexes stay in memory and require an explicit refresh after restart. Indexing is bounded to 400 text files and 8 MB; hidden files, common credential filenames and generated folders are excluded. Review the excerpts before sharing: filename filters cannot identify every secret. Window sessions save app layouts; browser tabs and editor documents use their separate companion sessions.
+Project indexes stay in memory and require an explicit refresh after restart. Indexing is bounded to 400 text files and 8 MB; hidden files, common credential filenames and generated folders are excluded. Review the excerpts before sharing: filename filters cannot identify every secret. Window sessions save app layouts; browser tabs and editor documents keep their own companion identities. Named workspaces coordinate references to these existing records. Choosing a project only selects it: it does not refresh an index or share sources. A linked focus routine opens its own review and does not run automatically.
 
 Local conversation requires an OpenAI-compatible chat endpoint on this computer; local speech requires a compatible WAV speech endpoint. Gemini Live is an optional preview with a ten-minute session limit and needs a supported model, API access, and an already enabled microphone. Opening Work tools never starts microphone capture or an external connection. Physical microphone, mobile-browser and live companion compatibility still need validation on the devices you intend to use.
+
+## Notes you can recover
+
+**Notepad → History** shows earlier versions and deleted notes. Typing is grouped into 30-second checkpoints. History retains up to 15 versions per note, 80 versions overall and 30 deleted notes within a 500,000-character serialized text budget; older copies leave as those limits fill. Restoring a version preserves the current version first. Retained copies can be deleted individually.
+
+Unreadable note records are preserved and saving pauses until you review recovery. You can download the original records before starting fresh; a retained recovery copy has its own download and deletion controls. Personal exports include current notes, while versions and trash remain local.
 
 ## News at a glance
 
@@ -203,8 +226,10 @@ For supported full-field text replacements, the result includes **Before**, **Af
 Settings fills the available window, with responsive columns on larger displays and a single scrolling column in narrow windows. The header and section tabs stay within reach. It is organized into three sections:
 
 - **User preferences** contains your accent color, motion preference, speaking rate, conversation behavior, startup, shortcuts, corner light, wake words, optional panels and location.
-- **Core settings** keeps Gemini and NVIDIA keys, speech recognition and the voice engine together. Provider keys retain their separate save and test controls.
+- **Core settings** keeps Gemini and NVIDIA keys, speech recognition, microphone selection, guided audio checks and the voice engine together. Provider keys retain their separate save and test controls.
 - **Privacy** explains local storage and connected features, links directly to memory, activity and diagnostic controls, and includes the full [privacy notice](PRIVACY.md) offline. You can read it before completing setup.
+
+To check voice setup, enable voice input on Home, then choose **Check a spoken phrase** in Core settings and say “Olanga audio check”. The five-second check stays on this device and runs no command. **Play a reply sample** uses your selected voice; Magpie sends that sample text to NVIDIA. A completed playback check cannot establish whether sound reached your speakers.
 
 Choose violet, blue, mint, rose or amber accents, stronger window contrast, and standard, subtle or disabled orb glow. A preview shows the choices; Restore appearance resets only the visual preferences. Olanga keeps its typography and orb status colors. Reduced motion follows Windows by default and can be enabled separately. Preferences show saving, saved and retry states; the existing Outfit font is bundled for consistent rendering without a font-server request.
 
@@ -226,7 +251,7 @@ Read the [full privacy notice](PRIVACY.md) for data flows, retention, provider p
 
 API keys are encrypted locally with Windows-backed credential protection. Gemini requests retrieve saved credentials in the main process, with bounded requests, cancellation and redacted error reporting. Conversation context, desktop captures, plans and temporary undo checkpoints stay in memory. The separate Windows Snipping Tool used for selected-area diagnosis may retain captures according to its own settings.
 
-Saved names, routines, timers, reminders, alarms, memories and checklist entries stay in the local profile. Memories you ask Olanga to keep are included as labeled context in Gemini requests only while **Use my memories in answers** is on; they never authorize actions. Daily briefings read your local tasks and timers, fetch optional RSS headlines, and request weather through Google Search when a Gemini key and location are available. Missing online sources are omitted. Activity retention and performance collection are opt-in; diagnostic exports contain timing and outcome fields, not transcripts, keys or screenshots. Local preferences do not grant additional permission to act.
+Saved names, routines, timers, reminders, alarms, memories and checklist entries stay in the local profile. Explicit and supported conversational memories are stored locally. Relevant enabled memories can be included as labeled context in Gemini requests; they never authorize actions. Local learning makes no model request itself and can be paused separately from using existing memories. Daily briefings read your local tasks and timers, fetch optional RSS headlines, and request weather through Google Search when a Gemini key and location are available. Missing online sources are omitted. Activity retention and performance collection are opt-in; diagnostic exports contain timing and outcome fields, not transcripts, keys or screenshots. Local preferences do not grant additional permission to act.
 
 Gemini **3.5 Flash-Lite** handles transcription, routing and responses; **3.5 Flash** handles reasoning, with Flash-Lite as an availability fallback. Google Search is a separate path used for current-information requests.
 

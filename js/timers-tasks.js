@@ -27,7 +27,7 @@ function scheduleTimerCountdowns() {
   countdownTimeout = null;
   const now = Date.now();
   let remaining = Infinity;
-  for (const timer of activeTimers) if (!timer.ringing) remaining = Math.min(remaining, timer.endTime - now);
+  for (const timer of activeTimers) if (!timer.ringing && !timer.paused) remaining = Math.min(remaining, timer.endTime - now);
   if (remaining === Infinity) return;
   const delay = Math.max(0, Math.min(remaining, timerDisplaysVisible() ? 1000 : 60000));
   countdownTimeout = setTimeout(refreshTimerCountdowns, delay);
@@ -37,7 +37,7 @@ function refreshTimerCountdowns() {
   const now = Date.now();
   const visible = timerDisplaysVisible();
   for (const timer of activeTimers) {
-    if (timer.ringing) continue;
+    if (timer.ringing || timer.paused) continue;
     if (timer.endTime <= now) ringTimer(timer);
     else if (visible) updateTimerDisplay(timer);
   }
@@ -103,7 +103,7 @@ function stopTimerAlarm() {
 
 function saveTimers() {
   try {
-    localStorage.setItem(TIMERS_STORAGE_KEY, JSON.stringify(activeTimers.map(({ id, endTime, label, kind }) => (kind && kind !== 'timer' ? { id, endTime, label, kind } : { id, endTime, label }))));
+    localStorage.setItem(TIMERS_STORAGE_KEY, JSON.stringify(activeTimers.map(({ id, endTime, label, kind, paused, remainingMs }) => ({ id, endTime, label, ...(kind && kind !== 'timer' ? { kind } : {}), ...(paused ? { paused: true, remainingMs } : {}) }))));
     return true;
   } catch (error) {
     console.error('Failed to save timers:', error);
@@ -112,6 +112,7 @@ function saveTimers() {
 }
 
 function startTimerCountdown(timerObj) {
+  if (timerObj.paused) return;
   if (timerObj.endTime <= Date.now()) {
     // Only a restored record can already be due: every new duration is positive.
     ringTimer(timerObj, true);
@@ -133,7 +134,8 @@ function loadTimers() {
             !Number.isFinite(timer.endTime) || timer.endTime <= 0 || timer.endTime > 8640000000000000 ||
             typeof timer.label !== 'string' || !timer.label.trim()) continue;
         seen.add(timer.id);
-        activeTimers.push({ id: timer.id, endTime: timer.endTime, label: timer.label, kind: TIMER_KINDS.has(timer.kind) ? timer.kind : 'timer', intervalId: null, ringing: false });
+        if (timer.paused === true && (!Number.isSafeInteger(timer.remainingMs) || timer.remainingMs < 0 || timer.remainingMs > 31536000000)) continue;
+        activeTimers.push({ id: timer.id, endTime: timer.endTime, label: timer.label, kind: TIMER_KINDS.has(timer.kind) ? timer.kind : 'timer', intervalId: null, ringing: false, ...(timer.paused === true ? { paused: true, remainingMs: timer.remainingMs } : {}) });
       }
     }
   } catch (error) {
@@ -141,7 +143,7 @@ function loadTimers() {
   }
   renderTimers();
   const restoredAt = Date.now();
-  for (const timer of activeTimers) if (timer.endTime <= restoredAt) ringTimer(timer, true);
+  for (const timer of activeTimers) if (!timer.paused && timer.endTime <= restoredAt) ringTimer(timer, true);
   scheduleTimerCountdowns();
 }
 
@@ -211,7 +213,7 @@ function announceTimer(timerObj, text) {
 }
 
 function ringTimer(timerObj, overdue = false) {
-  if (timerObj.ringing) return;
+  if (timerObj.ringing || timerObj.paused) return;
   timerObj.ringing = true;
   const ring = describeTimerRing(timerObj, overdue);
   try { window.electronAPI?.notify?.({ title: ring.title, body: ring.body }); } catch (_) {}
@@ -261,6 +263,7 @@ function timerNoun(timer) {
 }
 
 function describeActiveTimer(timer) {
+  if (timer.paused) return `${timer.label}, paused after import with ${formatTime(timer.remainingMs)} remaining`;
   if (timer.kind === 'alarm') return `${timer.label} at ${formatClock(timer.endTime)}`;
   return `${timer.label} with ${formatTime(Math.max(0, timer.endTime - Date.now()))} left`;
 }
@@ -320,7 +323,7 @@ function renderTimers() {
     card.dataset.kind = timer.kind || 'timer';
 
     const remainingMs = timer.endTime - Date.now();
-    const formatted = formatTime(remainingMs > 0 ? remainingMs : 0);
+    const formatted = timer.paused ? 'Paused · ' + formatTime(timer.remainingMs) : formatTime(remainingMs > 0 ? remainingMs : 0);
     const when = timer.kind === 'alarm' ? `<span class="timer-when">${escapeHTML(formatClock(timer.endTime))}</span>` : '';
 
     card.innerHTML = `
@@ -341,6 +344,7 @@ function renderTimers() {
       cancelTimer(timer.id);
     });
 
+    if (timer.paused) { const resume = document.createElement('button'); resume.type = 'button'; resume.className = 'timer-resume-btn'; resume.textContent = 'Resume'; resume.setAttribute('aria-label', 'Resume ' + timer.label); resume.addEventListener('click', () => { const result = resumeImportedTimer(timer.id); if (!result.ok && typeof showError === 'function') showError(result.message); }); card.insertBefore(resume, closeBtn); }
     timersContainer.appendChild(card);
   });
 }
@@ -616,3 +620,34 @@ function renderTasks() {
     listContainer.appendChild(item);
   });
 }
+
+
+// Imported clocks never ring or count down until the user resumes each one.
+function resumeImportedTimer(id) {
+  const timer = activeTimers.find(item => item.id === id && item.paused);
+  if (!timer) return { ok: false, message: 'This imported timer is no longer paused.' };
+  const previous = { ...timer }; timer.endTime = Date.now() + Math.max(1000, timer.remainingMs); delete timer.paused; delete timer.remainingMs;
+  if (!saveTimers()) { Object.assign(timer, previous); return { ok: false, message: 'The timer could not be resumed because the change could not be saved.' }; }
+  renderTimers(); scheduleTimerCountdowns(); return { ok: true, message: timer.label + ' resumed.' };
+}
+function restoreLocalRecord(key, raw) {
+  if (raw === null) localStorage.removeItem(key); else localStorage.setItem(key, raw);
+  if (localStorage.getItem(key) !== raw) throw new Error('Restored local data could not be verified.');
+}
+window.OlangaTimersAdapter = {
+  original: () => localStorage.getItem(TIMERS_STORAGE_KEY),
+  portable: () => activeTimers.map(timer => ({ label: timer.label, kind: timer.kind || 'timer', remainingMs: Math.max(0, Math.round(timer.paused ? timer.remainingMs : timer.endTime - Date.now())) })),
+  replacePaused(items) {
+    const before = localStorage.getItem(TIMERS_STORAGE_KEY), now = Date.now();
+    const next = items.map((item, index) => ({ id: 'import-' + now + '-' + index, label: item.label, kind: item.kind, paused: true, remainingMs: item.remainingMs, endTime: now + Math.max(1000, item.remainingMs) }));
+    restoreLocalRecord(TIMERS_STORAGE_KEY, JSON.stringify(next)); loadTimers();
+    return before;
+  },
+  rollback(raw) { restoreLocalRecord(TIMERS_STORAGE_KEY, raw); loadTimers(); }
+};
+window.OlangaChecklistAdapter = {
+  original: () => localStorage.getItem('olanga_tasks'),
+  portable: () => activeTasks.map(task => ({ id: task.id, text: task.text, completed: !!task.completed, dueDate: task.dueDate || null })),
+  replace(items) { restoreLocalRecord('olanga_tasks', JSON.stringify(items)); loadTasks(); renderTasks(); },
+  rollback(raw) { restoreLocalRecord('olanga_tasks', raw); loadTasks(); renderTasks(); }
+};

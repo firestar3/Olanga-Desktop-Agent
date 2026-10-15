@@ -1,3 +1,32 @@
+# Current source validation — October 14, 2026
+
+These checks cover the conversational-learning and workspace changes after the published 1.6.0 release. They do not describe a new public installer. Version/tag/release assets remain unchanged; the local development package is used only for isolated acceptance checks. Production source was frozen before the final unit run.
+
+| Check | Confirmed result |
+| --- | --- |
+| Full unit suite | **935 passed**, zero failures, skips or cancellations |
+| Source and required assets | **85 JavaScript files passed**; bundled backup stylesheet and existing icon/model assets checked |
+| Conversational assistant | **22 focused integration cases**, included in the full unit suite: voice transcript learning, same-slot updates, spoken manual-memory replacement, mixed requests, compound-memory preservation, pause/undo, relevant context, deletion during repeat speech, current-answer memory evidence, local cancellation and stale-confirmation refusal |
+| Routine conversation | **11 production-renderer checks** using the actual audio-request entry point with fixture transcription: exact editor navigation, named routine review, spoken selection, confirmation, cancellation, expiration/change rejection, duplicate confirmation and unfinished-step recovery |
+| Guided audio | **8 production-renderer checks** with mocked devices; **11 AudioInput API cases** and **10 Health cases** are included in the unit total. Selection, rollback, disconnected-device recovery, local phrase isolation and hidden-meter shutdown are covered |
+| Personal backup and Notes history | **10 production-renderer checks**: real JSON export/download, six-collection previews/restores, write failure rollback, paused clocks/disabled schedules across reload, retained original Notes bytes, history/trash and recovery-copy controls |
+| Named workspaces and Work tools | **16 production-renderer checks** covering scoped save/resume, fresh previews, companion gates, project source freshness, partial results and readable Home controls at 400px and 150% zoom |
+| Existing Settings and Workspace | **20 Settings checks** and **16 Workspace checks** |
+| Renderer regressions | **12 checks** including Notes save/import races and startup with blocked storage |
+| Responsive layout | **91 checks** across narrow, normal, wide and enlarged-text layouts |
+| Development Windows package | **27 packaged-executable checks passed**, including keyless setup, conversational learning/update/deletion, exact routine-editor navigation, spoken-style confirmation without duplicate effects, portable modules and persistence across reload. **116 packaged source files**, native helpers, local model and version match the frozen source; app/tray orb pixels verified at all nine sizes. No new installer or release was published |
+| Renderer total | **184 checks passed** across the eight fixture groups above; no live providers, personal profiles, physical microphone, Spotify playback or native desktop actions |
+
+Learning uses conservative local extraction of seven clear everyday fact/preference categories. It does not train a model, infer new action permissions, learn from model/tool/document output or promise to remember arbitrary speech. A manually saved compound memory is preserved when one part conflicts. Mixed requests still receive their answer; a safe replacement question follows only after a successful answer. Recent memory-dependent conversation and repeatable results are cleared when a fact is deleted, disabled or replaced.
+
+Native result uncertainty is retained in both Home and Activity. A missing/failed spoken reply does not turn a verified completed action into a failed action. Reviewing unfinished work never automatically selects completed or uncertain effects. The Windows file-workflow journal now retries transient atomic-rename locks without repeating a file operation; exhausted writes preserve verified physical results and stop remaining changes.
+
+Reproduce with npm test, npm run check, npm run smoke:routines, npm run smoke:audio-setup, npm run smoke:backups, npm run smoke:settings, npm run smoke:workspace, npm run smoke:workbench, npm run smoke:renderer and npm run smoke:layout. CI now includes the three new fixture commands. Local renderer checks used Electron 44.7.0 and disposable profiles. The prior restriction to fixture testing remains in place: live microphone/transcription, actual Spotify and user-profile upgrade behavior are not newly verified by this increment.
+
+Reports, disposable profiles, screenshots and build outputs stay under ignored build/qa paths. Source control contains code, test fixtures and documentation only. README and the packaged privacy notice document learning controls, limits, retention and backup exclusions.
+
+---
+
 # 1.6.0 validation — October 12, 2026
 
 The 1.6.0 candidate adds protected Workspace storage and personal backups, organized explicit memories, automatic conversation-context cleanup, response preferences, direct Workspace navigation, a source-based News reader and stronger update readiness checks. Completed results appear before acknowledgment speech finishes. Settings retains the shared theme, with User preferences, Core settings and an offline Privacy notice.

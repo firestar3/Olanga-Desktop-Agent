@@ -37,7 +37,10 @@
     "smoke:news": "electron tests/news-reader-smoke.js --hidden",
     "smoke:installer:e2e": "node tests/update-installer-e2e-smoke.js",
     "check:performance": "node scripts/check-performance-budget.js",
-    "smoke:layout": "electron tests/visual-layout-smoke.js --hidden"
+    "smoke:layout": "electron tests/visual-layout-smoke.js --hidden",
+    "smoke:audio-setup": "electron tests/audio-setup-smoke.js --hidden",
+    "smoke:backups": "electron tests/personal-backup-smoke.js --hidden",
+    "smoke:routines": "electron tests/routine-conversation-smoke.js --hidden"
   },
   "keywords": [
     "ai",
@@ -83,7 +86,8 @@
       "settings.css",
       "PRIVACY.md",
       "assets/fonts/**/*",
-      "news.css"
+      "news.css",
+      "backup-center.css"
     ],
     "extraResources": [
       {

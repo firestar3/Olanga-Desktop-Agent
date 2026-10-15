@@ -1,37 +1,55 @@
 /* Explicit schedules run only while Olanga is open. No system scheduler or automatic speech. */
 (function () {
   if (!window.OlangaWorkbench || typeof OlangaSchedules === 'undefined') return;
-  const store = OlangaSchedules.createStore(localStorage);
+  let store = OlangaSchedules.createStore(localStorage);
   const localBriefing = () => typeof OlangaBriefing !== 'undefined' ? OlangaBriefing.compose({ now: new Date(), tasks: typeof activeTasks !== 'undefined' ? activeTasks : [], timers: typeof activeTimers !== 'undefined' ? activeTimers : [], headlines: [], weather: '' }) : 'Open Olanga to view your tasks and timers.';
-  const runner = OlangaSchedules.createRunner(store, {
+  const runnerOptions = {
     localBriefing,
     onlineBriefing: async () => {
       if (typeof buildDailyBriefing !== 'function') return localBriefing();
       return (await buildDailyBriefing()).message;
     },
     notify: payload => window.electronAPI?.notify?.(payload)
-  });
+  };
+  let runner = OlangaSchedules.createRunner(store, runnerOptions);
+  let restoreSuspended = false, pendingTick = null;
   let render = () => {}, lastError = '';
   let interval = null;
   let disposed = false;
   function syncSchedulePolling() {
     const state = store.snapshot();
-    const needed = !disposed && !state.error && state.items.some(item => item.enabled && item.nextAt !== null);
+    const needed = !disposed && !restoreSuspended && !state.error && state.items.some(item => item.enabled && item.nextAt !== null);
     if (needed && interval === null) interval = setInterval(tick, 5000);
     else if (!needed && interval !== null) { clearInterval(interval); interval = null; }
   }
   // Calendar imports and the schedules page share this store. Start and stop
   // delivery checks whenever either changes it; empty/disabled schedules sleep.
-  for (const name of ['add', 'enable', 'remove']) {
+  function wrapMutations() { for (const name of ['add', 'enable', 'remove']) {
     const mutate = store[name];
     store[name] = (...args) => { const result = mutate(...args); syncSchedulePolling(); return result; };
   }
+  }
+  wrapMutations();
   async function tick() {
-    try { if (await runner.tick()) render(); lastError = ''; }
+    if (restoreSuspended) return;
+    try { pendingTick = runner.tick(); if (await pendingTick) render(); lastError = ''; }
     catch (error) { if (lastError !== error.message) { lastError = error.message; console.warn('[Olanga] Schedule delivery stopped:', error.message); } }
-    finally { syncSchedulePolling(); }
+    finally { pendingTick = null; syncSchedulePolling(); }
   }
   window.OlangaScheduleStore = store;
+  window.OlangaSchedulesAdapter = {
+    original: () => localStorage.getItem(OlangaSchedules.KEY),
+    portable() { const state = store.snapshot(); if (state.error) throw new Error('Recover saved schedules before exporting them.'); return state.items.map(item => { const { kind, title, repeat, online, onceAt, time, days } = item; return { kind, title, repeat, online, ...(repeat === 'once' ? { onceAt } : { time }), ...(repeat === 'weekly' ? { days } : {}) }; }); },
+    async suspend() { restoreSuspended = true; syncSchedulePolling(); if (pendingTick) await pendingTick; },
+    resumePolling() { restoreSuspended = false; syncSchedulePolling(); },
+    reload() { store = OlangaSchedules.createStore(localStorage); runner = OlangaSchedules.createRunner(store, runnerOptions); wrapMutations(); window.OlangaScheduleStore = store; render(); syncSchedulePolling(); },
+    replacePaused(items) {
+      const now = Date.now(), zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+      const saved = { version: 1, items: items.map((item, index) => ({ ...item, id: 'import-' + now + '-' + index, enabled: false, nextAt: null, createdAt: now, zone, lastDeliveredAt: null })), deliveries: [] };
+      const raw = JSON.stringify(saved); localStorage.setItem(OlangaSchedules.KEY, raw); if (localStorage.getItem(OlangaSchedules.KEY) !== raw) throw new Error('Imported schedules could not be verified.'); this.reload();
+    },
+    rollback(raw) { if (raw === null) localStorage.removeItem(OlangaSchedules.KEY); else localStorage.setItem(OlangaSchedules.KEY, raw); if (localStorage.getItem(OlangaSchedules.KEY) !== raw) throw new Error('Schedule recovery could not be verified.'); this.reload(); }
+  };
   window.OlangaWorkbench.addPage('schedules', 'Schedules', ({ section, node, button, field, actions, detail, showMessage }) => {
     detail(section, 'Create reminders or a daily briefing. Notifications work while Olanga is open, including in the tray. Missed occurrences are grouped once when you return; they never replay every missed day.');
     detail(section, 'Repeating schedules follow your computer’s local time. During a daylight-saving gap the time advances to the next valid time; a repeated hour runs once. Changing time zones schedules the next occurrence in the new zone.');

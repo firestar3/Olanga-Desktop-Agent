@@ -56,7 +56,7 @@ app.whenReady().then(async () => {
     if (!main) throw new Error('Main window missing.');
     await waitFor(() => !!window.OlangaWorkbench && !!window.OlangaScheduleStore, 'Work tools did not initialize.');
     await evaluate(() => { isTtsMuted = true; isMicMuted = true; document.getElementById('setupScreen').classList.add('hidden'); document.getElementById('mainScreen').classList.remove('hidden'); navigator.mediaDevices.getUserMedia = async () => { throw new Error('Microphone disabled.'); }; });
-    await check('Opening all optional pages starts no service or provider', async () => { const workCalls = () => report.calls.filter(channel => /^(?:work-session|file-workflow|project-|calendar-|conversation-|integration-|companion-|phone-)/.test(channel)).length; const before = workCalls(); for (const name of ['sessions', 'files', 'projects', 'selection', 'conversation', 'schedules', 'calendar', 'integrations', 'companions', 'phone']) await page(name); assert.equal(workCalls(), before); });
+    await check('Opening all optional pages starts no service or provider', async () => { const workCalls = () => report.calls.filter(channel => /^(?:work-session|file-workflow|project-|calendar-|conversation-|integration-|companion-|phone-)/.test(channel)).length; const before = workCalls(); for (const name of ['sessions', 'files', 'projects', 'selection', 'conversation', 'schedules', 'calendar', 'integrations', 'companions', 'phone', 'workspaces']) await page(name); assert.equal(workCalls(), before); });
     await check('Working sessions require selection, preview and a separate restore click', async () => {
       await page('sessions'); await field('Session name', 'Fixture session'); await button('Choose from open windows'); await waitFor(() => !!document.querySelector('[data-workbench-page="sessions"] input[type="checkbox"]'), 'Capture missing');
       await evaluate(() => { document.querySelector('[data-workbench-page="sessions"] input[type="checkbox"]').checked = true; }); await button('Save selected windows'); await waitFor(() => document.querySelector('[data-workbench-page="sessions"]').textContent.includes('Preview restore'), 'Session missing'); await button('Preview restore'); await waitFor(() => document.querySelector('[data-workbench-page="sessions"]').textContent.includes('Restore this session'), 'Preview missing'); assert.equal(report.calls.filter(value => value === 'work-session-restore').length, 0); await button('Restore this session');
@@ -83,6 +83,74 @@ app.whenReady().then(async () => {
     });
     await check('Local project search renders citations without provider work', async () => {
       chosen = [projects]; await page('projects'); await button('Choose project folder'); await waitFor(() => !!document.querySelector('[aria-label="Selected project"] option'), 'Project missing'); await field('Question or search', 'storage decision'); await button('Search locally'); await waitFor(() => document.querySelector('[data-workbench-page="projects"]').textContent.includes('[S1]'), 'Citation missing'); assert.equal(await evaluate(() => document.querySelector('[data-workbench-page="projects"]').textContent.includes('Use SQLite')), true); await screenshot('projects');
+    });
+    await check('A project changed after review is rechecked and cannot send its stale excerpt', async () => {
+      await evaluate(() => { window.projectSharingCalls = []; window.originalProjectGenerate = callGeminiGenerate; callGeminiGenerate = async (...args) => { projectSharingCalls.push(args); return 'Fixture grounded answer.'; }; });
+      fs.writeFileSync(path.join(projects, 'notes.md'), 'Storage decision\nUse a new SQLite schema for offline notes.\n');
+      await button('Ask Gemini about these sources');
+      await waitFor(() => /source passages changed/.test(document.getElementById('workbenchStatus').textContent), 'Stale project preview was not rejected');
+      assert.equal(await evaluate(() => projectSharingCalls.length), 0);
+      await button('Refresh index'); await waitFor(() => ![...document.querySelectorAll('[data-workbench-page="projects"] button')].find(item => item.textContent === 'Refresh index').disabled, 'Project refresh did not finish');
+      await button('Search locally'); await waitFor(() => document.querySelector('[data-workbench-page="projects"]').textContent.includes('new SQLite schema'), 'Updated source missing');
+      await button('Ask Gemini about these sources'); await waitFor(() => projectSharingCalls.length === 1, 'Reviewed current sources were not shared with fixture provider');
+      assert.equal(await evaluate(() => JSON.stringify(projectSharingCalls[0]).includes('new SQLite schema')), true);
+      await evaluate(() => { callGeminiGenerate = originalProjectGenerate; });
+    });
+    await check('Named workspaces save and resume through scoped voice reviews with no typing', async () => {
+      assert.equal(await evaluate(() => !!window.OlangaWorkspaces), true);
+      const before = report.calls.filter(value => value === 'work-session-restore').length;
+      await evaluate(async () => { await OlangaWorkspaces.save('Study setup'); await OlangaWorkspaces.answerReview('include window layout Fixture session'); await OlangaWorkspaces.answerReview('include project project'); const saved = await OlangaWorkspaces.answerReview('save workspace'); if (!saved.ok) throw new Error(saved.message); });
+      assert.equal(report.calls.filter(value => value === 'work-session-restore').length, before);
+      await evaluate(() => OlangaWorkspaces.review('Study setup'));
+      assert.equal(report.calls.filter(value => value === 'work-session-restore').length, before);
+      await screenshot('workspace-review');
+      const result = await evaluate(() => OlangaWorkspaces.answerReview('resume workspace')); assert.equal(result.ok, true);
+      assert.equal(report.calls.filter(value => value === 'work-session-restore').length, before + 1);
+      assert.deepEqual(result.run.steps.map(step => step.state), ['completed', 'completed']);
+      assert.equal(await evaluate(() => OlangaWorkbench.selectedProject().name), 'project');
+      await screenshot('workspace-results');
+    });
+    await check('Home action results use readable individual steps and preserve completion after speech fails', async () => {
+      await evaluate(() => {
+        document.getElementById('workbenchDialog').close();
+        window.cardRequest = beginAssistantRequest(); setAssistantPlan(cardRequest, ['[OPEN_APP: Spotify]', '[VOLUME_SET: 75]']); updateAssistantStep(cardRequest, 0, 'completed'); updateAssistantStep(cardRequest, 1, 'completed');
+        assistantTurns.playbackFinished(cardRequest.turnId, 'failed'); completeAssistantRequest(cardRequest, 'completed');
+      });
+      const card = await evaluate(() => { const card = document.querySelector('.workbench-task-card'); return { text: card.textContent, rows: [...card.querySelectorAll('li')].map(item => item.textContent), reviewHidden: [...card.querySelectorAll('button')].find(item => item.textContent === 'Review unfinished steps').hidden }; });
+      assert.equal(card.rows.length, 2); assert.match(card.text, /Actions completed/); assert.match(card.text, /75%/); assert.match(card.text, /spoken reply could not play/); assert.equal(card.text.includes('[OPEN_APP'), false); assert.equal(card.reviewHidden, true);
+      await screenshot('action-results');
+      await page('calendar');
+    });
+    await check('Action rows and repeat/review controls remain reachable across window sizes and enlarged text', async () => {
+      await evaluate(() => {
+        document.getElementById('workbenchDialog').close();
+        const snapshot = { ...OlangaTurns.snapshot(), outcome: 'failed', phase: 'speaking', resultText: 'Spotify opened. The volume step needs another review. Your completed app action will stay completed.', speechStatus: 'failed', canRepeatResult: true, canReviewUnfinished: true, steps: [{ command: '[OPEN_APP: Spotify]', state: 'completed' }, { command: '[VOLUME_SET: 75]', state: 'failed' }] };
+        for (const listener of assistantTurnListeners) listener(snapshot);
+      });
+      const original = main.getContentSize(); main.setMinimumSize(360, 400);
+      for (const [width, height, zoom] of [[1536, 864, 1], [1920, 1080, 1], [400, 720, 1], [1100, 800, 1.5]]) {
+        main.setContentSize(width, height); main.webContents.setZoomFactor(zoom); await pause(150);
+        const result = await evaluate(() => {
+          const card = document.querySelector('.workbench-task-card'), targets = [...card.querySelectorAll('li'), ...card.querySelectorAll('button')].filter(item => !item.hidden);
+          const results = [];
+          for (const target of targets) {
+            target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+            const rect = target.getBoundingClientRect(); let left = 0, top = 0, right = innerWidth, bottom = innerHeight;
+            for (let parent = target.parentElement; parent; parent = parent.parentElement) {
+              const style = getComputedStyle(parent), bounds = parent.getBoundingClientRect();
+              if (/(?:auto|scroll|hidden|clip)/.test(style.overflowX)) { left = Math.max(left, bounds.left); right = Math.min(right, bounds.right); }
+              if (/(?:auto|scroll|hidden|clip)/.test(style.overflowY)) { top = Math.max(top, bounds.top); bottom = Math.min(bottom, bounds.bottom); }
+            }
+            results.push({ label: target.textContent, fits: rect.width > 0 && rect.height > 0 && rect.left >= left - 2 && rect.right <= right + 2 && rect.top >= top - 2 && rect.bottom <= bottom + 2 });
+          }
+          return { results, horizontalOverflow: card.scrollWidth > card.clientWidth + 2 };
+        });
+        assert.equal(result.horizontalOverflow, false, `Card overflow at ${width}/${zoom}`);
+        for (const target of result.results) assert.equal(target.fits, true, `Unreachable ${target.label} at ${width}/${zoom}`);
+        assert.equal(result.results.length, 4); await screenshot(`action-controls-${width}-${zoom}`);
+      }
+      main.webContents.setZoomFactor(1); main.setContentSize(...original);
+      await evaluate(() => { for (const listener of assistantTurnListeners) listener(OlangaTurns.snapshot()); }); await page('calendar');
     });
     await check('Calendar import and explicit preparation reminder remain local', async () => {
       chosen = [calendar]; await page('calendar'); await button('Import calendar export'); await waitFor(() => document.querySelector('[data-workbench-page="calendar"]').textContent.includes('Fixture review'), 'Calendar missing'); await button('Remind me 10 minutes before'); assert.equal(await evaluate(() => window.OlangaScheduleStore.snapshot().items.length), 1); await page('schedules'); await button('Refresh schedules'); assert.equal(await evaluate(() => document.querySelector('[data-workbench-page="schedules"]').textContent.includes('Prepare: Fixture review')), true);
@@ -113,4 +181,4 @@ app.whenReady().then(async () => {
     assert.deepEqual(report.forbidden, []); assert.deepEqual(report.errors, []); report.passed = true; finish(0);
   } catch (error) { report.error = error.stack; await screenshot('failure').catch(() => {}); finish(1); }
 });
-setTimeout(() => { report.error = 'Workbench smoke timed out.'; finish(1); }, 60000).unref();
+setTimeout(() => { report.error = 'Workbench smoke timed out.'; finish(1); }, 90000).unref();

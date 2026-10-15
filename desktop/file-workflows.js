@@ -55,7 +55,7 @@ async function identity(file, expectedLinks = 1) {
 function same(a, b) { return ['dev', 'ino', 'size', 'mtimeMs', 'digest'].every(field => a[field] === b[field]); }
 async function unchanged(file, expected, links = 1) { if (!same(await identity(file, links), expected)) throw new Error('A selected file changed. Preview the operation again.'); }
 
-function createFileWorkflows({ journalPath, now = Date.now } = {}) {
+function createFileWorkflows({ journalPath, now = Date.now, journalFs = fs, wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
   if (!journalPath) throw new Error('File workflows require a private journal path.');
   const selections = new Map(), destinations = new Map(), previews = new Map();
   let receipts = [], loaded = false, loading = null, active = null, disposed = false;
@@ -87,10 +87,26 @@ function createFileWorkflows({ journalPath, now = Date.now } = {}) {
     loaded = true;
   }
   async function persist() {
-    await fs.mkdir(path.dirname(journalPath), { recursive: true });
     const temporary = `${journalPath}.${randomUUID()}.tmp`;
-    try { await fs.writeFile(temporary, JSON.stringify({ version: 1, receipts }), { flag: 'wx', mode: 0o600 }); await fs.rename(temporary, journalPath); }
-    finally { await fs.unlink(temporary).catch(() => {}); }
+    try {
+      await journalFs.mkdir(path.dirname(journalPath), { recursive: true });
+      await journalFs.writeFile(temporary, JSON.stringify({ version: 1, receipts }), { flag: 'wx', mode: 0o600 });
+      // Windows scanners can briefly hold the previous journal open. Retry only
+      // the atomic replacement; never unlink/truncate the durable journal or
+      // repeat a file transfer to recover from a metadata write failure.
+      const delays = [25, 50, 100, 150, 200];
+      for (let attempt = 0; ; attempt++) {
+        try { await journalFs.rename(temporary, journalPath); break; }
+        catch (error) { if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= delays.length) throw error; await wait(delays[attempt]); }
+      }
+    } catch (error) {
+      const failure = new Error(`The file recovery record could not be saved. ${error.message}`); failure.code = 'OLANGA_JOURNAL_WRITE'; throw failure;
+    } finally { await journalFs.unlink(temporary).catch(() => {}); }
+  }
+  function persistenceFailure(receipt, error) {
+    receipt.status = 'persistence-failed';
+    const moved = receipt.steps.filter(step => step.state === 'moved').length, undone = receipt.steps.filter(step => step.state === 'undone').length;
+    return { ok: false, status: 'persistence-failed', message: `The recovery record could not be saved. ${moved ? `${moved} file change${moved === 1 ? ' is' : 's are'} verified in this session. ` : ''}${undone ? `${undone} undo step${undone === 1 ? ' is' : 's are'} verified in this session. ` : ''}No additional files were changed. Check the individual results before retrying or closing Olanga.`, receipt: publicReceipt(receipt), error: { code: error.code } };
   }
   async function transfer(step, undo, receipt) {
     const from = undo ? step.to : step.from, to = undo ? step.from : step.to;
@@ -163,8 +179,9 @@ function createFileWorkflows({ journalPath, now = Date.now } = {}) {
       prune(previews); const preview = previews.get(previewId);
       if (!preview) throw new Error('Preview this file operation again before running it.');
       previews.delete(previewId); const run = { cancelled: false }; active = run;
+      let receipt;
       try {
-        await load(); const receipt = { id: randomUUID(), at: now(), mode: preview.mode, status: 'running', steps: clone(preview.steps) };
+        await load(); receipt = { id: randomUUID(), at: now(), mode: preview.mode, status: 'running', steps: clone(preview.steps) };
         if (receipts.length >= 30) {
           const replace = receipts.findIndex(item => !item.steps.some(step => ['moved', 'interrupted', 'linked', 'pending', 'undo-pending'].includes(step.state)));
           if (replace < 0) throw new Error('File history is full. Undo an older operation before running another.');
@@ -174,29 +191,43 @@ function createFileWorkflows({ journalPath, now = Date.now } = {}) {
         for (const step of receipt.steps) {
           if (run.cancelled) { step.state = 'cancelled'; step.message = 'This file was not changed.'; continue; }
           try { await transfer(step, false, receipt); }
-          catch (error) { if (step.state !== 'interrupted') step.state = 'failed'; step.message = error.message; }
+          catch (error) {
+            // A metadata failure after verified unlink is not a failed move.
+            if (!['interrupted', 'moved'].includes(step.state)) { step.state = 'failed'; step.message = error.message; }
+            if (error.code === 'OLANGA_JOURNAL_WRITE') {
+              for (const remaining of receipt.steps) if (remaining.state === 'planned') { remaining.state = 'cancelled'; remaining.message = 'Not changed because the file recovery record could not be saved.'; }
+              break;
+            }
+          }
         }
         receipt.status = run.cancelled ? 'cancelled' : receipt.steps.every(step => step.state === 'moved') ? 'completed' : 'partial';
         await persist(); return { ok: receipt.status === 'completed', receipt: publicReceipt(receipt), status: receipt.status };
-      } finally { active = null; }
+      } catch (error) { if (receipt && error.code === 'OLANGA_JOURNAL_WRITE') return persistenceFailure(receipt, error); throw error; }
+      finally { active = null; }
     }),
     undo: guarded(async receiptId => {
       if (active) throw new Error('A file operation is already running.');
       const run = { cancelled: false }; active = run;
+      let receipt;
       try {
-        await load(); const receipt = receipts.find(item => item.id === receiptId);
+        await load(); receipt = receipts.find(item => item.id === receiptId);
         if (!receipt || !receipt.steps.some(step => step.state === 'moved')) throw new Error('No checked Undo is available for this operation.');
         receipt.status = 'undoing'; await persist();
         for (const step of [...receipt.steps].reverse()) {
           if (run.cancelled) break;
           if (step.state !== 'moved') continue;
           try { await transfer(step, true, receipt); }
-          catch (error) { if (!['interrupted', 'undo-pending', 'linked'].includes(step.state)) step.state = 'moved'; step.message = error.message; }
+          catch (error) {
+            if (!['interrupted', 'undo-pending', 'linked', 'undone'].includes(step.state)) step.state = 'moved';
+            if (step.state !== 'undone') step.message = error.message;
+            if (error.code === 'OLANGA_JOURNAL_WRITE') break;
+          }
         }
         const remaining = receipt.steps.some(step => ['moved', 'interrupted', 'undo-pending', 'linked'].includes(step.state));
         receipt.status = remaining ? 'partial-undo' : 'undone'; await persist();
         return { ok: !remaining, status: receipt.status, receipt: publicReceipt(receipt) };
-      } finally { active = null; }
+      } catch (error) { if (receipt && error.code === 'OLANGA_JOURNAL_WRITE') return persistenceFailure(receipt, error); throw error; }
+      finally { active = null; }
     }),
     listHistory: guarded(async () => { await load(); return { ok: true, receipts: receipts.map(publicReceipt).reverse() }; }),
     cancel() { if (active) active.cancelled = true; return { ok: true, message: 'Remaining file actions cancelled. The current file will finish safely.' }; },

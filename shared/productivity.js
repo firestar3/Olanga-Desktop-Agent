@@ -1,8 +1,8 @@
 (function (root, factory) {
-  const api = factory();
+  const api = factory(typeof module === 'object' && module.exports ? require('./memory-learning') : root.OlangaMemoryLearning);
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.OlangaProductivity = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (learning) {
   const KEY = 'olanga_productivity_v1';
   const STATES = new Set(['working', 'completed', 'failed', 'cancelled', 'awaiting-input', 'interrupted', 'unverified']);
   const STEP_STATES = new Set(['pending', 'working', 'completed', 'failed', 'cancelled', 'uncertain', 'skipped', 'unverified']);
@@ -11,10 +11,32 @@
   const TIMING_PHASES = ['acknowledgment', 'ack-dispatch', 'ack-audio-start', 'actions-finished', 'transcription', 'planning', 'execution', 'first-audio', 'speech', 'total'];
   const clone = value => JSON.parse(JSON.stringify(value));
   const name = value => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 100 && !/[\[\]\r\n\x00-\x1f]/.test(value) ? value.trim() : '';
-  // Memories are statements the user explicitly asked Olanga to keep. They are
-  // context for answers, never instructions or permission to act.
+  // Manual memories and narrowly learned direct-user facts are context for
+  // answers, never instructions or permission to act.
   const factText = value => typeof value === 'string' && value.trim().length >= 2 && value.trim().length <= 300 && !/[\[\]\x00-\x1f]/.test(value) ? value.trim().replace(/\s+/g, ' ') : '';
   const FACT_STOP_WORDS = new Set(['the', 'that', 'this', 'my', 'is', 'are', 'was', 'and', 'about', 'your', 'for', 'our']);
+  const LEARNING_UNDO_TTL_MS = 10 * 60 * 1000;
+  function factMetadata(item, text) {
+    const allowed = ['id', 'text', 'at', 'source', 'slot', 'updatedAt'];
+    if (Object.keys(item).some(key => !allowed.includes(key))) return null;
+    const metadata = {};
+    if (Object.hasOwn(item, 'source')) {
+      if (!['manual', 'conversation'].includes(item.source)) return null;
+      metadata.source = item.source;
+    }
+    if (Object.hasOwn(item, 'slot')) {
+      if (!learning?.SLOTS.includes(item.slot)) return null;
+      const match = learning.classifyFact(text);
+      if (!match || match.slot !== item.slot) return null;
+      metadata.slot = item.slot;
+    }
+    if (metadata.source === 'conversation' && !metadata.slot) return null;
+    if (Object.hasOwn(item, 'updatedAt')) {
+      if (!Number.isFinite(item.updatedAt) || item.updatedAt < item.at) return null;
+      metadata.updatedAt = item.updatedAt;
+    }
+    return metadata;
+  }
   let idSequence = 0;
   const id = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}-${++idSequence}`;
   function completedState(steps) {
@@ -25,19 +47,22 @@
   }
 
   function defaults() {
-    return { version: 1, memoryEnabled: false, saveActivity: false, diagnostics: false, speechInput: 'cloud', factsEnabled: true, aliases: [], playlists: [], facts: [], routines: [], activity: [], runs: [], timings: [] };
+    return { version: 1, memoryEnabled: false, saveActivity: false, diagnostics: false, speechInput: 'cloud', factsEnabled: true, learningEnabled: true, aliases: [], playlists: [], facts: [], routines: [], activity: [], runs: [], timings: [] };
   }
   function sanitize(raw) {
     const result = defaults();
     if (!raw || typeof raw !== 'object' || raw.version !== 1) return result;
     for (const key of ['memoryEnabled', 'saveActivity', 'diagnostics']) result[key] = raw[key] === true;
     result.factsEnabled = raw.factsEnabled !== false;
+    result.learningEnabled = raw.learningEnabled !== false;
     const factIds = new Set(), factTexts = new Set();
     for (const item of Array.isArray(raw.facts) ? raw.facts.slice(0, MAX_FACTS) : []) {
       const text = factText(item?.text);
       if (!text || !name(item?.id) || factIds.has(item.id) || factTexts.has(text.toLowerCase()) || !Number.isFinite(item.at)) continue;
+      const metadata = factMetadata(item, text);
+      if (metadata === null) continue;
       factIds.add(item.id); factTexts.add(text.toLowerCase());
-      result.facts.push({ id: item.id, text, at: item.at });
+      result.facts.push({ id: item.id, text, at: item.at, ...metadata });
     }
     result.speechInput = ['offline', 'offline-general'].includes(raw.speechInput) ? raw.speechInput : 'cloud';
     for (const key of ['aliases', 'playlists']) {
@@ -87,7 +112,7 @@
     for (const key of PERSONAL_KEYS) if (!Array.isArray(content[key]) || content[key].length > (key === 'routines' ? 30 : 50)) throw new Error('This backup exceeds the Workspace limits.');
     const ids = new Set(), texts = new Set();
     for (const item of content.facts) {
-      if (!exactKeys(item, ['id', 'text', 'at']) || !name(item.id) || name(item.id) !== item.id || !factText(item.text) || factText(item.text) !== item.text || !Number.isFinite(item.at) || item.at < 0 || ids.has(item.id) || texts.has(item.text.toLowerCase())) throw new Error('This backup contains an invalid or duplicate memory.');
+      if (!plain(item) || !name(item.id) || name(item.id) !== item.id || !factText(item.text) || factText(item.text) !== item.text || !Number.isFinite(item.at) || item.at < 0 || factMetadata(item, item.text) === null || ids.has(item.id) || texts.has(item.text.toLowerCase())) throw new Error('This backup contains an invalid or duplicate memory.');
       ids.add(item.id); texts.add(item.text.toLowerCase());
     }
     for (const kind of ['aliases', 'playlists']) {
@@ -116,6 +141,13 @@
     }
     return clone(content);
   }
+  function validatePersonalBackup(text, parse) {
+    if (typeof text !== 'string' || text.length > 1024 * 1024) throw new Error('Choose a Workspace backup smaller than 1 MB.');
+    let payload;
+    try { payload = JSON.parse(text); } catch (_) { throw new Error('This file is not valid JSON.'); }
+    if (!exactKeys(payload, ['format', 'version', 'createdAt', 'content']) || payload.format !== 'olanga-workspace-backup' || payload.version !== 1 || !Number.isFinite(payload.createdAt) || payload.createdAt < 0) throw new Error('This is not a supported Olanga Workspace backup.');
+    return { ...payload, content: validatePersonal(payload.content, parse) };
+  }
   function sameData(left, right) {
     if (left === right) return true;
     if (!left || !right || typeof left !== 'object' || typeof right !== 'object' || Array.isArray(left) !== Array.isArray(right)) return false;
@@ -124,7 +156,7 @@
   }
   function createStore(storage) {
     let state = defaults(), recovery = null, originalRaw, recoveryBackup = null;
-    const listeners = new Set(), memoryListeners = new Set(), importPreviews = new Map();
+    const listeners = new Set(), memoryListeners = new Set(), importPreviews = new Map(), learningUndos = new Map();
     function readState() {
       let raw;
       try { raw = storage.getItem(KEY); } catch (_) { recovery = { reason: 'read-failed' }; originalRaw = undefined; return false; }
@@ -216,8 +248,8 @@
       retryRecovery() {
         if (!recovery) return true;
         const previous = state;
-        const ok = readState(); recoveryBackup = null; importPreviews.clear();
-        if (ok) memoryChanged(previous, 'restored');
+        const ok = readState(); recoveryBackup = null; importPreviews.clear(); learningUndos.clear();
+        memoryChanged(previous, 'restored');
         notify(); return ok;
       },
       createRecoveryBackup: backupOriginal,
@@ -251,20 +283,17 @@
         const previous = state, previousRecovery = recovery;
         state = defaults(); recovery = null;
         try { save(true); } catch (error) { state = previous; recovery = previousRecovery; notify(); throw error; }
-        importPreviews.clear(); memoryChanged(previous, 'reset');
+        importPreviews.clear(); learningUndos.clear(); memoryChanged(previous, 'reset');
         return true;
       },
       exportPersonal() {
         requireWritable();
         return { format: 'olanga-workspace-backup', version: 1, createdAt: Date.now(), content: personalContent(state) };
       },
+      validatePersonalBackup,
       previewImport(text, parse) {
         requireWritable();
-        if (typeof text !== 'string' || text.length > 1024 * 1024) throw new Error('Choose a Workspace backup smaller than 1 MB.');
-        let payload;
-        try { payload = JSON.parse(text); } catch (_) { throw new Error('This file is not valid JSON.'); }
-        if (!exactKeys(payload, ['format', 'version', 'createdAt', 'content']) || payload.format !== 'olanga-workspace-backup' || payload.version !== 1 || !Number.isFinite(payload.createdAt) || payload.createdAt < 0) throw new Error('This is not a supported Olanga Workspace backup.');
-        const content = validatePersonal(payload.content, parse), token = id();
+        const content = validatePersonalBackup(text, parse).content, token = id();
         importPreviews.clear(); importPreviews.set(token, { content, before: JSON.stringify(personalContent(state)) });
         return { token, content: clone(content), counts: Object.fromEntries(PERSONAL_KEYS.map(key => [key, content[key].length])), currentCounts: Object.fromEntries(PERSONAL_KEYS.map(key => [key, state[key].length])) };
       },
@@ -275,11 +304,11 @@
         const content = validatePersonal(preview.content, parse);
         const backup = backupOriginal(); verifyBackup(backup.key);
         edit(data => { for (const key of PERSONAL_KEYS) data[key] = clone(content[key]); }, 'restored');
-        importPreviews.clear();
+        importPreviews.clear(); learningUndos.clear();
         return { backupKey: backup.key, counts: Object.fromEntries(PERSONAL_KEYS.map(key => [key, state[key].length])) };
       },
       preference(key, value) {
-        if (!['memoryEnabled', 'saveActivity', 'diagnostics', 'speechInput', 'factsEnabled'].includes(key)) throw new Error('Unknown preference.');
+        if (!['memoryEnabled', 'saveActivity', 'diagnostics', 'speechInput', 'factsEnabled', 'learningEnabled'].includes(key)) throw new Error('Unknown preference.');
         if (key === 'speechInput' ? !['cloud', 'offline', 'offline-general'].includes(value) : typeof value !== 'boolean') throw new Error('Invalid preference.');
         edit(data => { data[key] = value; if (key === 'diagnostics' && !value) data.timings = []; });
       },
@@ -306,12 +335,118 @@
         let record;
         edit(data => {
           record = data.facts.find(item => item.text.toLowerCase() === clean.toLowerCase());
-          if (record) return;
+          if (record) {
+            // An explicit request to keep an already learned fact takes manual
+            // ownership: later automatic updates/undo cannot replace it.
+            if (record.source === 'conversation') { record.source = 'manual'; record.updatedAt = Math.max(Date.now(), record.at); }
+            return;
+          }
+          const classified = learning?.classifyFact(clean);
+          if (classified) {
+            const related = data.facts.filter(item => item.slot === classified.slot || !item.slot && learning.extract(item.text).some(found => found.slot === classified.slot));
+            if (related.length > 1) throw new Error('More than one saved memory matches that kind of detail. Edit the specific memory in Workspace, or identify its exact text when asking to update it.');
+            if (related.length === 1) {
+              const previous = related[0];
+              if (!learning.classifyFact(previous.text)) throw new Error('The related memory includes other details. Edit that specific memory in Workspace, or identify its exact text when asking to update it.');
+              record = { id: previous.id, text: clean, at: previous.at, source: 'manual', slot: classified.slot, updatedAt: Math.max(Date.now(), previous.at) };
+              data.facts[data.facts.findIndex(item => item.id === previous.id)] = record;
+              return;
+            }
+          }
           if (data.facts.length >= MAX_FACTS) throw new Error('Your memory list is full. Delete a memory in Workspace before adding another.');
           record = { id: freshId(), text: clean, at: Date.now() };
           data.facts.push(record);
         });
         return clone(record);
+      },
+      setLearningEnabled(value) {
+        if (typeof value !== 'boolean') throw new Error('Choose whether Olanga may learn memories.');
+        edit(data => { data.learningEnabled = value; });
+        return value;
+      },
+      learnFromUserText(text) {
+        const result = { learned: [], updated: [], skipped: [], undoToken: null };
+        if (!state.learningEnabled) { result.skipped.push({ reason: 'paused' }); return result; }
+        if (recovery) { result.skipped.push({ reason: 'storage-recovery' }); return result; }
+        if (!learning?.extract) { result.skipped.push({ reason: 'learning-unavailable' }); return result; }
+        const candidates = learning.extract(text);
+        if (!candidates.length) return result;
+        const changes = [];
+        for (const candidate of candidates) {
+          if (state.facts.some(item => item.text.toLocaleLowerCase() === candidate.text.toLocaleLowerCase())) continue;
+          const sameSlot = state.facts.filter(item => item.slot === candidate.slot || !item.slot && learning.extract(item.text).some(found => found.slot === candidate.slot));
+          // Explicitly saved facts remain under explicit user control. Learning
+          // can revise its own one-slot record, never erase a manual statement.
+          if (sameSlot.some(item => item.source !== 'conversation')) { result.skipped.push({ slot: candidate.slot, reason: 'manual-memory-exists' }); continue; }
+          if (sameSlot.length > 1) { result.skipped.push({ slot: candidate.slot, reason: 'ambiguous-existing-memories' }); continue; }
+          const before = sameSlot[0] || null;
+          if (!before && state.facts.length + changes.filter(change => !change.before).length >= MAX_FACTS) { result.skipped.push({ slot: candidate.slot, reason: 'memory-full' }); continue; }
+          const after = before
+            ? { ...before, text: candidate.text, updatedAt: Math.max(Date.now(), before.at), source: 'conversation', slot: candidate.slot }
+            : { id: freshId(), text: candidate.text, at: Date.now(), source: 'conversation', slot: candidate.slot };
+          changes.push({ before: before ? clone(before) : null, after });
+        }
+        if (!changes.length) return result;
+        try {
+          edit(data => {
+            for (const change of changes) {
+              if (change.before) data.facts[data.facts.findIndex(item => item.id === change.before.id)] = change.after;
+              else data.facts.push(change.after);
+            }
+          }, 'learned');
+        } catch (error) {
+          result.skipped.push({ reason: 'storage-unavailable' }); result.error = error.message;
+          return result;
+        }
+        const token = id(), at = Date.now();
+        for (const [key, undo] of learningUndos) if (at - undo.at > LEARNING_UNDO_TTL_MS) learningUndos.delete(key);
+        while (learningUndos.size >= 10) learningUndos.delete(learningUndos.keys().next().value);
+        learningUndos.set(token, { at, changes: clone(changes) }); result.undoToken = token;
+        for (const { before, after } of changes) {
+          const entry = { id: after.id, text: after.text, slot: after.slot, source: 'conversation' };
+          if (before) result.updated.push({ ...entry, previousText: before.text });
+          else result.learned.push(entry);
+        }
+        return result;
+      },
+      undoLearnedMemory(token) {
+        const selected = token === undefined ? [...learningUndos.keys()].at(-1) : token;
+        const undo = learningUndos.get(selected);
+        if (!undo || Date.now() - undo.at > LEARNING_UNDO_TTL_MS) {
+          if (selected) learningUndos.delete(selected);
+          throw new Error('That learning undo has expired. Edit or delete the memory in Workspace instead.');
+        }
+        if (undo.changes.some(change => !sameData(state.facts.find(item => item.id === change.after.id), change.after))) {
+          learningUndos.delete(selected);
+          throw new Error('Those memories changed after learning. Review their current versions in Workspace.');
+        }
+        // Restoring an earlier value cannot overwrite a duplicate created by a
+        // later manual change. The entire batch succeeds or none of it does.
+        const changedIds = new Set(undo.changes.map(change => change.after.id));
+        if (undo.changes.some(change => change.before && state.facts.some(item => !changedIds.has(item.id) && item.text.toLocaleLowerCase() === change.before.text.toLocaleLowerCase()))) throw new Error('A matching memory already exists. Review the memories in Workspace.');
+        edit(data => {
+          for (const change of undo.changes) {
+            const index = data.facts.findIndex(item => item.id === change.after.id);
+            if (change.before) data.facts[index] = clone(change.before);
+            else data.facts.splice(index, 1);
+          }
+        }, 'learning-undone');
+        learningUndos.delete(selected);
+        return { undone: true, removedIds: undo.changes.filter(change => !change.before).map(change => change.after.id), restored: undo.changes.filter(change => change.before).map(change => clone(change.before)) };
+      },
+      updateFact(factId, text) {
+        const clean = factText(text);
+        if (!clean) throw new Error('Use 2–300 characters without brackets or line breaks for a memory.');
+        let updated;
+        edit(data => {
+          const index = data.facts.findIndex(item => item.id === factId);
+          if (index < 0) throw new Error('That memory was removed. Open a current memory to edit.');
+          if (data.facts.some(item => item.id !== factId && item.text.toLocaleLowerCase() === clean.toLocaleLowerCase())) throw new Error('Another memory already has that text.');
+          const previous = data.facts[index], classified = learning?.classifyFact(clean);
+          updated = { id: previous.id, text: clean, at: previous.at, source: 'manual', updatedAt: Math.max(Date.now(), previous.at), ...(classified ? { slot: classified.slot } : {}) };
+          data.facts[index] = updated;
+        }, 'edited');
+        return clone(updated);
       },
       // Exact wording first, then a unique phrase, then all meaningful words.
       findFacts(query) {
@@ -331,6 +466,17 @@
       },
       clearFacts() { const count = state.facts.length; edit(data => { data.facts = []; }, 'cleared'); return count; },
       memoryContext() { return state.factsEnabled ? state.facts.map(item => item.text) : []; },
+      relevantContext(query, options) {
+        if (!state.factsEnabled) return [];
+        if (!learning?.select) return state.facts.slice(0, 8).map(item => ({ id: item.id, text: item.text }));
+        // Infer slots for legacy explicitly saved facts without rewriting them.
+        const facts = state.facts.map(item => {
+          if (item.slot) return item;
+          const classified = learning.classifyFact(item.text);
+          return classified ? { ...item, slot: classified.slot } : item;
+        });
+        return learning.select(facts, query, options);
+      },
       saveRoutine(routine, parse) {
         if (!routine || !Array.isArray(routine.lines) || routine.lines.some(line => typeof line !== 'string')) throw new Error('Give the routine a name and supported commands.');
         const lines = routine.lines.map(line => line.trim()).filter(Boolean);
@@ -498,7 +644,8 @@
         assertActive();
         const ok = Array.isArray(result?.results) && result.results.length > 0 && result.results.every(receipt => receipt.ok === true);
         const verified = ok && result.results.every(receipt => receipt.verified !== false);
-        store.transitionRun(run.id, index, ok ? verified ? 'completed' : 'unverified' : 'failed');
+        const uncertain = !ok && Array.isArray(result?.results) && result.results.some(receipt => receipt.dispatched === true || receipt.pending === true);
+        store.transitionRun(run.id, index, ok ? verified ? 'completed' : 'unverified' : uncertain ? 'uncertain' : 'failed');
         messages.push(result?.spokenResponse || 'The step returned no confirmed result.');
         if (!ok) { state = 'failed'; messages.push('The remaining steps did not run. Review them in Workspace.'); break; }
       }
@@ -511,5 +658,5 @@
     }
     return { state, messages };
   }
-  return { createStore, sanitize, defaults, statistics, formatCommand, executeRun, isRunning: store => !!running.get(store)?.size, KEY, MAX_FACTS };
+  return { createStore, sanitize, defaults, validatePersonalBackup, statistics, formatCommand, executeRun, isRunning: store => !!running.get(store)?.size, KEY, MAX_FACTS, LEARNING_UNDO_TTL_MS };
 });

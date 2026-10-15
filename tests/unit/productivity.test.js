@@ -421,3 +421,11 @@ test('editing a saved name renames it atomically without leaving an old alias or
   assert.throws(() => store.remember('playlists', 'music', 'Deep Focus', { kind: 'aliases', alias: 'new browser' }), /could not save/);
   assert.equal(store.snapshot().aliases.length, 2); assert.deepEqual(store.snapshot().playlists, []);
 });
+
+test('a failed dispatched routine action retains uncertainty for its next review', async () => {
+ const storage=new Map();const store=createStore({getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)});
+ const routine=store.saveRoutine({name:'Check app',lines:['open notepad']},require('../../shared/fast-intents').parse);
+ const run=store.createRun(routine,[{command:'[OPEN_APP: notepad]'}],[0]);
+ await executeRun(store,run.id,[0],{dispatch:async()=>({results:[{ok:false,dispatched:true,pending:true}],spokenResponse:'Check the app before trying again.'})});
+ assert.equal(store.snapshot().runs.find(item=>item.id===run.id).steps[0].state,'uncertain');
+});

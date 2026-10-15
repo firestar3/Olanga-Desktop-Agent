@@ -27,7 +27,7 @@ function fixture(initial = []) {
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/workbench-connections.js'), 'utf8'), context);
   function connected(element) { while (element) { if (element === section) return true; element = element.parentElement; } return false; }
-  return { all, buttons, fields, messages, storage, requests, document, close, cancellations, emit(value) { current = value; notify(value); }, controls: label => buttons.filter(item => item.textContent === label && connected(item)), checks: () => all.filter(item => item.tag === 'input' && item.type === 'checkbox' && connected(item)) };
+  return { all, buttons, fields, messages, storage, requests, document, close, cancellations, bridge: context.window.OlangaCompanionSessions, emit(value) { current = value; notify(value); }, controls: label => buttons.filter(item => item.textContent === label && connected(item)), checks: () => all.filter(item => item.tag === 'input' && item.type === 'checkbox' && connected(item)) };
 }
 const browser = { id: 'browser-1', kind: 'browser', name: 'Browser', connected: true };
 const tabs = count => ({ id: 'tabs-1', connectionId: browser.id, kind: 'tabs', companionKind: 'browser', title: 'Tabs', at: 1, items: Array.from({ length: count }, (_, index) => ({ id: index + 1, title: `Tab ${index + 1}`, url: `https://example.com/${index + 1}` })) });
@@ -78,4 +78,23 @@ test('closing Work tools cancels outstanding requests while leaving the companio
   const f = fixture(); f.emit({ connections: [browser], inbox: [] });
   for (const cleanup of f.close) cleanup();
   await Promise.resolve(); assert.equal(f.cancellations.length, 1); assert.equal(f.controls('Request tab list').length, 1);
+});
+
+
+test('workspace companion previews bind exact saved targets and the paired destination', async () => {
+  const f = fixture([validSaved]); f.emit({ connections: [browser], inbox: [] });
+  const preview = await f.bridge.preview(validSaved.id); assert.deepEqual(Array.from(preview.targets), ['https://example.com/saved']); assert.equal(f.requests.length, 0);
+  await f.bridge.restore(preview); assert.equal(f.requests.length, 1); assert.equal(f.requests[0].connectionId, browser.id);
+  f.emit({ connections: [{ ...browser, id: 'replacement' }], inbox: [] });
+  await assert.rejects(f.bridge.restore(preview), /paired companion changed/); assert.equal(f.requests.length, 1);
+});
+test('changed or removed saved companion targets invalidate the workspace approval before dispatch', async () => {
+  const f = fixture([validSaved]); f.emit({ connections: [browser], inbox: [] }); const preview = await f.bridge.preview(validSaved.id);
+  f.storage.set(KEY, JSON.stringify([{ ...validSaved, items: [{ url: 'https://example.com/new', title: 'New' }] }]));
+  await assert.rejects(f.bridge.restore(preview), /targets changed/); assert.equal(f.requests.length, 0);
+  f.storage.set(KEY, '[]'); await assert.rejects(f.bridge.restore(preview), /targets changed/); assert.equal(f.requests.length, 0);
+});
+test('multiple same-kind paired companions cannot silently receive workspace targets', async () => {
+  const f = fixture([validSaved]); f.emit({ connections: [browser, { ...browser, id: 'second' }], inbox: [] });
+  await assert.rejects(f.bridge.preview(validSaved.id), /exactly one/); assert.equal(f.requests.length, 0);
 });
