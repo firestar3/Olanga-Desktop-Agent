@@ -70,11 +70,19 @@ test('checked Undo refuses changed contents and occupied original paths', async 
   await fs.unlink(file); await fs.writeFile(path.join(source, 'renamed.txt'), 'User edited this later');
   assert.equal((await service.undo(result.receipt.id)).ok, false); assert.equal(await fs.readFile(path.join(source, 'renamed.txt'), 'utf8'), 'User edited this later');
 });
-test('hard-linked files and symbolic links cannot enter a workflow', async t => {
+test('hard-linked files cannot enter a workflow', async t => {
   const { service, source, file } = await fixture(t);
   const link = path.join(source, 'link.txt'); await fs.link(file, link);
-  assert.equal((await service.selectFiles([file])).ok, false); await fs.unlink(link);
-  try { await fs.symlink(file, link); } catch (error) { if (error.code === 'EPERM') return; throw error; }
+  assert.equal((await service.selectFiles([file])).ok, false);
+});
+test('symbolic links cannot enter a workflow', async t => {
+  const { service, source, file } = await fixture(t);
+  const link = path.join(source, 'link.txt');
+  try { await fs.symlink(file, link); }
+  catch (error) {
+    if (error.code === 'EPERM') { t.skip('File symbolic link creation is unavailable (EPERM).'); return; }
+    throw error;
+  }
   assert.equal((await service.selectFiles([link])).ok, false);
 });
 test('linked parent folders cannot be selected as file sources or destinations', async t => {

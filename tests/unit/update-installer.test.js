@@ -217,11 +217,18 @@ test('a surviving process, hidden/blank/loading/minimized window cannot acknowle
 });
 test('only owned renderer may acknowledge; readiness waits for actual initialization', async t => {
   const h = readinessFixture(t), manager = createUpdateReadiness(h.options);
+  let completeProbe;
+  h.window.webContents.executeJavaScript = source => {
+    assert.equal(source, READINESS_PROBE);
+    return new Promise(resolve => { completeProbe = resolve; });
+  };
   await assert.rejects(manager.confirmReady({}), /main application renderer/);
   const pending = manager.confirmReady(h.window.webContents);
-  await until(() => h.probes() > 0);
+  assert.equal(typeof completeProbe, 'function');
   assert.equal(h.ack(), null);
-  h.set({ usable: true });
+  // Complete the held initialization probe directly; host scheduling must not
+  // decide whether the test reaches a second poll inside its 80ms deadline.
+  completeProbe(true);
   assert.equal((await pending).ready, true);
 });
 test('a newer launch challenge invalidates an in-flight older renderer probe', async t => {

@@ -286,7 +286,7 @@ async function upgrade(seed) {
   const next = await launch(newExe, newVersion, 'new');
   // These are the only additions permitted during this upgrade. Do not derive
   // expected values from the actual snapshot or rewrite encrypted preferences.
-  const addedDefaults = { appearanceAccent: 'violet', appearanceMotion: 'system', appearanceContrast: 'standard', appearanceGlow: 'standard', responseStyle: 'natural', preferredAddress: '' };
+  const addedDefaults = { appearanceAccent: 'violet', appearanceMotion: 'system', appearanceContrast: 'standard', appearanceGlow: 'standard', responseStyle: 'natural', preferredAddress: '', microphoneDeviceId: '' };
   const supportedDefaults = await next.evaluate('OlangaPrefs.PREF_DEFS.map(def => def.key)');
   report.addedPreferenceDefaults = {};
   for (const [key, value] of Object.entries(addedDefaults)) {
@@ -295,8 +295,24 @@ async function upgrade(seed) {
       report.addedPreferenceDefaults[key] = value;
     }
   }
+  // Legacy profiles use the explicit learning default in memory. Loading a
+  // Workspace does not rewrite its original stored record; that remains part of
+  // the strict snapshot comparison, including interrupted-run metadata.
+  report.addedWorkspaceDefaults = {};
+  if (await next.evaluate("typeof window.OlangaWorkspace.setLearningEnabled === 'function'") && !Object.hasOwn(expected.workspace, 'learningEnabled')) {
+    expected.workspace.learningEnabled = true;
+    report.addedWorkspaceDefaults.learningEnabled = true;
+  }
+  async function verifyPersistedDefaultMirrors(label) {
+    const keys = Object.keys(report.addedPreferenceDefaults);
+    const stored = await next.evaluate(`Object.fromEntries(${JSON.stringify(keys)}.map(key => [key, localStorage.getItem(OlangaPrefs.PREF_DEFS.find(def => def.key === key).storageKey)]))`);
+    same(label + ': new preference defaults are actually persisted in local mirrors',
+      stored, Object.fromEntries(Object.entries(report.addedPreferenceDefaults).map(([key, value]) => [key, String(value)])));
+  }
   const initial = await next.evaluate(snapshotExpression);
   same('New packaged build normalizes the retired flag and known new defaults while preserving encrypted preferences and every seeded record', initial, expected);
+  await verifyPersistedDefaultMirrors('First upgraded launch');
+  same('Workspace defaults do not rewrite the legacy persisted record during startup', initial.savedWorkspace, seed.baseline.savedWorkspace);
   check('New packaged build does not execute saved Terminal history on first launch', !fs.existsSync(sentinelPath));
   const terminal = await next.evaluate(`({
     panel: !!document.getElementById('terminalScreen'),
@@ -313,6 +329,7 @@ async function upgrade(seed) {
   await pause(5500);
   const restored = await next.evaluate(snapshotExpression);
   same('New packaged build preserves IDs, deadlines, completed steps, supported settings and retired history after reload', restored, expected);
+  await verifyPersistedDefaultMirrors('Upgraded reload');
   report.upgradedObservations = await quiet(next, newVersion);
   check('Upgraded renderer never reads retained Terminal history during observed startup', report.upgradedObservations.observations?.terminalHistoryReads === 0);
   check('Retained Terminal history is not executed during upgrade or reload', !fs.existsSync(sentinelPath));
@@ -341,13 +358,17 @@ async function upgrade(seed) {
       if (!seed) seed = await seedOld();
       if (!seedOnly) await upgrade(seed);
       report.seedOnly = seedOnly;
-      report.passed = true;
     };
     await Promise.race([work(), new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('Profile upgrade fixture exceeded 120 seconds')), 120000); })]);
-  } catch (error) { report.error = error.message; }
+    // Only the fulfilled outer race may record success; late work cannot.
+    report.passed = true;
+  } catch (error) { report.passed = false; report.error = error?.message || String(error); }
   finally {
     clearTimeout(deadline);
     try { await stop(active); } catch (error) { report.passed = false; report.stopError = error.message; }
+    // Promise.race does not cancel work(): late completion during cleanup must
+    // never turn a recorded timeout or other failure into a successful report.
+    report.passed = report.passed && !report.error && !report.stopError;
     report.finishedAt = new Date().toISOString();
     report.limitation = 'Validates real packaged-binary profile compatibility only; does not validate NSIS installation, in-place installer upgrade, or live provider/microphone behavior.';
     fs.writeFileSync(reportFile, JSON.stringify(report, null, 2));

@@ -36,6 +36,49 @@ async function reachable(selector) {
  }, selector);
  assert.equal(result,true,'Control must remain reachable: '+selector);
 }
+// Scroll only named controls into view, inspect their real hit target, then restore
+// every affected scroll position so the existing screenshot states stay unchanged.
+async function reachablePanelControls(panelSelector, controls, label) {
+ const result = await evaluate((panelSelector, controls) => {
+  const panel = document.querySelector(panelSelector);
+  if (!panel?.open) return { error: 'Panel is not open: ' + panelSelector };
+  const targets = [];
+  for (const control of controls) {
+   const { selector, text } = typeof control === 'string' ? { selector: control } : control;
+   const matches = [...panel.querySelectorAll(selector)].filter(element => text === undefined || element.textContent.trim() === text);
+   if (matches.length !== 1) return { error: 'Expected one control: ' + (text || selector), matches: matches.length };
+   targets.push({ element: matches[0], label: text || selector });
+  }
+  const scrollPositions = new Map();
+  for (const { element } of targets) for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+   if (!scrollPositions.has(parent)) scrollPositions.set(parent, { top: parent.scrollTop, left: parent.scrollLeft });
+  }
+  const checked = [];
+  try {
+   for (const { element, label } of targets) {
+    if (!element.getClientRects().length || getComputedStyle(element).visibility !== 'visible' || element.matches(':disabled')) return { error: 'Control is unavailable: ' + label };
+    element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    const r = element.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4 || r.left < -2 || r.right > innerWidth + 2 || r.top < -2 || r.bottom > innerHeight + 2) return { error: 'Control does not fit the viewport: ' + label };
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+     const style = getComputedStyle(parent), bounds = parent.getBoundingClientRect();
+     const top = bounds.top + parent.clientTop, left = bounds.left + parent.clientLeft;
+     if (/auto|scroll|hidden|clip/.test(style.overflowY) && (r.top < top - 2 || r.bottom > top + parent.clientHeight + 2)) return { error: 'Control is vertically clipped: ' + label };
+     if (/auto|scroll|hidden|clip/.test(style.overflowX) && (r.left < left - 2 || r.right > left + parent.clientWidth + 2)) return { error: 'Control is horizontally clipped: ' + label };
+    }
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!hit || (hit !== element && !element.contains(hit))) return { error: 'Control is covered: ' + label, hit: hit?.id || hit?.tagName || null };
+    checked.push(label);
+   }
+   return { checked };
+  } finally {
+   for (const [element, position] of scrollPositions) element.scrollTo({ ...position, behavior: 'instant' });
+  }
+ }, panelSelector, controls);
+ assert.equal(result.error, undefined, label + ': ' + (result.error || ''));
+ assert.equal(result.checked.length, controls.length, label + ': every named control checked');
+ report.checks.push(label + ': ' + result.checked.length + ' lower controls reachable and unobscured');
+}
 async function capture(name,size){await Promise.race([evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))),pause(150)]);main.webContents.invalidate();await pause(130);await main.webContents.capturePage();await pause(70);const file=path.join(output,size+'-'+name+'.png');fs.writeFileSync(file,(await main.webContents.capturePage()).toPNG());const metrics=await evaluate(()=>{
  const root=document.querySelector('dialog[open]')||[...document.querySelectorAll('.screen')].find(n=>getComputedStyle(n).display!=='none');
  const visible=n=>n.getClientRects().length&&getComputedStyle(n).visibility!=='hidden';
@@ -60,10 +103,10 @@ app.whenReady().then(async()=>{try{
   main.webContents.setZoomFactor(size==='enlarged'?1.25:1);main.setContentSize(width,height);await pause(120);await home();await evaluate(()=>document.querySelector('#mainScreen .assistant-container').scrollTop=0);await capture('home',size);
   for(const selector of ['#textCommandInput','.desktop-task-launch','#micToggleBtn','#timerInput','#addTimerBtn','#taskInput','#addTaskBtn'])await reachable(selector);
   report.checks.push(size+': Home command, voice, timer and task controls reachable');
-  await click('#workspaceOpen');await capture('workspace-activity',size);if(size==='narrow'||size==='enlarged'){for(const tab of ['1','2','4','6']){await click('[data-workspace-tab="'+tab+'"]');await evaluate(()=>document.getElementById('workspaceDialog').scrollTop=0);await capture('workspace-tab-'+tab,size);}}
-  for(const [tab,name]of[['5','workspace-memories'],['7','workspace-backups'],['3','workspace-updates']]){await click('[data-workspace-tab="'+tab+'"]');await evaluate(()=>document.getElementById('workspaceDialog').scrollTop=0);await capture(name,size);}
+  await click('#workspaceOpen');await capture('workspace-activity',size);if(size==='narrow'||size==='enlarged'){for(const tab of ['1','2','4','6']){await click('[data-workspace-tab="'+tab+'"]');await evaluate(()=>document.getElementById('workspaceDialog').scrollTop=0);await capture('workspace-tab-'+tab,size);if(tab==='1')await reachablePanelControls('#workspaceDialog',['#routineName','#routineLines','#routineForm button[type="submit"]','#routineReset'],size+'/routines');}}
+  for(const [tab,name]of[['5','workspace-memories'],['7','workspace-backups'],['3','workspace-updates']]){await click('[data-workspace-tab="'+tab+'"]');await evaluate(()=>document.getElementById('workspaceDialog').scrollTop=0);await capture(name,size);if(tab==='5'&&(size==='narrow'||size==='enlarged'))await reachablePanelControls('#workspaceDialog',['#learningEnabled','#factsEnabled','#factText','#factForm button[type="submit"]','#factSearch','#factSort',{selector:'#factList .workspace-item:last-child button',text:'Edit'},{selector:'#factList .workspace-item:last-child button',text:'Delete'},'#factsClear'],size+'/memories');}
   await click('#workspaceProjects');assert.equal(await evaluate(()=>document.querySelector('#workbenchDialog section:not([hidden])').dataset.workbenchPage),'projects');await capture('work-projects',size);
-  await home();await click('#workspaceOpen');await click('#workspaceSchedules');assert.equal(await evaluate(()=>document.querySelector('#workbenchDialog section:not([hidden])').dataset.workbenchPage),'schedules');await capture('work-schedules',size);if(size==='narrow'||size==='enlarged'){for(const page of ['sessions','files','selection','conversation','calendar','integrations','companions','phone']){await evaluate(page=>window.openOlangaWorkbench(page),page);await evaluate(()=>document.getElementById('workbenchDialog').scrollTop=0);await capture('work-'+page,size);}}
+  await home();await click('#workspaceOpen');await click('#workspaceSchedules');assert.equal(await evaluate(()=>document.querySelector('#workbenchDialog section:not([hidden])').dataset.workbenchPage),'schedules');await capture('work-schedules',size);if(size==='narrow'||size==='enlarged'){for(const page of ['sessions','files','selection','conversation','calendar','integrations','companions','phone']){await evaluate(page=>window.openOlangaWorkbench(page),page);await evaluate(()=>document.getElementById('workbenchDialog').scrollTop=0);await capture('work-'+page,size);if(page==='files')await reachablePanelControls('#workbenchDialog',['Choose files','Preview renames','Choose destination folder','Preview moves','Show previous file operations'].map(text=>({selector:'[data-workbench-page="files"] button',text})),size+'/files');}}
   await home();await click('#workspaceOpen');await click('#workspaceExamples button');assert.equal(await evaluate(()=>document.getElementById('textCommandInput').value),'Set a timer for 25 minutes called Focus');assert.equal(await evaluate(()=>document.querySelector('dialog[open]')===null),true);report.checks.push(size+': direct Projects/Schedules and safe editable example');
   await home();await click('.desktop-task-launch');await capture('desktop-review',size);await home();await evaluate(()=>{window.visualOfflinePromise=reviewOfflineTranscript('Set a timer for twenty five minutes called Focus. Review this local transcript before sending.');});await capture('offline-review',size);await evaluate(()=>document.querySelector('dialog[open] button').click());await click('[data-screen="newsScreen"]');await until(()=>evaluate(()=>!!newsBundleData&&!newsRefreshController),'News missing');await capture('news',size);await click('#newsAiToggleBtn');await capture('news-assistant',size);await click('#newsAiCloseBtn');
   await click('[data-screen="notepadScreen"]');await capture('notes',size);

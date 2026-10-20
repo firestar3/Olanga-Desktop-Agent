@@ -135,8 +135,12 @@ function createStatusOverlay({ BrowserWindow, ipcMain, screen, basePath, onOpenA
   function syncVisibility() {
     if (!alive() || !ready) return;
     if (shouldShow()) {
-      if (!window.isVisible()) window.showInactive();
+      const restoring = !window.isVisible();
+      if (restoring) window.showInactive();
       raise();
+      // Restore native hit testing immediately, including a stationary cursor.
+      // A busy desktop can delay the next pointer event or fallback poll.
+      if (restoring) updatePointer();
     } else {
       closeMenu();
       hovered = false;

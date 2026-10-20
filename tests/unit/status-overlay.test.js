@@ -343,3 +343,30 @@ test('reduced motion survives readiness and renderer replacement without alterin
   assert.equal(replacement.snapshots.at(-1).reducedMotion, false);
   assert.equal(replacement.visible, true);
 });
+
+test('restored overlay synchronizes native hit testing before the first polling tick', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 10000 });
+  const f = fixture(t);
+  f.overlay.setMode('all'); f.send('ready');
+  const { x, y } = f.window.bounds;
+  const { orb, diameter } = f.latest().geometry;
+  f.cursor({ x: x + orb.x + diameter / 2, y: y + orb.y + diameter / 2 });
+  f.send('pointer'); f.send('toggle'); f.send('hide', { duration: '5-seconds' });
+  assert.equal(f.window.visible, false);
+  assert.equal(f.window.ignored, true);
+  t.mock.timers.tick(5000);
+  assert.equal(f.window.visible, true);
+  assert.equal(f.window.ignored, false, 'the restored orb accepts the stationary pointer without waiting for polling');
+  assert.equal(f.latest().hovered, true);
+  assert.equal(f.window.focused, false, 'restoration never steals focus');
+  assert.equal(f.latest().menuOpen, false);
+  f.overlay.setSuspended(true); f.overlay.setSuspended(false);
+  assert.equal(f.window.ignored, false, 'screenshot restoration is immediately clickable');
+  f.overlay.setMode('off'); f.overlay.setMode('all');
+  assert.equal(f.window.ignored, false, 'mode restoration is immediately clickable');
+  f.overlay.setSuspended(true);
+  f.cursor({ x: x - 20, y: y - 20 });
+  f.overlay.setSuspended(false);
+  assert.equal(f.window.ignored, true, 'transparent space still passes input through');
+  assert.equal(f.latest().hovered, false);
+});

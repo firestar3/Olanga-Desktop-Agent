@@ -1,10 +1,57 @@
-# Current source validation — October 19, 2026
+# Acceptance validation — October 19–20, 2026
+
+This local acceptance run checks the development source after `21f7f0b`. An unrelated Python workload remained active throughout the run. Host samples recorded 100% CPU, 297–551 MB available RAM and heavy paging. Suites were subsequently serialized to avoid adding concurrent test/build contention. A passing rerun does not erase an earlier timeout or establish normal responsiveness on an idle computer.
+
+The run found and corrected a native tray-orb defect: a hidden orb could reappear with mouse input still passing through it until the next pointer update. Restoring visibility now immediately refreshes native hit testing. A deterministic regression test failed before the change and passed afterward. The real Windows lifecycle test also passed six open/close cycles, Escape/outside-click handling, Open app and the five-second hide/reappearance path. Focus remains unchanged and transparent areas still pass input through.
+
+The acceptance harness was tightened as well. File symlink coverage now reports its Windows permission skip instead of silently returning success; hard links and directory junctions retain independent coverage. Resource checks record phase timings, fail on renderer load/exit errors and recheck errors after reload. Profile migration permits only the explicit new microphone and learning defaults, preserves strict comparisons of seeded records and encrypted preferences, and cannot report success after a recorded timeout or cleanup failure. The original deadlines remain unchanged. One positive readiness unit test now uses a held initialization promise instead of racing a second poll against an 80 ms fixture timeout; separate rejection and timeout cases retain their coverage.
+
+## Acceptance results
+
+**This run is not a release sign-off.** The current-source NSIS update installed the target version but failed the reopened-renderer readiness check. The earlier whole-application performance gates also remain unresolved. No push or release is made from this run.
+
+| Check | Result |
+| --- | --- |
+| Final full unit suite | **1,041 total: 1,040 passed, zero failures, one explicit file-symlink permission skip**, no cancellations or todo cases; 83.744 seconds under load |
+| Source and required assets | **86 JavaScript files and required assets passed** |
+| Production renderer | Assistant 6, routines 12, audio setup 9, Workspace 18, Settings 20, layouts 97, Work tools 16, personal backups 10, Workspace recovery 11, News 8, renderer races 12 and manual updates 11 passed. Resource lifecycle passed its seven functional checks in an earlier diagnostic rerun. The final optional pixel-comparison run was interrupted during hidden reload and did not reach pixel comparison |
+| Layout review | **76 fresh captures inspected**, with no confirmed clipping/overlap hiding visible controls. **36** additional lower-control reachability assertions passed across narrow and enlarged layouts |
+| Native Windows fixtures | App adapters **16/16**; saved window sessions **10/10**; editor replacement, exact readback, verified Undo and conflict refusal passed; restored-orb lifecycle and isolated overlay renderer passed |
+| Offline speech | **6 checks passed** using eight generated recordings. Command grammar recognized all seven supported requests correctly and dispatched no action for the out-of-scope recording; this does not establish physical-microphone accuracy |
+| Fresh packaged executable | **29/29** in each normal, updated and recovery launch mode (**87 total**). All **117** packaged source files match current production source; icon checks and unsigned policy passed |
+| Profile migration | **48/48** passed with the rebuilt executable; the final reporting-guard rerun passed **47/47** recorded checks with no error or cleanup failure. Strict seeded-data comparisons passed in both |
+| Native updater supervisor | **10/10** passed on current source, covering success, failure, tampering and recovery |
+| Real NSIS update journey | **Failed after four successful checks.** Download verification and the separate install action passed; installer exited 0 and target 1.6.0 was verified. The reopened main renderer did not load before the fixture's existing 15-second deadline. Receipt remained `stage: installed`, `code: version-verified`, `rendererReady: false`; completion was not falsely acknowledged |
+| Local development installer | Built, **155,301,525 bytes**, unsigned; source, artwork and signing-policy verification passed. It was not installed over the normal app or published |
+| Whole-application resource gate | **Not passed.** Earlier comparisons missed 1/23 and 6/23 limits. No new long benchmark pair was run during wrap-up, and no normal-load responsiveness or overall reduction claim is made |
+
+The earlier NSIS journey passed all ten checks before the isolated orb fix; that result is retained but does not replace the latest current-source failure. Initial loaded-host attempts also timed out in startup, export, native compilation and reload checks. Their subsequent passing runs used unchanged acceptance deadlines. Optional screenshot comparisons initially failed because Windows gave the two comparison windows different native client sizes; the fixture now bounds native geometry correction and still requires exact size and pixel equality, without cropping or rescaling captures.
+
+The final resource attempt retained a deadline failure after six functional checks at `hidden reload: loading`, with both loading flags true and elapsed time 13,247,337 ms across an environment interruption/time jump. It is not a normal 45-second performance measurement, and the bounded native-size correction/pixel comparison remains unverified. There was no retry during wrap-up.
+
+Visual evidence covers the captured fixture states. Narrow Health was still checking, enlarged Health showed partial results, News/Notes assistants were idle, and desktop screenshots cover the entry form rather than every later approval state. Lower-control reachability is established for the explicitly tested Routines, Memories and Files controls, not every possible screen state.
+
+The local installer is `build/qa/efficiency-package/Olanga-Setup-1.6.0.exe`, SHA-256 `44b35fa66296ef77407e0d3ff49d51c304a6704f1e7f87fdb7b50bff72e0faad`. It is an unpublished development build despite retaining version 1.6.0. Fresh production-source aggregate SHA-256 is `a4d3b92aa8e0d037026cbe24fca9d82abc4cc7c1372904b04545e2e4ed71dd0d`; the orb source hash is `b1182e1f0d202008ebcc6e5d6bed810b72278271ad897da564a961969cfb2753`.
+
+Next work is to reproduce and diagnose the current-source installer restart/readiness failure using the retained isolated fixture, complete the interrupted resource/pixel comparison, and resolve or characterize the resource-budget failures before release. The adapter harness also needs process-exit verification in addition to its current zero-window cleanup check. All four fresh fixture app/installer signatures matched the explicit unsigned policy. Independent cleanup confirmed both new private fixture directories absent, four registration keys absent and no fixture processes remaining. The current-source installer report and receipt are in `build/qa/full-acceptance-21f7f0b/after-overlay/update-installer-e2e.json`. An older adapter fixture remained alive without a window despite its exit signal. Its exact executable command line, unique fixture name and original creation/start times were matched before terminating that owned test process; exit was confirmed. No personal processes were terminated. The original failed runs, final reruns, source manifests and fixture cleanup records remain beside it. The historical optimization measurements below are unchanged.
+
+## Scope and retained evidence
+
+Tests use disposable profiles, synthetic audio, blocked network requests and fixture application identities. Native edit and overlay checks guard their fixture window before sending input. App adapters and saved-window sessions operate only on their uniquely identified fixture. The normal installed Olanga profile, microphone, provider credentials, Spotify state and Windows volume are not used. Legacy scripts that send unscoped foreground keys, unfinished scripts without assertions, live provider benchmarks and the real Spotify smoke test are excluded rather than counted as passes.
+
+The native installer journey uses a separate application identity and private installation directory. Its version-1.5.2 fixture contains the current updater code; it is not the published historical 1.5.2 binary. This checks the current updater's real NSIS handoff, installation and visible renderer readiness, not live GitHub transport, historical updater behavior, UAC or signed-publisher acceptance. No signing certificate is configured. The separate profile test uses the existing local 1.5.2 development executable and current development executable, sharing a fresh fixture profile.
+
+Original failures and every rerun are retained under ignored `build/qa/full-acceptance-21f7f0b/`. This is local validation only: no public tag, release, push or installation over the user's app is performed. Generated installers, fixture profiles, logs, screenshots and media are not committed.
+
+---
+
+# Optimization validation — October 19, 2026
 
 This increment improves local recall, routing, capture allocation, result speech preparation and background work after `bf68716`. It is unpublished source on the existing development branch; the public version and release assets remain 1.6.0. Tests use disposable profiles and scripted providers/native results. They do not establish live Spotify, cloud transcription, physical microphone or acoustic response latency.
 
 | Check | Confirmed result |
 | --- | --- |
-| Final full unit suite | **1,039 passed**, zero failures, skips or cancellations |
+| Recorded full unit suite | **1,039 reported passes**, zero reported failures or skips. The later acceptance audit found an implicit file-symlink skip and corrected its reporting |
 | Source and required assets | **86 JavaScript files passed**; version, local model, fonts and icon assets checked |
 | Production renderer | **220 checks passed**: assistant 6, routines 12, audio setup 9, Workspace 18, Settings 20, layouts 91, Work tools 16, personal backups 10, Workspace recovery 11, News 8, renderer races 12, resource lifecycle 7 |
 | Original compound request | The actual renderer handled typed and fixture-transcribed Open/Play Spotify plus 75% volume, verified both receipts, retained failure status when Spotify failed, continued the independent explicit volume change, and stopped undispatched steps on cancellation |

@@ -4,12 +4,13 @@ const { app, BrowserWindow, ipcMain, session, powerMonitor } = require('electron
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { performance } = require('node:perf_hooks');
 const output = path.resolve(__dirname, '../build/qa');
 fs.mkdirSync(output, { recursive: true });
 app.disableHardwareAcceleration();
 app.setPath('userData', fs.mkdtempSync(path.join(output, 'renderer-resources-profile-')));
 if (!process.argv.includes('--hidden')) process.argv.push('--hidden');
-const report = { passed: false, checks: [], forbiddenCalls: [], errors: [], notices: [] };
+const report = { passed: false, checks: [], forbiddenCalls: [], errors: [], notices: [], milestones: [] };
 const forbidden = new Set(['provider-generate', 'nvidia-tts-synthesize', 'nvidia-tts-config', 'media-control', 'open-app', 'close-app', 'arrange-app', 'play-spotify', 'desktop-capture', 'desktop-run', 'desktop-undo', 'terminal-session-create']);
 const handle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, callback) => handle(channel, (event, ...args) => {
@@ -28,13 +29,62 @@ app.whenReady().then(() => {
   session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (_details, callback) => callback({ cancel: true }));
 });
 require('../main');
-let main;
+let main, cancelReloadWait;
+const startedAt = performance.now();
+const elapsedMs = () => Math.round((performance.now() - startedAt) * 1000) / 1000;
+function phase(name) { report.phase = name; report.milestones.push({ phase: name, elapsedMs: elapsedMs() }); }
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = fn => main.webContents.executeJavaScript(`(${fn.toString()})()`, true);
 const save = () => fs.writeFileSync(path.join(output, 'renderer-resources-smoke.json'), JSON.stringify(report, null, 2));
 async function waitFor(fn, label) {
   for (let i = 0; i < 100; i++) { if (await fn()) return; await pause(40); }
   throw new Error(label);
+}
+function nativeSnapshot() {
+  const state = { phase: report.phase, elapsedMs: elapsedMs() };
+  try {
+    if (!main || main.isDestroyed()) return { ...state, windowUnavailable: true };
+    state.visible = main.isVisible(); state.minimized = main.isMinimized(); state.bounds = main.getBounds();
+    const contents = main.webContents;
+    state.webContentsDestroyed = contents.isDestroyed();
+    if (!state.webContentsDestroyed) {
+      state.url = contents.getURL(); state.loading = contents.isLoading(); state.mainFrameLoading = contents.isLoadingMainFrame();
+    }
+  } catch (error) { state.snapshotError = error.message; }
+  return state;
+}
+function reload(label) {
+  phase(label + ': loading');
+  return new Promise((resolve, reject) => {
+    const contents = main.webContents;
+    let settled = false;
+    function cleanup() {
+      contents.removeListener('did-finish-load', loaded);
+      contents.removeListener('did-fail-load', failed);
+      contents.removeListener('render-process-gone', crashed);
+      contents.removeListener('destroyed', destroyed);
+      if (cancelReloadWait === cleanup) cancelReloadWait = null;
+    }
+    function finish(error) {
+      if (settled) return;
+      settled = true; cleanup();
+      phase(label + (error ? ': failed' : ': loaded'));
+      if (error) reject(error); else resolve();
+    }
+    const loaded = () => finish();
+    const failed = (_event, code, description, url, isMainFrame) => {
+      if (isMainFrame) finish(new Error(label + ' main-frame load failed (' + code + '): ' + description + ' [' + url + ']'));
+    };
+    const crashed = (_event, details) => finish(new Error(label + ' renderer exited: ' + details.reason));
+    const destroyed = () => finish(new Error(label + ' web contents were destroyed'));
+    contents.once('did-finish-load', loaded);
+    contents.on('did-fail-load', failed);
+    contents.once('render-process-gone', crashed);
+    contents.once('destroyed', destroyed);
+    // The unchanged global deadline bounds this waiter; no additional time is granted.
+    cancelReloadWait = cleanup;
+    try { main.reload(); } catch (error) { finish(error); }
+  });
 }
 async function diagnostics() {
   if (!main || main.isDestroyed() || main.webContents.isDestroyed()) return { windowUnavailable: true };
@@ -63,15 +113,26 @@ async function setReducedMotion(reduce) {
   });
   await waitFor(() => evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches).then(value => value === reduce), 'Emulated motion preference did not reach the renderer');
 }
-const deadline = setTimeout(() => { report.error = 'Resource lifecycle check exceeded 45 seconds.'; save(); app.exit(1); }, 45000);
+const deadline = setTimeout(() => {
+  report.passed = false;
+  report.error ||= 'Resource lifecycle check exceeded 45 seconds.';
+  report.deadlineExceeded = true;
+  // Synchronous native getters only: an unresponsive renderer cannot delay exit.
+  report.timeoutState = nativeSnapshot();
+  cancelReloadWait?.();
+  save(); app.exit(1);
+}, 45000);
 deadline.unref();
 app.whenReady().then(async () => {
   try {
+    phase('initial main load');
     await waitFor(() => {
       main = BrowserWindow.getAllWindows().find(win => /index\.html/.test(win.webContents.getURL()));
       return main && !main.webContents.isLoading();
     }, 'Main renderer did not load');
+    phase('initial renderer initialization');
     await waitFor(() => evaluate(() => typeof orbCanvasCtx !== 'undefined' && !!orbCanvasCtx && !!window.OlangaVisibility), 'Asynchronous app initialization did not finish');
+    phase('initial motion and instrumentation');
     report.initialReducedMotion = await evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
     main.webContents.debugger.attach('1.3');
     await setReducedMotion(false);
@@ -87,6 +148,7 @@ app.whenReady().then(async () => {
       orbCanvasCtx.clearRect = (...args) => { orbDraws++; clear(...args); };
       playAlarmSound = () => { alarmPulses++; };
     });
+    phase('hidden startup rendering');
     assert.match(main.getBackgroundColor(), /^#(?:ff)?0a0a0f$/i, 'native fallback matches the existing opaque page');
     assert.equal(await evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(10, 10, 15)');
     await waitFor(() => evaluate(() => !window.OlangaVisibility.isVisible()), 'Hidden startup was not propagated');
@@ -96,6 +158,7 @@ app.whenReady().then(async () => {
     assert.equal(await evaluate(() => document.body.classList.contains('app-visuals-paused')), true);
     report.checks.push('hidden startup pauses CSS and Canvas without changing assistant state');
 
+    phase('visible active and idle rendering');
     main.showInactive();
     await waitFor(() => evaluate(() => window.OlangaVisibility.isVisible() && orbDraws > 1), 'Native show did not resume active canvas');
     await evaluate(() => setState(State.IDLE));
@@ -104,6 +167,7 @@ app.whenReady().then(async () => {
     assert.equal(await evaluate(() => orbDraws), idleDraws, 'idle canvas is invisible and does no work');
     report.checks.push('native show resumes active animation; idle draws zero frames');
 
+    phase('live motion preferences');
     await evaluate(() => setState(State.LISTENING));
     await waitFor(() => evaluate(() => animationFrameId !== null), 'Visible active canvas did not schedule animation');
     await setReducedMotion(true);
@@ -119,6 +183,7 @@ app.whenReady().then(async () => {
     }, 'Normal motion did not resume the visible active canvas');
     report.checks.push('live reduced-motion changes stop recurring draws and normal motion resumes them');
 
+    phase('minimize restore and countdown');
     await evaluate(() => { setState(State.SPEAKING); createTimer(4, 'Visible countdown'); });
     main.minimize();
     await waitFor(() => evaluate(() => !window.OlangaVisibility.isVisible()), 'Minimize did not pause visual work');
@@ -139,6 +204,7 @@ app.whenReady().then(async () => {
     await evaluate(() => clearAllTimers());
     report.checks.push('native minimize/restore pauses rendering and refreshes countdowns correctly');
 
+    phase('hidden timer deadlines');
     main.hide();
     await waitFor(() => evaluate(() => !window.OlangaVisibility.isVisible()), 'Native hide did not pause visual work');
     await evaluate(() => { setState(State.IDLE); createTimer(0.2, 'Hidden deadline'); });
@@ -151,6 +217,7 @@ app.whenReady().then(async () => {
     assert.equal(await evaluate(() => alarmPulses), 1, 'cancelled hidden deadlines never ring');
     report.checks.push('hidden fractional deadline fires exactly once; cancellation disarms it');
 
+    phase('clock resume reconciliation');
     if (process.platform === 'win32') assert.equal(main.isWindowMessageHooked(0x001E), true, 'native WM_TIMECHANGE is observed');
     await evaluate(() => {
       createTimer(120, 'Resume deadline');
@@ -164,21 +231,25 @@ app.whenReady().then(async () => {
     assert.equal(report.notices[1].body, 'Resume deadline is done.');
     report.checks.push('native clock hook is armed and resume reconciles tray deadlines without a polling delay');
 
+    phase('pre-reload error verification');
     assert.deepEqual(await evaluate(() => resourceErrors), []);
     assert.deepEqual(report.errors, []); assert.deepEqual(report.forbiddenCalls, []);
+    phase('minimize before reload');
     main.showInactive(); main.minimize();
     await waitFor(() => main.isMinimized(), 'Native window did not minimize before reload');
-    let reloaded = new Promise(resolve => main.webContents.once('did-finish-load', resolve));
-    main.reload(); await reloaded; await pause(100);
+    await reload('minimized reload'); await pause(100);
+    phase('minimized reload verification');
     assert.equal(main.isMinimized(), true, 'background reload must not restore a minimized window');
     main.hide();
-    reloaded = new Promise(resolve => main.webContents.once('did-finish-load', resolve));
-    main.reload(); await reloaded; await pause(100);
+    await reload('hidden reload'); await pause(100);
+    phase('hidden reload verification');
     assert.equal(main.isVisible(), false, 'background reload must not show a hidden window');
+    phase('hidden renderer reinitialization');
     await waitFor(() => evaluate(() => !!orbCanvasCtx && !window.OlangaVisibility.isVisible()), 'Reload did not reinitialize hidden renderer');
     await evaluate(() => { isMicMuted = true; isTtsMuted = true; showMainScreen({ voice: false }); });
     report.checks.push('background reload preserves minimized and hidden native windows');
     if (process.argv.includes('--compare-opaque')) {
+      phase('opaque surface comparison');
       // Compare the exact same frozen production DOM/style at the same size.
       // The paired windows never load script, credentials or remote resources.
       const markup = await evaluate(() => {
@@ -190,10 +261,27 @@ app.whenReady().then(async () => {
       const css = fs.readFileSync(path.resolve(__dirname, '../styles.css'), 'utf8') + '\n' + fs.readFileSync(path.resolve(__dirname, '../desktop-workflows.css'), 'utf8');
       const page = markup.replace('</head>', `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:;"><style>${css}\n*, *::before, *::after { animation-play-state: paused !important; transition: none !important; }</style></head>`);
       const images = [];
+      const contentSize = [960, 640];
+      report.opaqueWindows = [];
       for (const transparent of [true, false]) {
-        const comparison = new BrowserWindow({ width: 1280, height: 900, frame: false, show: false, transparent, backgroundColor: transparent ? '#00000000' : '#0a0a0f', webPreferences: { contextIsolation: true, sandbox: true, javascript: false } });
+        const comparison = new BrowserWindow({ width: contentSize[0], height: contentSize[1], useContentSize: true, frame: false, show: false, transparent, backgroundColor: transparent ? '#00000000' : '#0a0a0f', webPreferences: { contextIsolation: true, sandbox: true, javascript: false } });
         try {
           await comparison.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(page));
+          // Windows frame metrics differ between transparent and opaque windows.
+          // Compare equal client areas that fit the display, never cropped images.
+          const geometry = { transparent, attempts: [] };
+          report.opaqueWindows.push(geometry);
+          let requested = [...contentSize];
+          for (let attempt = 0; attempt < 3; attempt++) {
+            comparison.setContentSize(...requested);
+            const actual = comparison.getContentSize();
+            geometry.attempts.push({ requested, actual, bounds: comparison.getBounds() });
+            if (actual.every((value, index) => value === contentSize[index])) break;
+            // Fractional Windows display scaling can round a frame conversion
+            // by one DIP. Correct the native window, not the captured pixels.
+            requested = requested.map((value, index) => value + contentSize[index] - actual[index]);
+          }
+          assert.deepEqual(comparison.getContentSize(), contentSize);
           await pause(150);
           const screenshot = await comparison.webContents.capturePage();
           fs.writeFileSync(path.join(output, transparent ? 'window-transparent-before.png' : 'window-opaque-after.png'), screenshot.toPNG());
@@ -208,11 +296,18 @@ app.whenReady().then(async () => {
       assert.equal(changedBytes, 0, 'opaque native surface preserves identical page pixels');
       report.checks.push('transparent and opaque native surfaces render the same frozen application pixels');
     }
+    // Reloads and optional comparison windows can record late failures too.
+    assert.deepEqual(report.errors, []);
+    assert.deepEqual(report.forbiddenCalls, []);
+    phase('complete');
     main.webContents.debugger.detach();
     report.passed = true; save(); console.log(JSON.stringify({ passed: true, checks: report.checks.length, initialReducedMotion: report.initialReducedMotion }));
     app.quit();
   } catch (error) {
+    report.passed = false;
     report.error = error.stack;
+    report.failureState = nativeSnapshot();
+    phase('failure diagnostics');
     try { report.diagnostics = await diagnostics(); } catch (diagnosticError) { report.diagnosticError = diagnosticError.message; }
     save(); console.error(error.stack); console.error(JSON.stringify(report.diagnostics)); app.exit(1);
   }
