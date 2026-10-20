@@ -429,3 +429,50 @@ test('a failed dispatched routine action retains uncertainty for its next review
  await executeRun(store,run.id,[0],{dispatch:async()=>({results:[{ok:false,dispatched:true,pending:true}],spokenResponse:'Check the app before trying again.'})});
  assert.equal(store.snapshot().runs.find(item=>item.id===run.id).steps[0].state,'uncertain');
 });
+
+
+test('session-only activity performs no persistence writes while every live transition remains observable', () => {
+  const { store, storage } = fixture(); let writes = 0, notifications = 0;
+  const original = storage.setItem; storage.setItem = (...args) => { writes++; original(...args); };
+  store.subscribe(() => notifications++);
+  const id = store.begin(); store.plan(id, ['OPEN_APP', 'VOLUME_SET']);
+  const first = store.step(id, 'OPEN_APP'); store.receipt(id, first, 'completed', 'Opened Chrome');
+  const second = store.step(id, 'VOLUME_SET'); store.receipt(id, second, 'failed', 'Unavailable'); store.finish(id, 'completed');
+  assert.equal(writes, 0); assert.equal(notifications, 7);
+  assert.equal(store.snapshot().activity[0].state, 'failed');
+  assert.equal(store.snapshot().activity[0].steps[0].details, 'Opened Chrome');
+  assert.deepEqual(createStore(storage).snapshot().activity, []);
+  store.preference('saveActivity', true);
+  const baseline = writes, persisted = store.begin(); store.step(persisted, 'OPEN_APP');
+  assert.equal(writes, baseline + 2);
+  assert.equal(createStore(storage).snapshot().activity.at(-1).steps[0].state, 'uncertain');
+});
+
+test('session-only activity cannot hide failed required routine dispatch writes', () => {
+  const { store, storage } = fixture();
+  const run = store.createRun({ name: 'Focus' }, parse('open Chrome'));
+  storage.setItem = () => { throw new Error('full'); };
+  const id = store.begin(); store.step(id, 'OPEN_APP');
+  assert.throws(() => store.transitionRun(run.id, 0, 'working'), /could not save/);
+  assert.equal(store.snapshot().runs[0].steps[0].state, 'pending');
+  assert.equal(createStore(storage).snapshot().runs[0].steps[0].state, 'pending');
+});
+
+
+test('activity summaries expose only the latest status and relevant operation without mutable receipt text', () => {
+  const { store } = fixture(); assert.equal(store.activitySummary(), null);
+  const id = store.begin(); store.plan(id, ['OPEN_APP', 'VOLUME_SET']);
+  assert.deepEqual(store.activitySummary(), { id, state: 'working', operation: null });
+  const first = store.step(id, 'OPEN_APP');
+  assert.equal(store.activitySummary().operation, 'OPEN_APP');
+  store.receipt(id, first, 'completed', 'Private app detail');
+  assert.equal(store.activitySummary().operation, 'OPEN_APP');
+  const second = store.step(id, 'VOLUME_SET');
+  assert.equal(store.activitySummary().operation, 'VOLUME_SET');
+  store.receipt(id, second, 'failed'); store.finish(id, 'completed');
+  const summary = store.activitySummary();
+  assert.deepEqual(summary, { id, state: 'failed', operation: 'VOLUME_SET' });
+  summary.state = 'completed'; assert.equal(store.activitySummary().state, 'failed');
+  assert.equal(JSON.stringify(summary).includes('Private'), false);
+  store.clearActivity(); assert.equal(store.activitySummary(), null);
+});

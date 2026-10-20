@@ -40,7 +40,8 @@
     "smoke:layout": "electron tests/visual-layout-smoke.js --hidden",
     "smoke:audio-setup": "electron tests/audio-setup-smoke.js --hidden",
     "smoke:backups": "electron tests/personal-backup-smoke.js --hidden",
-    "smoke:routines": "electron tests/routine-conversation-smoke.js --hidden"
+    "smoke:routines": "electron tests/routine-conversation-smoke.js --hidden",
+    "smoke:assistant": "electron tests/assistant-efficiency-smoke.js --hidden"
   },
   "keywords": [
     "ai",

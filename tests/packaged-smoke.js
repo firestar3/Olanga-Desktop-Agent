@@ -160,10 +160,51 @@ async function stop() {
         const changed = OlangaWorkspace.snapshot().facts.find(fact => fact.slot === 'city');
         return original && changed?.id === original.id && changed.text === 'I live in Boston' && changed.source === 'conversation';
       })()`));
+      check('Packaged enabled local recall uses current memory with zero provider requests', await evaluate(`(async () => {
+        OlangaWorkspace.preference('factsEnabled', true);
+        const before = await electronAPI.providerStatus();
+        await processTextCommandWithGemini('Where do I live?');
+        const originalAnswer = aiText.textContent;
+        const fact = OlangaWorkspace.snapshot().facts.find(item => item.slot === 'city');
+        if (!fact || originalAnswer !== 'You live in Boston.' || transcriptAi.classList.contains('hidden')) return false;
+        OlangaWorkspace.updateFact(fact.id, 'I live in Portland');
+        await processTextCommandWithGemini('Where do I live?');
+        const after = await electronAPI.providerStatus();
+        return aiText.textContent === 'You live in Portland.' && !transcriptAi.classList.contains('hidden') &&
+          OlangaTurns.snapshot().outcome === 'completed' && !apiKey && !before.configured && !after.configured &&
+          before.totals.requests === 0 && after.totals.requests === 0;
+      })()`));
       check('Packaged learned-memory notices clear when their fact is deleted', await evaluate(`(() => {
         const fact = OlangaWorkspace.snapshot().facts.find(item => item.slot === 'city');
         OlangaWorkspace.deleteFact(fact.id);
-        const notice = document.querySelector('.memory-insight'); return notice.hidden && !notice.textContent.includes('Boston') && !OlangaTurns.snapshot().canRepeatResult;
+        const notice = document.querySelector('.memory-insight'); return notice.hidden && !/Boston|Portland/.test(notice.textContent) && !/Boston|Portland/.test(aiText.textContent) && !OlangaTurns.snapshot().canRepeatResult;
+      })()`));
+      check('Packaged checklist context module is bundled and the actual prompt stays bounded under load', await evaluate(`(() => {
+        if (typeof OlangaChecklistContext?.select !== 'function' || typeof OlangaChecklistContext.needsTargetClarification !== 'function' ||
+            ![...document.scripts].some(script => script.src.endsWith('/shared/checklist-context.js'))) return false;
+        const previousTasks = activeTasks;
+        const request = beginAssistantRequest();
+        try {
+          activeTasks = Array.from({ length: 500 }, (_, index) => ({ id: 'packaged-load-' + index,
+            text: ('Packaged load item ' + index + ' detailed checklist context ').repeat(24), completed: index % 3 === 0, dueDate: null }));
+          activeTasks[499] = { id: 'packaged-exact-target', text: 'Packaged quarterly review', completed: false, dueDate: null };
+          request.goal = 'Explain photosynthesis';
+          const unrelated = buildHistoryContext();
+          if (unrelated.includes('RELEVANT CHECKLIST DATA') || unrelated.includes('Packaged load item')) return false;
+          request.goal = 'Summarize my checklist';
+          const prompt = buildHistoryContext(), lines = prompt.split('\\n');
+          const label = lines.findIndex(line => line.startsWith('RELEVANT CHECKLIST DATA'));
+          if (label < 0) return false;
+          const serialized = lines[label + 1], selected = JSON.parse(serialized);
+          if (serialized.length > 6000 || !selected.tasks.length || selected.tasks.length > 20 ||
+              selected.totalCount !== 500 || selected.omittedCount !== 500 - selected.tasks.length) return false;
+          if (!lines[label].includes('omitted items still exist')) return false;
+          request.goal = 'Show my tasks about Packaged quarterly review';
+          const exactLines = buildHistoryContext().split('\\n');
+          const exact = JSON.parse(exactLines[exactLines.findIndex(line => line.startsWith('RELEVANT CHECKLIST DATA')) + 1]);
+          return exact.tasks.some(task => task.id === 'packaged-exact-target' && task.text === 'Packaged quarterly review') &&
+            JSON.stringify(exact).length <= 6000 && activeTasks.length === 500;
+        } finally { activeTasks = previousTasks; cancelAssistantRequest(); }
       })()`));
       check('Packaged voice control opens the exact routine editor without executing', await evaluate(`(async () => {
         await processTextCommandWithGemini('Create a routine named Packaged review');

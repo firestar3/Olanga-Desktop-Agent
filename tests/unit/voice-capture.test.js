@@ -37,6 +37,40 @@ test('worklet capture ends a complete recording without an animation frame and r
   assert.equal(f.calls.records.length, 1); assert.equal(f.calls.records[0].size, 44 + 27200 * 2);
   assert.equal(f.calls.acks, 2); assert.equal(f.context.currentState, 'thinking');
 });
+
+test('chunked WAV encoding matches contiguous PCM byte for byte without a merged float allocation', async () => {
+  const f = fixture();
+  const input = Float32Array.from([0, 1, -1, .25, -.25, 1.2, -1.2, NaN, Infinity, -Infinity, 1 / 32768]);
+  const chunks = [input.subarray(0, 3), new Float32Array(0), input.subarray(3, 7), input.subarray(7)];
+  for (const rate of [8000, 16000, 44100, 48000]) {
+    const contiguous = new Uint8Array(await f.context.encodeWAV(input, rate).arrayBuffer());
+    const chunked = new Uint8Array(await f.context.encodeWAVChunks(chunks, rate).arrayBuffer());
+    assert.deepEqual(chunked, contiguous);
+    const view = new DataView(chunked.buffer);
+    assert.equal(view.getUint32(24, true), rate);
+    assert.equal(view.getUint32(40, true), input.length * 2);
+    const expected = [0, 32767, -32768, 8191, -8192, 32767, -32768, 0, 32767, -32768, 0];
+    assert.deepEqual(expected.map((_, index) => view.getInt16(44 + index * 2, true)), expected);
+  }
+  const empty = await f.context.encodeWAVChunks([], 16000).arrayBuffer();
+  assert.equal(empty.byteLength, 44);
+});
+
+test('recording submission encodes the original owned packets without allocating a merged float recording', async () => {
+  const f = fixture(); await f.context.initMicrophone();
+  f.context.currentState = 'listening'; f.context.startRecording();
+  f.nodes[0].port.onmessage({ data: { samples: new Float32Array(3200).fill(.1) } });
+  f.nodes[0].port.onmessage({ data: { samples: new Float32Array(1000).fill(.2) } });
+  const owned = vm.runInContext('pcmChunks.slice()', f.context);
+  let encoded;
+  const encode = f.context.encodeWAVChunks;
+  f.context.encodeWAVChunks = (chunks, rate, length) => { encoded = { chunks, rate, length }; return encode(chunks, rate, length); };
+  f.context.stopRecording();
+  assert.equal(encoded.rate, 16000); assert.equal(encoded.length, 4200);
+  assert.equal(encoded.chunks.length, 2);
+  assert.equal(encoded.chunks[0], owned[0]); assert.equal(encoded.chunks[1], owned[1]);
+  assert.equal(f.calls.records.length, 1); assert.equal(f.calls.records[0].size, 44 + 8400);
+});
 test('worklet startup and processor failures use the original capture path without submitting partial speech', async () => {
   const fallback = fixture({ workletFailure: true }); await fallback.context.initMicrophone(); assert.equal(fallback.calls.fallback, 1);
   const f = fixture(); await f.context.initMicrophone(); f.context.currentState = 'listening'; f.context.startRecording();
@@ -61,6 +95,40 @@ test('worklet batches samples in order and bounds unacknowledged data', () => {
   assert.equal(messages.length, 8); assert.equal(messages[0].samples[0], 0); assert.equal(messages[7].samples[0], 7);
   processor.port.onmessage({ data: 'ack' }); processor.process([[new Float32Array(1024).fill(100)]]);
   assert.equal(messages[8].gap, true); assert.equal(messages[9].samples[0], 100);
+});
+
+test('worklet transfers each full packet once, reuses dropped storage, and clears queued speech on flush', () => {
+  let Processor, allocations = 0, views = 0; const messages = [], transferred = [];
+  class CountedFloat32Array extends Float32Array {
+    constructor(...args) { super(...args); if (!(args[0] instanceof ArrayBuffer)) allocations++; }
+    subarray(...args) { views++; return super.subarray(...args); }
+  }
+  const context = vm.createContext({ Float32Array: CountedFloat32Array, AudioWorkletProcessor: class {
+    constructor() { this.port = { postMessage: (message, transfer = []) => {
+      if (message.samples) { assert.equal(transfer.length, 1); assert.equal(transfer[0], message.samples.buffer); transferred.push(transfer[0]); }
+      messages.push(structuredClone(message, { transfer }));
+    } }; }
+  }, registerProcessor: (_name, ctor) => { Processor = ctor; } });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/audio-capture-worklet.js'), 'utf8'), context);
+  const processor = new Processor(), quantum = new CountedFloat32Array(128).fill(.25), before = allocations;
+  for (let index = 0; index < 160; index++) processor.process([[quantum]]);
+  assert.equal(messages.length, 8); assert.equal(allocations - before, 8, 'Only the eight transferred packets need replacement storage');
+  assert.equal(views, 0, 'Complete render quanta create no subarray views');
+  assert.ok(transferred.every(buffer => buffer.byteLength === 0), 'The sender no longer owns transferred buffers');
+  assert.ok(messages.every(message => message.samples.length === 1024 && message.samples.every(value => value === .25)));
+  processor.port.onmessage({ data: 'ack' });
+  const varied = Float32Array.from({ length: 1100 }, (_, index) => index / 2000);
+  processor.process([[varied]]);
+  assert.equal(messages[8].gap, true);
+  assert.deepEqual([...messages[9].samples], [...varied.subarray(0, 1024)]);
+  assert.equal(processor.offset, 76);
+  const owned = processor.buffer;
+  processor.port.onmessage({ data: { type: 'flush', id: 4 } });
+  assert.equal(processor.buffer, owned); assert.equal(processor.offset, 0); assert.ok(owned.every(value => value === 0));
+  assert.equal(messages[10].flushed, 4);
+  processor.port.onmessage({ data: 'ack' });
+  for (let index = 0; index < 8; index++) processor.process([[new Float32Array(128).fill(.5)]]);
+  assert.equal(messages[11].samples.length, 1024); assert.ok(messages[11].samples.every(value => value === .5));
 });
 
 test('local speaker playback never enters wake recognition or microphone pre-roll', async () => {

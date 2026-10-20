@@ -1,16 +1,20 @@
 /* Local conversation controls. Only a complete direct user request is matched. */
 (function(root,factory){ const api=factory(); if(typeof module==='object'&&module.exports) module.exports=api; else root.OlangaConversationalControls=api; })(typeof globalThis!=='undefined'?globalThis:this,function(){
-  function parse(input){
+  function normalize(input){
     if(typeof input!=='string'||input.length>1000||/[\r\n\x00-\x1f\[\]<>]/.test(input)) return null;
-    const text=input.trim().replace(/[.!?]+$/,'').trim().replace(/^(?:please|could you|can you|would you)\s+/i,'');
-    if(!text) return null;
+    const text=input.trim().replace(/^(?:(?:hey|okay|ok)[, ]+)?olanga[, ]+/i,'').replace(/^(?:please\s+(?:can|could|would)\s+you(?:\s+please)?|(?:can|could|would)\s+you(?:\s+please)?|please)\s+/i,'').replace(/(?:,?\s+please)?[.!?]*$/i,'').trim();
+    return text&&balancedQuotes(text)?text:null;
+  }
+  function parse(input){
+    const text=normalize(input);
+    if(!text)return null;
     if(/^(?:run selected steps|yes[,]? run selected steps|start selected steps|confirm|resume workspace|resume selected workspace|save workspace|save selected setup)$/i.test(text))return{kind:'stale-review-confirm'};
     if(/^(?:cancel|cancel (?:the |my )?(?:request|routine|remaining steps|current request))$/i.test(text))return{kind:'cancel-request'};
     let m;
     if(/^(?:create|make|set up|add)(?: me)? (?:a |my )?(?:new )?routine(?: (?:called|named) (.+))?$/i.test(text)){
       m=/(?:called|named) (.+)$/i.exec(text);return m?named('routine-create',m[1]):{kind:'routine-create',name:''};
     }
-    if(/^(?:open|show|take me to|go to)(?: the| my)? (?:routine(?:s| creator| editor| creation tab)|create routine(?: tab)?)$/i.test(text))return{kind:'routine-create',name:''};
+    if(/^(?:open|show|take me to|go to)(?: the| my)? (?:routine(?:s| creator| editor| creation tab)|create routine(?: tab)?|routines? tab)$/i.test(text))return{kind:'routine-create',name:''};
     if((m=/^(?:run|start|execute) (?:the |my )?routine (.+)$/i.exec(text))||(m=/^(?:run|start|execute) (?:the |my )?(.+?) routine$/i.exec(text)))return named('routine-run',m[1]);
     if((m=/^(?:edit|change) (?:the |my )?routine (.+)$/i.exec(text))||(m=/^(?:edit|change) (?:the |my )?(.+?) routine$/i.exec(text)))return named('routine-edit',m[1]);
     if(/^(?:what (?:routines (?:do I have|have I saved)|are my routines)|(?:list|show|open) (?:my |the )?(?:saved )?routines)$/i.test(text))return{kind:'routine-list'};
@@ -29,7 +33,8 @@
     if(/^(?:review|retry|resume) (?:the |my )?(?:unfinished|failed|remaining) steps$/i.test(text))return{kind:'unfinished-review'};
     return null;
   }
+  function balancedQuotes(text){let quote=null;for(const character of text){if(quote){if(character===quote)quote=null;}else if(character==='\"'||character==='“')quote=character==='“'?'”':'\"';else if(character==='”')return false;}return quote===null;}
   function name(value,max=100){const text=String(value||'').trim().replace(/^["“]|["”]$/g,'').trim();return text.length&&text.length<=max&&!/[\[\]\r\n\x00-\x1f<>]/.test(text)?text:'';}
   function named(kind,value){const clean=name(value);return clean?{kind,name:clean}:null;}
-  return{parse};
+  return{parse,normalize};
 });

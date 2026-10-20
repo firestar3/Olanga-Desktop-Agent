@@ -13,8 +13,8 @@ class Events {
 }
 
 function fixture({ muted = false, legacy = false, workletSetup } = {}) {
-  const calls = { models: [], recognizers: [], contexts: [], requests: 0, terminated: 0, removed: 0, errors: [], analyses: [], waveWrites: 0 };
-  const timers = new Map(), frames = new Map(); let sequence = 0, visible = true, visibilityListener;
+  const calls = { models: [], recognizers: [], contexts: [], requests: 0, terminated: 0, removed: 0, errors: [], analyses: [], waveWrites: 0, accepted: 0 };
+  const timers = new Map(), frames = new Map(); let sequence = 0, visible = true, visibilityListener, screenHidden = false, screenListener;
   const node = () => ({ connect() {}, disconnect() {} });
   class Context {
     constructor() { this.sampleRate = 16000; this.state = 'running'; if (workletSetup) this.audioWorklet = { addModule: () => workletSetup }; calls.contexts.push(this); }
@@ -30,7 +30,7 @@ function fixture({ muted = false, legacy = false, workletSetup } = {}) {
     constructor() { this.handlers = {}; calls.recognizers.push(this); }
     setWords() {} on(name, handler) { this.handlers[name] = handler; }
     remove() { calls.removed++; }
-    acceptWaveformFloat() {}
+    acceptWaveformFloat() { calls.accepted++; }
   }
   class Model extends Events {
     constructor() {
@@ -47,13 +47,15 @@ function fixture({ muted = false, legacy = false, workletSetup } = {}) {
     console: { log() {}, error() {} }, Float32Array, Uint8Array, AudioContext: Context,
     AudioWorkletNode: class { constructor() { Object.assign(this, node()); this.port = { postMessage() {} }; } },
     navigator: { mediaDevices: { getUserMedia: async () => { calls.requests++; return stream; }, addEventListener() {} } },
+    mainScreen: { classList: { contains: () => screenHidden } },
+    MutationObserver: class { constructor(callback) { screenListener = callback; } observe() {} },
     setTimeout: (callback, ms) => { timers.set(++sequence, { callback, ms }); return sequence; }, clearTimeout: id => timers.delete(id),
     requestAnimationFrame: callback => { frames.set(++sequence, callback); return sequence; }, cancelAnimationFrame: id => frames.delete(id),
     isMicMuted: muted, isVoskReady: false, voskModel: null, voskRecognizer: null, micStream: null, audioContext: null, analyser: null, scriptNode: null,
-    isRecording: false, isWakeWordCapturing: false, pcmChunks: [], currentRMS: 0, hasSpokenDuringRecording: false, followUpTimer: null, SILENCE_DURATION: 1500,
+    isRecording: false, isWakeWordCapturing: false, pcmChunks: [], currentRMS: 0, hasSpokenDuringRecording: false, followUpTimer: null, SILENCE_DURATION: 1500, SPEECH_THRESHOLD: 6,
     currentState: 'idle', State: { IDLE: 'idle', LISTENING: 'listening', THINKING: 'thinking', SPEAKING: 'speaking' },
-    waveBarEls: [{ style: { set height(_value) { calls.waveWrites++; } } }],
-    setState: value => { context.currentState = value; }, showError: message => calls.errors.push(message),
+    waveBarEls: [{ style: { value: '', get height() { return this.value; }, set height(value) { this.value = value; calls.waveWrites++; } } }],
+    setState: value => { context.currentState = value; context.refreshMicrophoneMonitor?.(); }, showError: message => calls.errors.push(message),
     ...(legacy ? {} : { OlangaVoiceEndpoint: endpoint })
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/voice.js'), 'utf8'), context);
@@ -63,6 +65,7 @@ function fixture({ muted = false, legacy = false, workletSetup } = {}) {
     mute(value) { context.isMicMuted = value; track.enabled = !value; context.refreshMicrophoneActivity(); },
     expireIdle() { for (const [id, timer] of [...timers]) if (timer.ms === 5000) { timers.delete(id); timer.callback(); } },
     visible(value) { visible = value; visibilityListener?.(); },
+    screen(value) { screenHidden = !value; screenListener?.(); },
     frame() { const pending = [...frames.values()]; frames.clear(); for (const callback of pending) callback(); }
   };
 }
@@ -74,7 +77,7 @@ test('muted startup loads no model or microphone and unmute initializes one reus
   assert.equal(f.calls.models.length, 1); f.calls.models[0].load(); await f.settle();
   assert.equal(f.calls.requests, 1); assert.equal(f.calls.contexts.length, 1);
   assert.equal(f.context.isMicMuted, false); assert.equal(f.context.audioContext.state, 'running');
-  assert.equal(f.frames.size, 1); assert.deepEqual(f.calls.errors, []);
+  assert.equal(f.frames.size, 0); assert.deepEqual(f.calls.errors, []);
 });
 
 test('mute suspends capture immediately, unloads the unused model, and unmute reloads without another permission request', async () => {
@@ -84,7 +87,7 @@ test('mute suspends capture immediately, unloads the unused model, and unmute re
   f.expireIdle(); assert.equal(f.calls.terminated, 1); assert.equal(f.context.voskModel, null); assert.equal(f.context.isVoskReady, false);
   f.mute(false); assert.equal(f.calls.models.length, 2); f.calls.models[1].load(); await f.settle();
   assert.equal(f.context.audioContext, graph); assert.equal(graph.state, 'running'); assert.equal(f.calls.requests, 1);
-  assert.equal(f.context.isVoskReady, true); assert.equal(f.frames.size, 1); assert.deepEqual(f.calls.errors, []);
+  assert.equal(f.context.isVoskReady, true); assert.equal(f.frames.size, 0); assert.deepEqual(f.calls.errors, []);
 });
 
 test('push-to-talk preserves the first words while the wake model reloads after a sustained mute', async () => {
@@ -168,17 +171,57 @@ test('a replacement offline lease protects a late model after an earlier consume
 
 test('hidden microphone waveform stops frames without stopping capture, and visible waveform reuses capture RMS', async () => {
   const f = fixture(); await f.start(); const graph = f.context.audioContext;
-  assert.equal(f.context.analyser, null); f.visible(false); const writes = f.calls.waveWrites;
+  assert.equal(f.context.analyser, null); f.visible(false); f.context.setState('listening'); const writes = f.calls.waveWrites;
   f.frame(); assert.equal(f.frames.size, 0); assert.equal(f.calls.waveWrites, writes); assert.equal(graph.state, 'running');
   f.context.scriptNode.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(1024).fill(.1) } });
   assert.ok(f.context.currentRMS > 9); assert.equal(f.calls.waveWrites, writes);
   f.visible(true); assert.equal(f.frames.size, 1); assert.ok(f.calls.waveWrites > writes); assert.equal(f.calls.analyses.length, 0);
 });
 
+test('idle, thinking, speaking and other screens do no microphone visual work while capture remains available', async () => {
+  const f = fixture(); await f.start();
+  f.context.bargeInEnabled = true;
+  const feed = () => f.context.scriptNode.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(1024).fill(.1) } });
+  assert.equal(f.frames.size, 0); assert.equal(f.calls.waveWrites, 0);
+  feed(); assert.equal(f.calls.accepted, 1);
+  for (const state of ['thinking', 'speaking', 'idle']) {
+    f.context.setState(state); f.frame(); feed();
+    assert.equal(f.frames.size, 0); assert.equal(f.calls.waveWrites, 0);
+  }
+  assert.equal(f.calls.accepted, 4, 'Wake and interruption samples do not depend on waveform rendering');
+  f.context.setState('listening'); assert.equal(f.frames.size, 1);
+  f.screen(false); const writes = f.calls.waveWrites; f.frame(); feed();
+  assert.equal(f.frames.size, 0); assert.equal(f.calls.waveWrites, writes);
+  f.screen(true); assert.equal(f.frames.size, 1);
+  f.context.setState('thinking'); assert.equal(f.frames.size, 0);
+  assert.equal(f.context.audioContext.state, 'running');
+});
+
+test('silent waveform frames do not repeat identical DOM writes and retain immediate level updates', async () => {
+  const f = fixture(); await f.start(); f.context.setState('listening');
+  const first = f.calls.waveWrites;
+  for (let index = 0; index < 120; index++) f.frame();
+  assert.equal(first, 1); assert.equal(f.calls.waveWrites, first);
+  f.context.Date = { now: () => 0 };
+  f.context.updateWaveBars(100);
+  assert.ok(f.calls.waveWrites > first);
+  f.context.updateWaveBars(0);
+  assert.equal(f.context.waveBarEls[0].style.height, '4px');
+});
+
 test('legacy endpoint analyser reuses its sample buffer and retains endpoint frames when hidden', async () => {
   const f = fixture({ legacy: true }); await f.start(); f.frame(); f.frame();
   assert.ok(f.calls.analyses.length >= 3); assert.ok(f.calls.analyses.every(samples => samples === f.calls.analyses[0]));
   f.visible(false); f.frame(); assert.equal(f.frames.size, 1); assert.equal(f.context.audioContext.state, 'running');
+});
+
+test('legacy no-speech timeout keeps exactly one monitor after its state transition', async () => {
+  const f = fixture({ legacy: true }); await f.start();
+  let now = 1000; f.context.Date = { now: () => now };
+  f.context.setState('listening'); f.context.startRecording(); f.visible(false);
+  now = 6000; f.frame();
+  assert.equal(f.context.isRecording, false); assert.equal(f.context.currentState, 'idle');
+  assert.equal(f.frames.size, 1);
 });
 
 function libraryFixture() {

@@ -28,7 +28,7 @@ Common commands run directly through local controls, with no API key required fo
 
 **Olanga 1.6.0** brings clearer results, personal Workspace backups, organized memories and a faster News panel. Set your conversation style, adjust the familiar interface, and reach Projects, Schedules and Updates straight from Workspace. [What’s new in 1.6.0](docs/releases/1.6.0.md).
 
-**Current source:** the guide below also covers conversational learning, named workspaces, guided audio checks and broader personal backup controls implemented after 1.6.0. These source changes are not part of the published 1.6.0 installer; the release notes describe that stable download.
+**Current source:** the guide below also covers conversational learning, faster local memory answers, leaner voice processing, named workspaces, guided audio checks and broader personal backup controls implemented after 1.6.0. These source changes are not part of the published 1.6.0 installer; the release notes describe that stable download.
 
 Use **Workspace** to save app layouts, review file changes, search a project, schedule reminders and connect optional browser, editor and phone companions. Request progress and spoken action results keep you informed as Olanga works.
 
@@ -62,6 +62,8 @@ This example shows a supported two-action request: open Spotify and set the syst
 | “Remember that I prefer concise answers.” | Saves a memory you can review or delete in Workspace. It's included in Gemini context only while enabled. |
 | “What do you remember about me?” / “Forget that I prefer concise answers.” | Lists saved memories or removes a matching fact. |
 | “I live in Seattle.” / “I prefer concise answers.” | Learns a supported everyday detail locally, shows what changed and offers Undo. |
+| “What’s my name?” / “Where do I live?” | Answers directly from a single unambiguous enabled memory, without an answer-model call. |
+| “I live in Seattle. What’s the weather here?” | Learns the clear detail and uses it for the forecast in the same request. |
 | “Stop learning.” / “Resume learning.” / “Forget what you just learned.” | Pauses or resumes conversational learning, or undoes the latest learned change. |
 | “Create a routine called Focus.” | Opens the routine editor with the name filled in. You enter and save its exact commands. |
 | “Run routine Focus.” → “Run selected steps.” | Reads the saved routine for review, then runs only the selected steps after confirmation. |
@@ -86,9 +88,13 @@ Ask questions, request current information through Google Search, or use the opt
 
 **Less work in the background.** The earlier 1.5.2 optimization established a lower baseline: in a paired Windows benchmark against 1.5.1, it used 54% less CPU with the idle window visible, 99% less while idle in the tray, and 87% less while muted in the tray. After sustained mute, private resident memory was 40–45% lower. Active voice recognition showed smaller savings. These are measurements on one computer, not a hardware-wide guarantee; see the [full results and test method](docs/VALIDATION.md).
 
-Common app, music, volume, timer, reminder, memory and checklist commands use a local intent matcher. Supported typed requests on this path need **zero model calls**. The cloud transcription path can execute a recognized local command after **one transcription call**; reviewed on-device commands need no transcription provider. Commands receive a short local acknowledgment while work starts. As soon as actions finish, their results appear on screen—even if the acknowledgment is still speaking. Final speech follows in order. Known local requests get a brief description of the intended action; voice acknowledgments vary while transcription is still pending.
+Common app, music, volume, timer, reminder, memory and checklist commands use a local intent matcher. Supported typed requests on this path need **zero model calls**. The cloud transcription path can execute a recognized local command after **one transcription call**; reviewed on-device commands need no transcription provider. Commands receive a short local acknowledgment while work starts. As soon as actions finish, their results appear on screen—even if the acknowledgment is still speaking. Final speech follows in order. With Magpie, eligible verified result audio starts preparing while the acknowledgment finishes, without overlapping playback. Known local requests get a brief description of the intended action; voice acknowledgments vary while transcription is still pending.
 
 **Streamed replies**, on by default in **Settings → User preferences → Conversation**, speak conversational answers sentence by sentence while the rest is being generated. Eligible spoken questions can receive their transcript and answer in one Gemini call. Requests for actions or current information return to the appropriate command or Google Search path; they can require additional calls. Screen tasks and pending clarifications retain their existing review and conversation flow.
+
+Known personal details can answer directly from enabled memory. Other answers and searches receive a small relevant selection of memories; unrelated questions do not carry the whole checklist. When a final transcript clearly asks a question, Olanga can choose the answer or search path immediately instead of making another router request.
+
+The voice capture path reuses a bounded pre-roll buffer and encodes a finished recording without an extra full-size audio copy. Hidden Workspace lists wait until opened, and session-only activity avoids storage writes. These changes reduce repeated work while preserving speech endpoints, command verification and review steps.
 
 Olanga also tracks a rough transcript locally while you speak. When it recognizes a complete supported command, it can shorten the end-of-speech pause. That rough transcript does not authorize execution: cloud recognition or the editable offline review still determines the submitted request.
 
@@ -126,7 +132,7 @@ Inside Workspace:
 
 If Workspace storage is damaged, unreadable or from an unsupported version, Olanga preserves the original record and pauses changes to that record. Session-only work can continue. Backups provides retry and recovery controls; replacing or resetting data requires a verified recovery copy first. Retained recovery copies can contain older memories and activity metadata until you delete them. [Storage and backup details](PRIVACY.md).
 
-Conversational learning uses local rules for seven categories: name, city, temperature units, measurement units, answer length, favorite color and music genre. It handles clear statements you make directly, skips questions, quotations and sensitive or operational wording, and never learns from AI replies, documents, screenshots or tool results. It does not train a model or grant permission to act.
+Conversational learning uses local rules for seven categories: name, city, temperature units, measurement units, answer length, favorite color and music genre. It handles clear statements you make directly, skips question text, quotations and sensitive or operational wording, and never learns from AI replies, documents, screenshots or tool results. A supported fact in a separate sentence before an information question can be learned and used in that answer. It does not train a model or grant permission to act.
 
 Up to 50 explicit and learned memories share the same local list. Learning can update its own matching detail; an explicitly saved memory needs your confirmation before replacement. Say “what have you learned about me?”, “what memories did you use?” or “stop learning”. Undo is available for ten minutes in the current session, with up to ten recent learned-change records; you can edit or delete the saved memory afterward. Pausing learning preserves existing memories. For answers, Olanga selects relevant enabled facts within an eight-memory, 1,800-character budget.
 

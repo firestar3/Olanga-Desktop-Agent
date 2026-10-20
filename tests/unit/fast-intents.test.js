@@ -264,3 +264,45 @@ test('the native media boundary accepts only bounded data and known operations',
   assert.throws(() => normalizeMediaRequest({ action: 'PLAYLIST', term: 'x'.repeat(301) }), /Invalid/);
   assert.throws(() => normalizeMediaRequest({ action: 'PLAYLIST', term: 'name\ncommand' }), /Invalid/);
 });
+
+
+test('polite direct commands stay local without accepting reported or hypothetical actions', () => {
+  for (const phrase of [
+    'Olanga, can you please open Chrome?', 'Hey, Olanga, please open Chrome.',
+    'Please could you open Chrome?', 'Okay Olanga, would you please open Chrome?',
+    'Can you please open Chrome, please?', 'Please can you open Chrome?',
+  ]) assert.deepEqual(commands(phrase), ['[OPEN_APP: Chrome]'], phrase);
+  for (const phrase of [
+    'Could you tell me how to open Chrome?', 'Please explain why you open Chrome',
+    'Hey Olanga, if I ask you to open Chrome', 'Olanga, do not open Chrome',
+    'Olanga, the message says please open Chrome', '"Please open Chrome"',
+    'Hey Olanga, please open Chrome unless it is already running',
+    'Please could you open Chrome and delete all files?',
+  ]) assert.equal(parse(phrase), null, phrase);
+});
+
+test('common timer and checklist questions are answered locally with whole-request validation', () => {
+  for (const phrase of ['how much time is left on my timer', 'how long is left on the timer', 'is my timer still running', 'are any timers running', 'show my running timers']) assert.deepEqual(commands(phrase), ['[TIMER_STATUS]'], phrase);
+  for (const phrase of ["what's on my to-do list", 'what is on my checklist', 'show my to do list']) assert.deepEqual(commands(phrase), ['[TASK_STATUS]'], phrase);
+  assert.deepEqual(commands('add Buy milk to my to-do list'), ['[ADD_TASK: Buy milk]']);
+  assert.deepEqual(commands('mark my task Buy milk as done'), ['[COMPLETE_TASK: Buy milk]']);
+  assert.deepEqual(commands('mark task "Bread and milk" complete'), ['[COMPLETE_TASK: Bread and milk]']);
+  assert.deepEqual(commands('mark task Read as done then open Chrome'), ['[COMPLETE_TASK: Read]', '[OPEN_APP: Chrome]']);
+  for (const phrase of ['how much time is left on the project', 'is my timer still running and delete files', 'mark task Read as done and email my boss', 'add Milk, Eggs to my to do list', 'what is on my to do list tomorrow']) assert.equal(parse(phrase), null, phrase);
+});
+
+test('natural volume phrasing keeps relative and absolute intent distinct', () => {
+  for (const phrase of ['turn up the volume', 'turn up my volume', 'turn system volume up']) assert.deepEqual(commands(phrase), ['[VOLUME_UP]'], phrase);
+  for (const phrase of ['turn down the volume', 'turn my volume down', 'turn down system volume']) assert.deepEqual(commands(phrase), ['[VOLUME_DOWN]'], phrase);
+  assert.deepEqual(commands('set the system volume to 75%'), ['[VOLUME_SET: 75]']);
+  assert.deepEqual(commands('set my master volume to fifty percent'), ['[VOLUME_SET: 50]']);
+  for (const phrase of ['turn up the volume by 50%', 'turn system volume down 20%', 'set the system volume to 101%', 'turn up the microphone volume', 'lower my volume ten percent']) assert.equal(parse(phrase), null, phrase);
+});
+
+test('compound parser retains duration units and action limits without reparsing completed prefixes', () => {
+  assert.deepEqual(commands('open Chrome and set a timer for one hour and thirty minutes and open Spotify and volume down'), ['[OPEN_APP: Chrome]', '[SET_TIMER: 5400, Timer]', '[OPEN_APP: Spotify]', '[VOLUME_DOWN]']);
+  assert.equal(parse('open Chrome and set a timer for one hour and thirty minutes and open Spotify and volume down and volume up'), null);
+  assert.deepEqual(commands('set a timer for one hour and thirty minutes and ten seconds'), ['[SET_TIMER: 5410, Timer]']);
+  assert.deepEqual(commands('set a timer for an hour and a half and open Chrome'), ['[SET_TIMER: 5400, Timer]', '[OPEN_APP: Chrome]']);
+  for (const phrase of ['set a timer for one hour and thirty minutes and delete my files', 'remember that "I like jazz', 'forget "my old name', 'open Chrome'+String.fromCharCode(0), 'play artist "Earth, Wind and Fire']) assert.equal(parse(phrase), null, phrase);
+});

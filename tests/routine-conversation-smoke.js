@@ -90,5 +90,16 @@ app.whenReady().then(async () => { try {
     assert.deepEqual(await evaluate(() => [...document.querySelectorAll('.routine-review[open] label span')].map(item => item.textContent.includes('Alpha fixture'))), [false,false]);
     state = await say('Run selected steps'); assert.deepEqual(state.tasks, ['Alpha fixture task','Beta fixture task','Gamma fixture task']); assert.equal(new Set(state.tasks).size, 3);
   });
+  await check('Polite spoken create, selection and confirmation stay local and preserve one-shot review', async () => {
+    await reset();
+    let state = await say('Olanga, can you please create a routine called Polite fixture?');
+    assert.match(state.response, /routine editor is open/i); assert.deepEqual(state.tasks, []);
+    assert.equal(await evaluate(() => document.getElementById('routineName').value), 'Polite fixture');
+    await evaluate(() => document.getElementById('workspaceDialog').close());
+    state = await say('Could you please run my Fixture focus routine?'); assert.equal(state.review, true);
+    state = await say('Olanga, please skip step two'); assert.match(state.response, /Step 2 excluded/); assert.deepEqual(state.tasks, []);
+    state = await say('Can you please run selected steps?'); assert.deepEqual(state.tasks, ['Alpha fixture task','Gamma fixture task']);
+    state = await say('Can you please run selected steps?'); assert.match(state.response, /no open review/); assert.deepEqual(state.tasks, ['Alpha fixture task','Gamma fixture task']);
+  });
   report.fallback = await evaluate(() => fixtureFallback); assert.deepEqual(report.fallback, []); assert.deepEqual(report.forbidden, []); assert.deepEqual(report.errors, []); finish(0);
 } catch (error) { report.error = error.stack; try { report.state = await evaluate(() => ({ response: aiText.textContent, fallback: fixtureFallback, tasks: activeTasks, review: document.querySelector('.routine-review[open]')?.textContent, turn: OlangaTurns.snapshot() })); } catch (_) {} finish(1); } });

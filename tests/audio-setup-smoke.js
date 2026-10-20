@@ -58,6 +58,34 @@ app.whenReady().then(async () => {
       const state = await evaluate(() => ({ tab: fixture.openedTab, intervals: fixture.intervals.size, level: document.getElementById('audioSetupLevel').value, options: [...document.getElementById('audioSetupDevice').options].map(item => item.textContent), images: document.querySelectorAll('img').length }));
       assert.equal(state.tab, 'core'); assert.equal(state.intervals, 1); assert.equal(state.level, 25); assert.equal(state.images, 0); assert.ok(state.options.includes('<img src=x onerror=alert(1)>'));
     });
+    await check('Unchanged input levels cause no repeated DOM mutations and device refreshes share the in-flight read', async () => {
+      await evaluate(() => {
+        fixture.mutations = 0;
+        fixture.observer = new MutationObserver(records => { fixture.mutations += records.length; });
+        fixture.observer.observe(document.getElementById('audioSetupSection'), { subtree: true, attributes: true, childList: true, characterData: true });
+      });
+      await pause(600);
+      assert.equal(await evaluate(() => fixture.mutations), 0);
+      await evaluate(() => { fixture.state.level = 68; });
+      await waitFor(() => document.getElementById('audioSetupLevel').value === 68);
+      assert.ok(await evaluate(() => fixture.mutations > 0));
+      await evaluate(() => {
+        fixture.observer.disconnect();
+        fixture.readDevices = window.OlangaAudioInput.devices;
+        window.OlangaAudioInput.devices = () => { fixture.devices++; return new Promise(resolve => { fixture.finishDevices = resolve; }); };
+        document.getElementById('audioSetupRefresh').click();
+      });
+      await pause(300);
+      const before = await evaluate(() => fixture.devices);
+      assert.equal(await evaluate(() => document.getElementById('audioSetupRefresh').disabled), true);
+      await evaluate(() => { document.getElementById('audioSetupRefresh').click(); window.OlangaAudioSetup.open(); });
+      assert.equal(await evaluate(() => fixture.devices), before);
+      await evaluate(() => {
+        window.OlangaAudioInput.devices = fixture.readDevices;
+        fixture.finishDevices([{ deviceId: 'mic-one', label: 'Desk mic' }, { deviceId: 'mic-two', label: 'Headset' }]);
+      });
+      await waitFor(() => !document.getElementById('audioSetupRefresh').disabled);
+    });
     await check('A user selection changes only the chosen microphone and errors restore the actual selection', async () => {
       await evaluate(() => { const select = document.getElementById('audioSetupDevice'); select.value = 'mic-two'; select.dispatchEvent(new Event('change')); });
       await waitFor(() => !document.getElementById('audioSetupDevice').disabled);

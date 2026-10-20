@@ -263,7 +263,7 @@ function withActivity(h, persist = true) {
   if (persist) h.store.preference('saveActivity', true);
   h.context.window.OlangaActivity = h.store;
   h.activity = () => h.store.snapshot().activity;
-  h.persisted = () => JSON.parse(saved.get(KEY));
+  h.persisted = () => saved.has(KEY) ? JSON.parse(saved.get(KEY)) : null;
   return h;
 }
 function deferred() {
@@ -402,8 +402,8 @@ test('cancelling post-edit verification keeps delivered input but marks outcome 
   assert.deepEqual(h.activity()[0], entry);
 });
 
-test('clarification and scope review resume the same desktop activity without retaining the question or answer', async () => {
-  const h = withActivity(workflowHarness(), false);
+for (const persist of [false, true]) test(`clarification and scope review resume the same desktop activity without retaining private text (persist=${persist})`, async () => {
+  const h = withActivity(workflowHarness(), persist);
   await h.nodes.find(node => node.textContent === 'Capture screen').listeners.click();
   const id = h.activity()[0].id;
   assert.equal(h.activity()[0].state, 'awaiting-input');
@@ -417,7 +417,13 @@ test('clarification and scope review resume the same desktop activity without re
   assert.equal(h.activity().length, 1); assert.equal(h.activity()[0].id, id);
   assert.equal(h.activity()[0].state, 'awaiting-input');
   assert.ok(!JSON.stringify(h.activity()).includes('PRIVATE FOLDER NAME'));
-  assert.deepEqual(h.persisted().activity, []);
+  if (persist) {
+    const saved = h.persisted();
+    assert.equal(saved.activity.length, 1); assert.equal(saved.activity[0].id, id);
+    assert.equal(saved.activity[0].state, 'awaiting-input');
+    for (const privateText of ['PRIVATE FOLDER NAME', 'What should the folder be named?']) assert.ok(!JSON.stringify(saved).includes(privateText));
+    assert.ok(saved.activity[0].steps.every(step => Object.keys(step).every(key => ['operation', 'state'].includes(key))));
+  } else assert.equal(h.persisted(), null, 'Session-only activity does not create a persistent Workspace record');
   h.api.cancel(); assert.equal(h.activity()[0].state, 'cancelled');
 });
 

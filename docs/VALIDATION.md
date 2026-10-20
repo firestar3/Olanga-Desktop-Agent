@@ -1,4 +1,86 @@
-# Current source validation — October 14, 2026
+# Current source validation — October 19, 2026
+
+This increment improves local recall, routing, capture allocation, result speech preparation and background work after `bf68716`. It is unpublished source on the existing development branch; the public version and release assets remain 1.6.0. Tests use disposable profiles and scripted providers/native results. They do not establish live Spotify, cloud transcription, physical microphone or acoustic response latency.
+
+| Check | Confirmed result |
+| --- | --- |
+| Final full unit suite | **1,039 passed**, zero failures, skips or cancellations |
+| Source and required assets | **86 JavaScript files passed**; version, local model, fonts and icon assets checked |
+| Production renderer | **220 checks passed**: assistant 6, routines 12, audio setup 9, Workspace 18, Settings 20, layouts 91, Work tools 16, personal backups 10, Workspace recovery 11, News 8, renderer races 12, resource lifecycle 7 |
+| Original compound request | The actual renderer handled typed and fixture-transcribed Open/Play Spotify plus 75% volume, verified both receipts, retained failure status when Spotify failed, continued the independent explicit volume change, and stopped undispatched steps on cancellation |
+| Acknowledgment and final result | Held promises establish that acknowledgment text appears immediately, verified result text and eligible synthesis precede acknowledgment completion, playback stays ordered, and prepared synthesis is reused once |
+| Memory and search | Known typed/spoken facts answer locally; a mismatched rough/final transcript cannot speak an invented memory answer; supported fact-plus-question requests learn locally and use one answer/search call; protected changes ask after success and remain audible with trailing stream whitespace |
+| Checklist context | Bounded whole task identities, honest omissions, no unrelated checklist scan/upload, explicit full-store target resolution, case-sensitive omitted IDs, synthesized-goal exclusion and recovery from overlong clarification requests |
+| Hidden Workspace load | With 50 memories and 40 simulated two-step requests: zero hidden-list mutations and zero session-activity storage writes; opening renders current data and unrelated activity preserves editor keyboard focus |
+| Routing compatibility | **9,788 generated legacy requests** matched the baseline parser result exactly |
+| Development executable | **29 packaged-executable checks passed**; 117 packaged source files, native helpers, local model and version match source; app/tray alpha and the EXE orb pixels checked at all nine native sizes. This is an unsigned local development package, with no new installer installation or public release |
+| Whole-app resource gate | **Not passed**: first pair missed 1/23 limits, repeat missed 6/23. A longer diagnostic did not reproduce the tray CPU increase; the original failures remain recorded below. No new total CPU/RAM reduction is claimed |
+
+## Local efficiency measurements
+
+These are fixture microbenchmarks on this Windows machine, not percentages of total application CPU/RAM or live response latency. The baseline is `bf68716`. The reproducible component run uses 750 iterations across nine paired rounds, alternating baseline and candidate order, plus 500 first-use memory samples. Audio fixtures use identical samples, assert packet/WAV equivalence, and never open a physical device.
+
+| Component | Baseline → candidate | Interpretation |
+| --- | --- | --- |
+| Common intent parsing | 28.38 → 21.50 microseconds per parse | 24.2% lower median; single commands 40.2%, compounds 21.7% |
+| Warm relevant-memory selection, 50 facts | 0.377 → 0.034 ms | 91.1% lower median through an invalidated local index |
+| Memory-only snapshot with full activity/diagnostics | 1.036 → 0.066 ms | 93.6% lower median by avoiding unrelated history cloning |
+| Two-action session-only activity | 0.239 → 0.023 ms; 7 → 0 storage writes per turn | Notifications remain live; required routine journals and durable edits still save synchronously |
+| First memory selection after load | 0.378 → 0.479 ms | Index construction adds about 0.101 ms; this cold operation is not faster |
+| Pre-roll sample buffers over 60 seconds | 1,865 buffers / 6,571,136 bytes → 1 buffer / 48,000 bytes | Allocated sample-buffer bytes, not resident application memory; packet boundaries and endpoint timing preserved |
+| Pre-roll processing, 15,000 packets | 105.95 → 8.75 ms median | Reuses a bounded ring instead of copying every incoming packet |
+| WAV encoding, 10 / 60 seconds | 11.72 → 9.90 ms / 61.57 → 52.57 ms | Removes an additional 640,000 / 3,840,000-byte merged float recording |
+| Large checklist prompt fixture | Approximately 940,000 → under 6,000 characters | About 99.4% smaller; unrelated questions include no checklist data |
+| Ordinary 100-task context selection | 0.17 ms list / 0.48 ms exact target | Local selection overhead; an extreme 500-long-name scan took about 101 ms under concurrent test/build load and is not claimed to be faster |
+| Prepared result speech, deterministic clock | 500 ms acknowledgment + 800 ms synthesis: result audio ready at 800 ms instead of 1,300 ms | Overlaps synthesis after verification; one synthesis in either case. This is a controlled fixture, not a provider or acoustic benchmark |
+
+Memory extraction remains a narrow local rule set. Conflicting compound memories block guessing and automatic replacement. Pausing learning preserves enabled recall; disabling memory use prevents it. Queries, documents, model output and action results do not become learned facts. A complete supported fact in a separate sentence before an information question can be learned without treating that question as a fact.
+
+## Packaged resource and resume measurements
+
+**The whole-app resource gate did not pass.** The first pair exceeded one of 23 preset limits; the immediate baseline/candidate repeat exceeded six. Limits were unchanged. These results do not support a new overall CPU/RAM reduction claim or prove that every operation is faster.
+
+Both builds use Electron 44.7.0, disposable profiles and synthetic silence, with no physical microphone or provider calls. Each phase has 20 counter snapshots (19 CPU intervals); at this sample count, p95 is the largest interval. CPU is a percentage of one logical core. Private resident memory is one end-of-phase snapshot and is distinct from committed memory. The repeat ran without concurrent builds or test suites; ambient machine load and Windows memory residency were not controlled.
+
+| State | First CPU p95, baseline → candidate | Repeat CPU p95 | First private resident MiB | Repeat private resident MiB |
+| --- | --- | --- | --- | --- |
+| visible-idle | 26.16% → 35.66% | 37.43% → 26.20% | 234.97 → 217.48 | 225.95 → 206.75 |
+| visible-settings | 1.34% → 1.46% | 1.47% → 1.47% | 217.66 → 223.06 | 230.38 → 213.88 |
+| tray-idle | 1.45% → 0.00% | 4.28% → 1.47% | 223.03 → 215.20 | 220.21 → 208.17 |
+| visible-voice-ready | 116.47% → 107.70% | 125.51% → 66.15% | 482.09 → 446.76 | 481.56 → 466.88 |
+| tray-voice-ready | 62.44% → 77.35% | 46.33% → 51.80% | 489.17 → 454.40 | 229.88 → 471.63 |
+| tray-muted | 9.43% → 10.95% | 11.42% → 14.78% | 288.11 → 154.45 | 141.46 → 271.55 |
+| visible-muted | 37.34% → 47.45% | 37.24% → 31.07% | 279.55 → 156.69 | 142.73 → 269.16 |
+
+The first miss was visible-idle CPU p95: 35.658 against a 35.312 limit. The repeat missed private-resident and total-working-set limits in tray voice-ready, tray-muted and visible-muted states. For example, repeated tray-muted working-set p95 was 285.41 → 725.79 MiB, against a 342.49 limit. These failures are retained, not treated as passing functional tests.
+
+Private committed memory in voice/muted states was modestly lower in the candidate in both pairs, while residency changed markedly even for unchanged source: baseline tray voice-ready private residency was 489.17 then 229.88 MiB, with committed memory 582.72 then 578.35 MiB. This shows substantial run-to-run residency variation; it does not establish that the misses are harmless or rule out every allocation issue. Renderer heap samples were identically coarsened to 10,000,000 bytes and cannot establish heap stability.
+
+Tray voice-ready average CPU increased in both pairs, 51.16% → 68.20% and 31.72% → 39.51% of one core, despite passing that phase's p95 budget. This remains an adverse signal requiring investigation. Visible voice-ready renderer work fell in both pairs: script-duration share 8.54% → 0.67% and 17.76% → 0.44%, with style recalculations 2,373 → 1 and 1,609 → 1. Capture packet size, recognition frequency, endpoint timing and model-retention policy were unchanged. The process CPU readings also include recognizer, audio-service and graphics work, so lower renderer work is not a whole-process CPU guarantee.
+
+| Latency observation | First pair, baseline → candidate | Repeat pair, baseline → candidate |
+| --- | --- | --- |
+| Startup ready | 5,999 → 1,894 ms | 6,415 → 3,271 ms |
+| Cold voice resume median, three samples | 3,726 → 4,079 ms | 3,752 → 1,391 ms |
+| Cold voice resume p95 / maximum | 23,615 → 5,449 ms | 6,020 → 1,826 ms |
+
+Both startup and cold-resume budget checks passed in both pairs. Cold-resume medians moved in opposite directions, and the first baseline includes a 23.6-second outlier. Three resume samples cannot establish a stable speedup or a universal no-regression claim. Readiness requires an unmuted live capture track, a running audio context, a loaded model and a recognizer; this still does not measure cloud transcription, acoustic speech or a real Spotify action.
+
+Raw reports are `build/qa/resources/efficiency-bf68716-baseline.json`, `efficiency-final-candidate.json`, `efficiency-comparison.json` and the corresponding `efficiency-bf68716-confirm.json`, `efficiency-final-confirm.json`, `efficiency-comparison-confirm.json`. The final candidate executable is in `build/qa/efficiency-package/win-unpacked`. These local artifacts remain ignored and unpublished.
+
+### Longer capture diagnostic
+
+A separate sequential diagnostic kept both production packages unchanged and instrumented only the disposable renderer. It sampled 45 visible and 90 tray counter snapshots, with 12-second visible and 30-second tray settling periods. Warmed tray CPU mean was 47.53% → 45.29% and p95 was 58.76% → 56.26%; the earlier tray CPU increase did not reproduce. Visible mean CPU remained higher, 55.72% → 60.16%. These results do not replace or turn the two failed standard comparisons into passes.
+
+Both packages delivered essentially all audio-clock output, within one 64 ms packet at the boundaries, with zero worklet gap events. Capture, recognizer acceptance and posted Vosk sample totals matched within each run; worker responses lagged by at most one at the sampled boundary. Accepted tray audio covered 94.03% → 96.57% of wall time. This found no capture-loss explanation for the earlier CPU difference, and it does not establish its cause. Pre-roll handler time per accepted audio second fell 0.548 → 0.130 ms.
+
+CPU and audio-counter windows differ because audio counters include sampler startup and CIM time. Exact CPU per audio second cannot be derived from this diagnostic; handler timings and audio totals share the same counter window. Reports are `build/qa/resources/voice-packets-bf68716.json` and `voice-packets-final.json`, with the ignored reproducer and detailed findings in `build/qa/voice-packet-diagnostic.js` and `voice-packet-diagnostic-findings.md`. No production change was made in response to these variable measurements.
+
+Reproduce the functional checks with `npm test`, `npm run check`, `npm run smoke:assistant`, `npm run smoke:routines`, `npm run smoke:workspace`, `npm run smoke:settings`, `npm run smoke:layout`, `npm run smoke:workbench`, `npm run smoke:audio-setup`, `npm run smoke:backups`, `npm run smoke:recovery`, `npm run smoke:news`, `npm run smoke:renderer` and `npm run smoke:resources`. CI includes the new assistant fixture. Reproduce parser, memory and activity component comparisons with `node tests/efficiency-benchmark.js bf68716 --save`; the script uses Git source and synthetic local data only. Raw reports, one-off audio/checklist benchmark scripts, screenshots, disposable profiles and build outputs remain ignored under `build/qa`; no personal credentials or media are committed.
+
+---
+
+# Earlier source validation — October 14, 2026
 
 These checks cover the conversational-learning and workspace changes after the published 1.6.0 release. They do not describe a new public installer. Version/tag/release assets remain unchanged; the local development package is used only for isolated acceptance checks. Production source was frozen before the final unit run.
 

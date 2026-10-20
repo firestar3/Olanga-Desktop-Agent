@@ -1,6 +1,6 @@
 # Olanga Privacy Notice
 
-Last updated: October 14, 2026
+Last updated: October 19, 2026
 
 This notice explains how the Windows desktop app in the [Olanga repository](https://github.com/firestar3/Olanga-Desktop-Agent) handles your information. It covers the app and its bundled companions. Services you connect, websites you open and your operating system have their own policies. This revision describes current repository source; published builds may differ. See the [release notes](docs/releases/1.6.0.md) for the published 1.6.0 changes.
 
@@ -58,9 +58,9 @@ Local content is accessible to software or people with sufficient access to your
 
 ## Conversational learning
 
-Learning runs locally on clear, direct statements in submitted user text or recognized requests. It uses a narrow rule set, not a model call. Questions, quotations, reported speech, uncertain wording, sensitive categories and operational instructions are excluded by those rules. AI replies, source documents, screenshots and tool output are not inputs to the learning function. The rules are deliberately limited; review the visible learned-memory notice and saved list rather than treating this as a general-purpose personal profile.
+Learning runs locally on clear, direct statements in submitted user text or recognized requests. It uses a narrow rule set, not a model call. Question text, quotations, reported speech, uncertain wording, sensitive categories and operational instructions are excluded by those rules. A clear supported fact in a separate sentence before an information question can be learned; the question itself is not a memory candidate. AI replies, source documents, screenshots and tool output are not inputs to the learning function. The rules are deliberately limited; review the visible learned-memory notice and saved list rather than treating this as a general-purpose personal profile.
 
-**Learn useful details from our conversations** is on by default, independently of **Use my memories in answers**. Pausing learning stops new conversational updates but keeps existing memories and their current answer-use setting. Disabling memory use stops their inclusion as saved-memory context in future answers. An explicitly requested memory can still contain private information, so only save details you intend to keep. Saved facts and preferences never authorize actions or change app permissions.
+**Learn useful details from our conversations** is on by default, independently of **Use my memories in answers**. Pausing learning stops new conversational updates but keeps existing memories and their current answer-use setting. Disabling memory use stops their inclusion as saved-memory context in future answers. An explicitly requested memory can still contain private information, so only save details you intend to keep. Saved facts and preferences never authorize actions or change app permissions. Narrow questions about a single unambiguous enabled fact can answer locally without an answer-provider request; cloud voice input still requires transcription. Other answers and searches select a bounded relevant set of enabled memories. Unrelated general questions omit checklist context, while checklist requests receive a bounded selection with counts for omitted items.
 
 ## Your controls
 

@@ -158,14 +158,24 @@ let microphoneDeviceListenerInstalled = false;
 let microphoneRequested = false;
 let microphoneResumePromise = null;
 let microphoneVisualSubscription = null;
+let microphoneScreenObserver = null;
 
 function microphoneVisualsVisible() {
-  return window.OlangaVisibility?.isVisible?.() ?? (typeof document === 'undefined' || !document.hidden);
+  return (window.OlangaVisibility?.isVisible?.() ?? (typeof document === 'undefined' || !document.hidden)) &&
+    (typeof mainScreen === 'undefined' || (!mainScreen?.hidden && !mainScreen?.classList.contains('hidden')));
+}
+
+function microphoneMonitorNeeded(resources) {
+  // The production endpoint uses sample time and keeps running without frames.
+  // Only listening displays a microphone waveform; speaking has its own CSS
+  // animation. The legacy analyser still needs frames for its recording VAD.
+  return !!resources && !isMicMuted && (!resources.endpoint ||
+    (currentState === State.LISTENING && microphoneVisualsVisible()));
 }
 
 function refreshMicrophoneMonitor() {
   const resources = microphoneResources;
-  const needed = resources && !isMicMuted && (microphoneVisualsVisible() || !resources.endpoint);
+  const needed = microphoneMonitorNeeded(resources);
   if (!needed && microphoneMonitorFrame !== null) {
     cancelAnimationFrame(microphoneMonitorFrame); microphoneMonitorFrame = null;
   }
@@ -316,15 +326,18 @@ function discardLocalSpeechCapture() {
 // While recording, the on-device recognizer keeps a rough transcript. It only
 // shortens the pause after a complete local command and helps choose a reply
 // lane; Gemini's transcript, or the review step, still decides what runs.
-let liveTranscript = { finals: [], partial: '' };
+let liveTranscript = { finals: [], partial: '', cached: '' };
 let liveCommandCache = { text: null, complete: false };
 
 function resetLiveTranscript() {
-  liveTranscript = { finals: [], partial: '' };
+  liveTranscript = { finals: [], partial: '', cached: '' };
 }
 
 function getLiveTranscript() {
-  return [...liveTranscript.finals, liveTranscript.partial].join(' ').replace(/\[unk\]/gi, ' ').replace(/\s+/g, ' ').trim();
+  if (liveTranscript.cached === null) {
+    liveTranscript.cached = [...liveTranscript.finals, liveTranscript.partial].join(' ').replace(/\[unk\]/gi, ' ').replace(/\s+/g, ' ').trim();
+  }
+  return liveTranscript.cached;
 }
 
 // The chosen pause (1.5 s by default) ends a spoken request. A complete local
@@ -550,6 +563,10 @@ async function initializeMicrophoneResources({ deviceId = microphonePreferredDev
     if (!microphoneVisualSubscription && window.OlangaVisibility?.subscribe) {
       microphoneVisualSubscription = window.OlangaVisibility.subscribe(refreshMicrophoneMonitor);
     }
+    if (!microphoneScreenObserver && typeof MutationObserver === 'function' && typeof mainScreen !== 'undefined' && mainScreen) {
+      microphoneScreenObserver = new MutationObserver(refreshMicrophoneMonitor);
+      microphoneScreenObserver.observe(mainScreen, { attributes: true, attributeFilter: ['class', 'hidden'] });
+    }
     if (isMicMuted) refreshMicrophoneActivity();
     else refreshMicrophoneMonitor();
     return true;
@@ -586,8 +603,9 @@ function handleVoskResult(text, isFinal = false, words) {
     }
 
     if (currentState === State.LISTENING && isRecording) {
-        if (isFinal) { liveTranscript.finals.push(text.trim()); liveTranscript.partial = ''; }
-        else liveTranscript.partial = text.trim();
+        const next = text.trim();
+        if (isFinal) { liveTranscript.finals.push(next); liveTranscript.partial = ''; liveTranscript.cached = null; }
+        else if (liveTranscript.partial !== next) { liveTranscript.partial = next; liveTranscript.cached = null; }
         return;
     }
 
@@ -965,8 +983,7 @@ function cancelWakeWordCapture(options) {
 
 function monitorAudio() {
   microphoneMonitorFrame = null;
-  if (!microphoneResources) return;
-  if (isMicMuted || (!microphoneVisualsVisible() && microphoneResources.endpoint)) return;
+  if (!microphoneMonitorNeeded(microphoneResources)) return;
   if (currentState === State.THINKING || currentState === State.SPEAKING) {
     microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
     return;
@@ -1026,18 +1043,21 @@ function monitorAudio() {
       }
   }
 
-  microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
+  // A legacy timeout may call setState(), which refreshes this monitor while
+  // the current callback is still unwinding. Keep one frame in that case too.
+  if (microphoneMonitorFrame === null) microphoneMonitorFrame = requestAnimationFrame(monitorAudio);
 }
 
 function updateWaveBars(rms) {
   if (currentState !== State.LISTENING && currentState !== State.IDLE) return;
   // If idle, don't show huge waves, just very tiny ones to indicate it's alive
-  let scale = (currentState === State.LISTENING) ? 2 : 0.5;
-
+  const scale = (currentState === State.LISTENING) ? 2 : 0.5;
+  const floorOnly = !Number.isFinite(rms) || rms * scale <= 4;
+  const time = floorOnly ? 0 : Date.now() * 0.005;
   waveBarEls.forEach((bar, i) => {
-    const offset = Math.sin(Date.now() * 0.005 + i * 0.7) * 0.5 + 0.5;
-    const height = Math.max(4, Math.min(28, rms * scale * offset));
-    bar.style.height = `${height}px`;
+    const offset = floorOnly ? 0 : Math.sin(time + i * 0.7) * 0.5 + 0.5;
+    const height = `${floorOnly ? 4 : Math.max(4, Math.min(28, rms * scale * offset))}px`;
+    if (bar.style.height !== height) bar.style.height = height;
   });
 }
 
@@ -1083,7 +1103,8 @@ function stopRecording() {
   console.log(`[Olanga] 🎙️ Recording stopped — processing with Gemini`);
   setState(State.THINKING);
 
-  // Combine all PCM chunks into one Float32Array
+  // Encode the captured chunks directly. Merging them first allocated another
+  // full recording and copied every sample immediately before the request.
   const totalLength = pcmChunks.reduce((sum, chunk) => sum + chunk.length, 0);
   if (totalLength === 0) {
     console.log('[Olanga] No audio data captured');
@@ -1094,19 +1115,14 @@ function stopRecording() {
     return;
   }
 
-  const combined = new Float32Array(totalLength);
-  let offset = 0;
-  for (const chunk of pcmChunks) {
-    combined.set(chunk, offset);
-    offset += chunk.length;
-  }
+  const capturedChunks = pcmChunks;
   pcmChunks = [];
   speechStartTime = null;
   silenceStartTime = null;
 
   // Encode as WAV
   const sampleRate = audioContext.sampleRate;
-  const wavBlob = encodeWAV(combined, sampleRate);
+  const wavBlob = encodeWAVChunks(capturedChunks, sampleRate, totalLength);
 
   const rough = getLiveTranscript();
   resetLiveTranscript();
@@ -1130,11 +1146,15 @@ function cancelRecording() {
 // ============================================
 
 function encodeWAV(samples, sampleRate) {
+  return encodeWAVChunks([samples], sampleRate, samples.length);
+}
+
+function encodeWAVChunks(chunks, sampleRate, sampleCount = chunks.reduce((sum, chunk) => sum + chunk.length, 0)) {
   const numChannels = 1;
   const bitsPerSample = 16;
   const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
   const blockAlign = numChannels * (bitsPerSample / 8);
-  const dataSize = samples.length * (bitsPerSample / 8);
+  const dataSize = sampleCount * (bitsPerSample / 8);
   const bufferSize = 44 + dataSize;
 
   const buffer = new ArrayBuffer(bufferSize);
@@ -1157,10 +1177,13 @@ function encodeWAV(samples, sampleRate) {
   view.setUint32(40, dataSize, true);
 
   let writeOffset = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(writeOffset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-    writeOffset += 2;
+  for (const samples of chunks) {
+    for (let i = 0; i < samples.length; i++) {
+      const value = samples[i];
+      const s = value > 1 ? 1 : value < -1 ? -1 : value;
+      view.setInt16(writeOffset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      writeOffset += 2;
+    }
   }
 
   return new Blob([buffer], { type: 'audio/wav' });

@@ -2,6 +2,11 @@
 let assistantMemoryReplacement = null;
 let lastAssistantResult = null;
 
+function assistantMemoryState() {
+  const store = window.OlangaWorkspace;
+  return store?.memorySnapshot?.() || store?.snapshot?.() || { facts: [], factsEnabled: true };
+}
+
 function hasAssistantReview() {
   return !!(window.OlangaRoutineControl?.hasReview() || window.OlangaWorkspaces?.hasReview() || assistantMemoryReplacement?.prompted);
 }
@@ -18,7 +23,7 @@ function selectedAssistantMemories(query) {
   const goal = query ?? assistantCurrentRequest?.goal ?? conversationHistory.findLast(item => item.role === 'user')?.text ?? '';
   const selected = store.relevantContext
     ? store.relevantContext(goal, { maxFacts: 8, maxChars: 1800 })
-    : store.snapshot().factsEnabled === false ? [] : store.snapshot().facts.map(({ id, text }) => ({ id, text }));
+    : assistantMemoryState().factsEnabled === false ? [] : assistantMemoryState().facts.map(({ id, text }) => ({ id, text }));
   const excluded = new Set(assistantCurrentRequest?.excludedMemoryIds || []);
   const facts = selected.filter(item => !excluded.has(item.id));
   // The action specialist also selects context directly, without going through
@@ -42,11 +47,11 @@ function learnAssistantInput(text, request) {
       window.OlangaMemoryView?.learned(learned);
     }
     // A directly saved fact needs an explicit replacement choice, entirely by voice.
-    const candidates = typeof OlangaMemoryLearning !== 'undefined' ? OlangaMemoryLearning.extract(text) : [];
     const protectedSlot = learned?.skipped?.find(item => item.reason === 'manual-memory-exists');
     if (protectedSlot) {
+      const candidates = typeof OlangaMemoryLearning !== 'undefined' ? OlangaMemoryLearning.extract(text) : [];
       const candidate = candidates.find(item => item.slot === protectedSlot.slot);
-      const matches = window.OlangaWorkspace.snapshot().facts.filter(item => item.slot === protectedSlot.slot || !item.slot && OlangaMemoryLearning.extract(item.text).some(found => found.slot === protectedSlot.slot));
+      const matches = assistantMemoryState().facts.filter(item => item.slot === protectedSlot.slot || !item.slot && OlangaMemoryLearning.mentionsSlot(item.text, protectedSlot.slot));
       request.excludedMemoryIds = [...new Set([...(request.excludedMemoryIds || []), ...matches.map(item => item.id)])];
       if (candidate && matches.length === 1 && OlangaMemoryLearning.classifyFact(matches[0].text)?.slot === protectedSlot.slot) {
         assistantMemoryReplacement = { id: matches[0].id, previous: matches[0].text, text: candidate.text, requestId: request.turnId, goal: text, at: Date.now(), prompted: false };
@@ -69,7 +74,7 @@ function finalizeAssistantMemoryReplacement(text, request) {
   const result = { text, wantsFollowUp: false }, replacement = request?.deferredMemoryReplacement;
   if (!replacement) return result;
   request.deferredMemoryReplacement = null;
-  const current = window.OlangaWorkspace?.snapshot().facts.find(item => item.id === replacement.id);
+  const current = assistantMemoryState().facts.find(item => item.id === replacement.id);
   if (request.failed || request.signal.aborted || assistantMemoryReplacement !== replacement || replacement.requestId !== request.turnId || Date.now() - replacement.at > 60000 || current?.text !== replacement.previous) {
     if (assistantMemoryReplacement === replacement) assistantMemoryReplacement = null;
     return result;
@@ -94,7 +99,7 @@ function recordAssistantResult(request, text) {
 function retainAssistantResult(request) {
   if (!request?.resultText || request.repeatingResult || request.forgettingMemory || request.memoryInvalidated) return;
   const memoryIds = [...(request.contextMemoryIds || [])], used = new Set(memoryIds);
-  const memoryFacts = (window.OlangaWorkspace?.snapshot().facts || []).filter(item => used.has(item.id)).map(({ id, text }) => ({ id, text }));
+  const memoryFacts = (assistantMemoryState().facts || []).filter(item => used.has(item.id)).map(({ id, text }) => ({ id, text }));
   lastAssistantResult = { turnId: request.turnId, resultText: request.resultText, steps: (request.steps || []).map(step => ({ ...step })), memoryIds, memoryFacts, startedAt: request.startedAt, finishedAt: Date.now() };
   window.OlangaMemoryView?.used(memoryFacts);
 }
@@ -119,14 +124,15 @@ async function reviewAssistantUnfinished(request) {
 
 async function handleAssistantControl(goal, request) {
   if (window.OlangaBackupCenter?.isBusy()) throw new Error('Wait for the current backup restore to finish.');
-  const clean = String(goal || '').trim().replace(/[.!?]+$/, '').toLowerCase();
+  const reviewGoal = typeof OlangaConversationalControls !== 'undefined' ? OlangaConversationalControls.normalize?.(goal) ?? goal : goal;
+  const clean = String(reviewGoal || '').trim().replace(/[.!?]+$/, '').toLowerCase();
   let message, followUp = false;
   if (assistantMemoryReplacement) {
     const replacement = assistantMemoryReplacement;
     if (Date.now() - replacement.at > 60000) assistantMemoryReplacement = null;
     else if (replacement.prompted && /^(?:yes|replace it|update it|yes[,]? update (?:it|my memory)|confirm)$/.test(clean)) {
       assistantMemoryReplacement = null;
-      const fact = window.OlangaWorkspace.snapshot().facts.find(item => item.id === replacement.id);
+      const fact = assistantMemoryState().facts.find(item => item.id === replacement.id);
       if (!fact || fact.text !== replacement.previous) throw new Error('That memory changed. Tell me the updated detail again.');
       request.updatingMemory = true;
       try { window.OlangaWorkspace.updateFact(fact.id, replacement.text); } finally { request.updatingMemory = false; }
@@ -137,12 +143,12 @@ async function handleAssistantControl(goal, request) {
   }
   if (message) { await finishAssistantTurn(message, false, request); return true; }
   if (window.OlangaRoutineControl?.hasReview()) {
-    const answer = await window.OlangaRoutineControl.answerReview(goal, request);
+    const answer = await window.OlangaRoutineControl.answerReview(reviewGoal, request);
     if (answer.handled) { if (!answer.finished) await finishAssistantTurn(answer.message, !!window.OlangaRoutineControl.hasReview(), request); return true; }
     window.cancelRoutineReviews?.();
   }
   if (window.OlangaWorkspaces?.hasReview()) {
-    const answer = await window.OlangaWorkspaces.answerReview(goal);
+    const answer = await window.OlangaWorkspaces.answerReview(reviewGoal);
     if (answer.handled) { await finishAssistantTurn(answer.message || 'The workspace selection is updated.', !!window.OlangaWorkspaces.hasReview(), request); return true; }
     await window.OlangaWorkspaces.cancel();
   }
@@ -172,7 +178,7 @@ async function handleAssistantControl(goal, request) {
         message = 'I undid the last memory I learned.'; break;
       case 'memory-list': message = describeUserFacts().message; window.openOlangaWorkspace?.('5'); break;
       case 'memory-used': {
-        const current = store.snapshot().facts;
+        const current = assistantMemoryState().facts;
         const facts = (lastAssistantResult?.memoryFacts || []).filter(item => current.some(fact => fact.id === item.id && fact.text === item.text));
         markMemoryContextUsed(facts.map(item => item.id)); message = facts.length ? 'I used these saved details: ' + facts.map(item => item.text).join('; ') + '.' : 'No saved memories were used in the last answer.'; break;
       }
@@ -195,8 +201,17 @@ async function handleAssistantControl(goal, request) {
       }
     }
   } else {
+    // A direct question about one unambiguous saved detail is already known.
+    // Read current state here, never a cached answer, and retain revocation.
+    const recalled = store?.recallFact?.(goal);
+    if (recalled) {
+      markMemoryContextUsed([recalled.id]);
+      window.OlangaMemoryView?.used([{ id: recalled.id, text: recalled.text }]);
+      await finishAssistantTurn(recalled.answer, false, request);
+      return true;
+    }
     if (!request.learnedInputText) learnAssistantInput(goal, request);
-    if (assistantMemoryReplacement?.requestId === request.turnId && assistantMemoryReplacement.goal === goal) {
+    if (assistantMemoryReplacement && assistantMemoryReplacement.requestId === request.turnId && assistantMemoryReplacement.goal === goal) {
       if (OlangaMemoryLearning.isFactOnly(goal)) {
         assistantMemoryReplacement.prompted = true; markMemoryContextUsed([assistantMemoryReplacement.id]);
         message = assistantMemoryReplacementQuestion(assistantMemoryReplacement); followUp = true;

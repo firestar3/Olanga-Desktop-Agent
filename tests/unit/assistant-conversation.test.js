@@ -115,3 +115,96 @@ test('stale spoken confirmations cannot generate actions or call a provider',asy
 test('repeating a paraphrased memory keeps its dependency and deletion stops speech and removes the paraphrase',async()=>{
  const {context,store}=fixture();const fact=store.rememberFact('my locker code is 4312');const request=context.beginAssistantRequest();context.markMemoryContextUsed([fact.id]);await context.finishAssistantTurn('Your number is four three one two.',false,request);let finish;context.speakResponse=()=>new Promise(resolve=>{finish=resolve;});const pending=context.repeatAssistantResult();await new Promise(r=>setImmediate(r));store.deleteFact(fact.id);finish({status:'completed'});await pending;assert.equal(context.window.OlangaTurns.snapshot().outcome,'cancelled');assert.equal(context.window.OlangaTurns.snapshot().canRepeatResult,false);assert.equal(context.conversationHistory.some(item=>/four three one two/.test(item.text)),false);await assert.rejects(()=>context.repeatAssistantResult(),/no previous result/i);
 });
+
+
+test('search receives relevant learned city and units without unrelated memories or an extra model call', async () => {
+ const {context,store}=fixture();store.learnFromUserText('I live in Seattle');store.learnFromUserText('I prefer Celsius');store.learnFromUserText('My favorite color is blue');
+ const request=context.beginAssistantRequest();let body,calls=0;
+ context.callGeminiGenerate=async(_model,input)=>{calls++;body=input;return 'The forecast is cool.';};
+ await context.answerWithGoogleSearch('What is the weather here?',request.signal);
+ const data=JSON.parse(body.contents[0].parts[0].text);
+ assert.ok(data.memories.includes('I live in Seattle'));assert.ok(data.memories.some(text=>/Celsius/.test(text)));assert.equal(data.memories.some(text=>/blue/.test(text)),false);assert.equal(calls,1);
+ assert.match(body.system_instruction.parts[0].text,/current request first/);assert.match(body.system_instruction.parts[0].text,/no preferred or requested temperature unit/);
+ store.preference('factsEnabled',false);const next=context.beginAssistantRequest();await context.answerWithGoogleSearch('What is the weather here?',next.signal);assert.equal(JSON.parse(body.contents[0].parts[0].text).memories,undefined);
+});
+
+test('forgetting a memory consumed by an in-flight search cancels its pending provider response', async () => {
+ const {context,store}=fixture();const fact=store.rememberFact('I live in Seattle');context.apiKey='fixture';let finish,called=false;
+ context.window.electronAPI.providerGenerate=()=>{called=true;return new Promise(resolve=>{finish=resolve;});};
+ const request=context.beginAssistantRequest(),pending=context.answerWithGoogleSearch('What is the weather here?',request.signal);
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(called,true);assert.ok(request.contextMemoryIds.includes(fact.id));
+ store.deleteFact(fact.id);await assert.rejects(pending,{name:'AbortError'});finish({ok:true,text:'A late answer about Seattle.'});assert.equal(request.signal.aborted,true);
+});
+
+test('a typed compound command parses once per turn and reused plans cannot be mutated by callers', async () => {
+ const {context,say,calls}=fixture(),intents=context.OlangaIntents;let parses=0;
+ context.OlangaIntents={...intents,parse(...args){parses++;return intents.parse(...args);}};
+ await say('open notepad and set volume to 75%');assert.equal(parses,1);assert.deepEqual(calls.opened,['notepad']);assert.deepEqual(calls.media,['VOLUME_SET']);
+ await say('open notepad and set volume to 75%');assert.equal(parses,2,'A new turn has its own parse');
+ context.beginAssistantRequest();const plan=context.assistantLocalIntents('open notepad');plan[0].command='[OPEN_APP: calculator]';
+ assert.equal(context.assistantLocalIntents('open notepad')[0].command,'[OPEN_APP: notepad]');
+});
+
+test('request-scoped parsing invalidates immediately when saved app names change',()=>{
+ const {context,store}=fixture();store.remember('aliases','desk','Notepad');store.preference('memoryEnabled',true);context.beginAssistantRequest();
+ assert.equal(context.assistantLocalIntents('open desk')[0].command,'[OPEN_APP: Notepad]');store.forget('aliases','desk');store.remember('aliases','desk','Calculator');
+ assert.equal(context.assistantLocalIntents('open desk')[0].command,'[OPEN_APP: Calculator]');store.preference('memoryEnabled',false);assert.equal(context.assistantLocalIntents('open desk'),null);
+});
+
+test('the final transcript cannot reuse a different rough-transcript action plan',async()=>{
+ const {context,calls}=fixture();context.apiKey='fixture';context.blobToBase64=async()=>'';context.transcribeAssistantAudio=async()=> 'open calculator';
+ await context.processAudioBlobWithGemini({}, {rough:'open notepad'});assert.deepEqual(calls.opened,['calculator']);assert.deepEqual(calls.errors,[]);
+});
+
+test('polite routine confirmations reach the existing fresh review with no model call',async()=>{
+ const {context,say,calls}=fixture();let active=true,heard;
+ context.window.OlangaRoutineControl={hasReview:()=>active,answerReview:async goal=>{heard=goal;active=false;return{handled:true,message:'Selected steps completed.'};}};
+ await say('Olanga, can you please run selected steps?');assert.equal(heard,'run selected steps');assert.equal(calls.spoken.at(-1),'Selected steps completed.');assert.deepEqual(calls.errors,[]);
+ await say('Olanga, can you please run selected steps?');assert.match(calls.spoken.at(-1),/no open review/);
+});
+
+
+test('supported personal facts answer locally, reflect corrections, and retain deletion dependencies',async()=>{
+ const {context,store,say,calls}=fixture();await say('My name is Aarav');await say('I live in Seattle');await say('I prefer Celsius');
+ for(const [question,answer]of [["What's my name?",'Your name is Aarav.'],['Where do I live?','You live in Seattle.'],['What temperature units do I prefer?','You prefer Celsius.']]){await say(question);assert.equal(calls.spoken.at(-1),answer);}
+ await say('I now live in Boston');await say('Where do I live?');assert.equal(calls.spoken.at(-1),'You live in Boston.');assert.deepEqual(calls.errors,[]);
+ const city=store.snapshot().facts.find(f=>f.slot==='city');store.deleteFact(city.id);assert.equal(context.window.OlangaTurns.snapshot().canRepeatResult,false);assert.doesNotMatch(context.aiText.textContent,/Boston/);
+});
+
+test('local recall never guesses missing, conflicting or disabled memories and preserves mixed requests',async()=>{
+ const {context,store,say,calls}=fixture();context.apiKey='fixture';let providers=0;context.sendTextToGemini=async()=>{providers++;return 'RESPONSE: Please clarify that detail.';};
+ await say('What is my favorite color?');assert.equal(providers,1);
+ store.rememberFact('I live in Seattle');store.preference('factsEnabled',false);await say('Where do I live?');assert.equal(providers,2);
+ store.preference('factsEnabled',true);await say('Where do I live? Also explain its history.');assert.equal(providers,3);assert.equal(calls.spoken.at(-1),'Please clarify that detail.');
+});
+
+
+test('verified result synthesis starts before acknowledgment ends, with no optimistic receipt',async()=>{
+ const {context,say,calls}=fixture();const events=[];let acknowledge,verify;
+ context.speakAssistantAcknowledgement=()=>new Promise(resolve=>{acknowledge=resolve;events.push('ack');});
+ context.window.electronAPI.mediaControl=()=>new Promise(resolve=>{verify=resolve;events.push('dispatch');});
+ const handle={};context.prepareAssistantResponseSpeech=(text,options)=>{events.push('prepare');assert.equal(text,'System volume is 75%.');assert.equal(options.signal.aborted,false);return handle;};
+ context.speakResponse=async(text,options)=>{events.push('speak');assert.equal(options.preparedSpeech,handle);return{status:'completed'};};
+ const pending=say('set volume to 75%');await new Promise(r=>setImmediate(r));assert.deepEqual(events,['ack','dispatch']);
+ verify({ok:true,verified:true,message:'System volume is 75%.'});await new Promise(r=>setImmediate(r));assert.deepEqual(events,['ack','dispatch','prepare']);assert.equal(context.aiText.textContent,'System volume is 75%.');
+ acknowledge();await pending;assert.deepEqual(events,['ack','dispatch','prepare','speak']);assert.deepEqual(calls.errors,[]);
+});
+
+test('cancelled prepared receipt is discarded without playback and optional preparation failure falls back',async()=>{
+ const {context,calls}=fixture();let acknowledge;const handle={},discarded=[];context.prepareAssistantResponseSpeech=()=>handle;context.discardPreparedAssistantSpeech=value=>discarded.push(value);
+ const request=context.beginAssistantRequest();request.acknowledgement=new Promise(resolve=>{acknowledge=resolve;});const pending=context.finishAssistantTurn('System volume is 75%.',false,request);
+ context.cancelAssistantRequest();acknowledge();await pending;assert.deepEqual(discarded,[handle]);assert.deepEqual(calls.spoken,[]);
+ context.prepareAssistantResponseSpeech=()=>{throw Error('Optional prefetch unavailable');};await context.finishAssistantTurn('Playback paused.',false,context.beginAssistantRequest());assert.deepEqual(calls.spoken,['Playback paused.']);
+});
+
+test('personal result prefetch receives memory sensitivity and the follow-up speech handle',async()=>{
+ const {context,store}=fixture();const fact=store.rememberFact('My name is Aarav');const request=context.beginAssistantRequest();context.markMemoryContextUsed([fact.id]);const handle={};
+ context.prepareAssistantResponseSpeech=(text,options)=>{assert.equal(options.memorySensitive,true);return handle;};context.speakResponseAndThen=async(text,callback,options)=>{assert.equal(options.preparedSpeech,handle);return{status:'completed'};};await context.finishAssistantTurn('Your name is Aarav. Anything else?',true,request);
+});
+
+
+test('contradictory compound manual memory blocks local guessing and automatic overwrites',async()=>{
+ const {context,store,calls,say}=fixture();const original=store.rememberFact('I live in Boston. I live in Chicago');
+ await say('I live in Seattle');assert.deepEqual(store.memorySnapshot().facts.map(f=>f.text),[original.text]);assert.match(calls.spoken.at(-1),/also contains other details.*kept it intact/);assert.equal(context.hasAssistantReview(),false);
+ store.rememberFact('I live in Portland');assert.equal(store.recallFact('Where do I live?'),null);
+});

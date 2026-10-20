@@ -155,9 +155,10 @@
     return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && sameData(left[key], right[key]));
   }
   function createStore(storage) {
-    let state = defaults(), recovery = null, originalRaw, recoveryBackup = null;
+    let state = defaults(), recovery = null, originalRaw, recoveryBackup = null, memorySelector = null;
     const listeners = new Set(), memoryListeners = new Set(), importPreviews = new Map(), learningUndos = new Map();
     function readState() {
+      memorySelector = null;
       let raw;
       try { raw = storage.getItem(KEY); } catch (_) { recovery = { reason: 'read-failed' }; originalRaw = undefined; return false; }
       originalRaw = raw;
@@ -220,7 +221,8 @@
       try {
         const activity = state.saveActivity ? state.activity.map(entry => ({ id: entry.id, at: entry.at, state: entry.state, steps: entry.steps.map(step => ({ operation: step.operation, state: step.state })) })) : [];
         const encoded = JSON.stringify({ ...state, activity, timings: state.diagnostics ? state.timings : [] });
-        storage.setItem(KEY, encoded); originalRaw = encoded;
+        if (required || encoded !== originalRaw) storage.setItem(KEY, encoded);
+        originalRaw = encoded;
       } catch (_) {
         if (required) throw new Error('Olanga could not save this change. Free some storage and try again.');
         notify();
@@ -229,12 +231,18 @@
       notify();
       return true;
     }
+    function activityChanged() {
+      // Session-only receipts still update the UI immediately. They do not
+      // require serializing or rewriting an unchanged persistent Workspace.
+      if (state.saveActivity) save();
+      else notify();
+    }
     function edit(fn, reason) {
       requireWritable();
       const previous = state, draft = clone(state);
       fn(draft);
-      state = draft;
-      try { save(true); } catch (error) { state = previous; notify(); throw error; }
+      state = draft; memorySelector = null;
+      try { save(true); } catch (error) { state = previous; memorySelector = null; notify(); throw error; }
       memoryChanged(previous, reason);
     }
     function options() {
@@ -242,6 +250,13 @@
     }
     return {
       snapshot: () => clone(state), options,
+      activitySummary() {
+        const latest = state.activity.at(-1);
+        if (!latest) return null;
+        const step = latest.steps.find(item => item.state === 'working') || latest.steps.findLast(item => item.state !== 'pending' && item.state !== 'skipped');
+        return { id: latest.id, state: latest.state, operation: step?.operation || null };
+      },
+      memorySnapshot: () => ({ factsEnabled: state.factsEnabled, learningEnabled: state.learningEnabled, facts: clone(state.facts) }),
       subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
       subscribeMemory(listener) { memoryListeners.add(listener); return () => memoryListeners.delete(listener); },
       recoveryStatus() { return { blocked: !!recovery, reason: recovery?.reason || null, message: recovery ? RECOVERY_MESSAGE : '', backupKey: recoveryBackup?.key || null }; },
@@ -281,7 +296,7 @@
         if (!recovery) throw new Error('Workspace does not need a storage reset.');
         verifyBackup(key);
         const previous = state, previousRecovery = recovery;
-        state = defaults(); recovery = null;
+        state = defaults(); recovery = null; memorySelector = null;
         try { save(true); } catch (error) { state = previous; recovery = previousRecovery; notify(); throw error; }
         importPreviews.clear(); learningUndos.clear(); memoryChanged(previous, 'reset');
         return true;
@@ -374,7 +389,7 @@
         const changes = [];
         for (const candidate of candidates) {
           if (state.facts.some(item => item.text.toLocaleLowerCase() === candidate.text.toLocaleLowerCase())) continue;
-          const sameSlot = state.facts.filter(item => item.slot === candidate.slot || !item.slot && learning.extract(item.text).some(found => found.slot === candidate.slot));
+          const sameSlot = state.facts.filter(item => item.slot === candidate.slot || !item.slot && (learning.mentionsSlot ? learning.mentionsSlot(item.text, candidate.slot) : learning.extract(item.text).some(found => found.slot === candidate.slot)));
           // Explicitly saved facts remain under explicit user control. Learning
           // can revise its own one-slot record, never erase a manual statement.
           if (sameSlot.some(item => item.source !== 'conversation')) { result.skipped.push({ slot: candidate.slot, reason: 'manual-memory-exists' }); continue; }
@@ -454,10 +469,17 @@
         if (!target) return [];
         const exact = state.facts.filter(item => item.text.toLowerCase() === target);
         if (exact.length) return clone(exact);
-        const phrase = state.facts.filter(item => item.text.toLowerCase().includes(target));
+        if (target.length > 300) return [];
+        const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const phrasePattern = new RegExp('(?<![\\p{L}\\p{N}_])' + escaped + '(?![\\p{L}\\p{N}_])', 'u');
+        const phrase = state.facts.filter(item => phrasePattern.test(item.text.toLowerCase()));
         if (phrase.length) return clone(phrase);
-        const words = target.split(' ').filter(word => word.length > 2 && !FACT_STOP_WORDS.has(word));
-        return words.length ? clone(state.facts.filter(item => words.every(word => item.text.toLowerCase().includes(word)))) : [];
+        if (/[^ \p{L}\p{N}'’.,?!:-]/u.test(target)) return [];
+        const words = (target.match(/[\p{L}\p{N}]+/gu) || []).filter(word => word.length > 2 && !FACT_STOP_WORDS.has(word));
+        return words.length ? clone(state.facts.filter(item => {
+          const terms = new Set(item.text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []);
+          return words.every(word => terms.has(word));
+        })) : [];
       },
       deleteFact(factId) {
         let removed = null;
@@ -466,16 +488,15 @@
       },
       clearFacts() { const count = state.facts.length; edit(data => { data.facts = []; }, 'cleared'); return count; },
       memoryContext() { return state.factsEnabled ? state.facts.map(item => item.text) : []; },
+      recallFact(question) { return state.factsEnabled && learning?.recall ? learning.recall(state.facts, question) : null; },
       relevantContext(query, options) {
         if (!state.factsEnabled) return [];
         if (!learning?.select) return state.facts.slice(0, 8).map(item => ({ id: item.id, text: item.text }));
-        // Infer slots for legacy explicitly saved facts without rewriting them.
-        const facts = state.facts.map(item => {
-          if (item.slot) return item;
-          const classified = learning.classifyFact(item.text);
-          return classified ? { ...item, slot: classified.slot } : item;
-        });
-        return learning.select(facts, query, options);
+        if (learning.createSelector) {
+          memorySelector ||= learning.createSelector(state.facts);
+          return memorySelector(query, options);
+        }
+        return learning.select(state.facts, query, options);
       },
       saveRoutine(routine, parse) {
         if (!routine || !Array.isArray(routine.lines) || routine.lines.some(line => typeof line !== 'string')) throw new Error('Give the routine a name and supported commands.');
@@ -532,19 +553,19 @@
         return finished;
       },
       deleteRun(runId) { edit(data => { data.runs = data.runs.filter(item => item.id !== runId); }); },
-      begin() { const entry = { id: freshId(), at: Date.now(), state: 'working', steps: [] }; state.activity = [...state.activity, entry].slice(-MAX_HISTORY); save(); return entry.id; },
+      begin() { const entry = { id: freshId(), at: Date.now(), state: 'working', steps: [] }; state.activity = [...state.activity, entry].slice(-MAX_HISTORY); activityChanged(); return entry.id; },
       plan(entryId, operations) {
         const entry = state.activity.find(item => item.id === entryId);
         if (!entry || entry.state !== 'working' || entry.steps.length || !Array.isArray(operations) || operations.length > 16 || operations.some(operation => !/^[A-Z_]{1,40}$/.test(operation))) return;
-        entry.steps = operations.map(operation => ({ operation, state: 'pending' })); save();
+        entry.steps = operations.map(operation => ({ operation, state: 'pending' })); activityChanged();
       },
       step(entryId, operation) {
         const entry = state.activity.find(item => item.id === entryId);
         if (!entry || entry.state !== 'working' || !/^[A-Z_]{1,40}$/.test(operation)) return null;
         const pending = entry.steps.findIndex(step => step.operation === operation && step.state === 'pending');
-        if (pending >= 0) { entry.steps[pending].state = 'working'; save(); return pending; }
+        if (pending >= 0) { entry.steps[pending].state = 'working'; activityChanged(); return pending; }
         if (entry.steps.length >= 16) return null;
-        entry.steps.push({ operation, state: 'working' }); save(); return entry.steps.length - 1;
+        entry.steps.push({ operation, state: 'working' }); activityChanged(); return entry.steps.length - 1;
       },
       receipt(entryId, index, outcome, details) {
         const entry = state.activity.find(item => item.id === entryId), step = entry?.steps[index];
@@ -552,7 +573,7 @@
         // A cancelled dispatch may already have affected the external app.
         step.state = outcome === 'cancelled' ? 'uncertain' : ['completed', 'unverified', 'uncertain'].includes(outcome) ? outcome : 'failed';
         if (typeof details === 'string') step.details = details.slice(0, 600);
-        save();
+        activityChanged();
       },
       finish(entryId, status) {
         const entry = state.activity.find(item => item.id === entryId);
@@ -562,7 +583,7 @@
           if (step.state === 'working') step.state = 'uncertain';
           else if (step.state === 'pending') step.state = 'skipped';
         }
-        save();
+        activityChanged();
       },
       clearActivity(entryId) { edit(data => { data.activity = entryId ? data.activity.filter(item => item.id !== entryId) : []; }); },
       timing(phase, ms, outcome = 'ok') {

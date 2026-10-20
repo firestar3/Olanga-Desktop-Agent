@@ -53,6 +53,7 @@
     for (const page of panel.querySelectorAll('[data-workspace-page]')) page.hidden = page.dataset.workspacePage !== String(tab);
     for (const tabButton of panel.querySelectorAll('[data-workspace-tab]')) tabButton.setAttribute('aria-pressed', String(tabButton.dataset.workspaceTab === String(tab)));
     if (!panel.open) panel.showModal();
+    render();
     if (String(tab) === '7') renderRecoveryCopies();
     if (String(tab) === '6') runHealthCheck().catch(error => message(error.message || 'The health check could not run.', true));
   }
@@ -65,8 +66,30 @@
   const peek = el('div', undefined, 'activity-peek'); peek.id = 'activityPeek'; peek.setAttribute('aria-live', 'polite');
   document.getElementById('transcriptArea')?.append(peek);
   function row(title, subtitle) { const item = el('div', undefined, 'workspace-item'); const content = el('div'); content.append(el('strong', title), el('p', subtitle, 'workspace-help')); item.append(content); return item; }
+  const renderedSections = new Map();
+  function changedSection(section, value) {
+    const signature = JSON.stringify(value);
+    if (renderedSections.get(section) === signature) return false;
+    renderedSections.set(section, signature);
+    return true;
+  }
   function render() {
-    const state = store.snapshot(), recovery = store.recoveryStatus();
+    const latest = store.activitySummary();
+    const summary = latest ? `${latest.operation ? operationLabel(latest.operation) + ' · ' : ''}${pretty(latest.state)}` : '';
+    if (peek.textContent !== summary) peek.textContent = summary;
+    peek.hidden = !latest;
+    // Activity events must not rebuild off-screen lists or steal focus from a
+    // memory/routine editor. Drop hidden rows/signatures so deleted private
+    // details cannot linger there; opening a section renders its current data.
+    const page = panel.open ? panel.querySelector('[data-workspace-page]:not([hidden])')?.dataset.workspacePage : null;
+    for (const [section, key, ids] of [['0', 'activity', ['activityList']], ['1', 'routines', ['routineList', 'routineRuns']], ['2', 'names', ['memoryList']], ['4', 'timings', ['timingList']], ['5', 'facts', ['factList']]]) {
+      if (section === page) continue;
+      renderedSections.delete(key);
+      for (const id of ids) { const list = panel.querySelector('#' + id); if (list.childNodes.length) list.replaceChildren(); }
+    }
+    if (!panel.open) return;
+    const state = store.snapshot();
+    const recovery = store.recoveryStatus();
     panel.querySelector('#workspaceRecoveryNotice').hidden = !recovery.blocked;
     panel.querySelector('#workspaceRecoveryMessage').textContent = recovery.message;
     panel.querySelector('#workspaceRecoveryControls').hidden = !recovery.blocked;
@@ -76,63 +99,69 @@
     panel.querySelector('#workspaceRecoveryReset').hidden = !recovery.backupKey;
     panel.querySelector('#workspaceRecoveryCopyStatus').textContent = recovery.backupKey ? 'A verified copy of the original record is saved on this device. You can also download it before resetting.' : '';
     for (const [nodeId, key] of [['saveActivity', 'saveActivity'], ['memoryEnabled', 'memoryEnabled'], ['diagnosticsEnabled', 'diagnostics'], ['factsEnabled', 'factsEnabled'], ['learningEnabled', 'learningEnabled']]) panel.querySelector('#' + nodeId).checked = state[key];
-    const factList = panel.querySelector('#factList'); factList.replaceChildren();
     const search = panel.querySelector('#factSearch').value.trim().toLocaleLowerCase(), sort = panel.querySelector('#factSort').value;
-    const visibleFacts = state.facts.filter(fact => fact.text.toLocaleLowerCase().includes(search)).sort((a, b) => sort === 'alphabetical' ? a.text.localeCompare(b.text) : sort === 'oldest' ? a.at - b.at : b.at - a.at);
-    panel.querySelector('#factCount').textContent = visibleFacts.length + ' of ' + state.facts.length + ' saved memories';
-    for (const fact of visibleFacts) {
-      const item = row(fact.text, (fact.source === 'conversation' ? 'Learned in conversation' : 'Saved by you') + ' · ' + new Date(fact.at).toLocaleDateString());
-      item.append(button('Edit', guarded(() => { const replacement = prompt('Correct this memory, or say update my memory followed by the old and new details.', fact.text); if (replacement !== null) store.updateFact(fact.id, replacement); })), button('Delete', guarded(() => store.deleteFact(fact.id)))); factList.append(item);
+    if (page === '5' && changedSection('facts', [state.facts, search, sort])) {
+      const factList = panel.querySelector('#factList'); factList.replaceChildren();
+      const visibleFacts = state.facts.filter(fact => fact.text.toLocaleLowerCase().includes(search)).sort((a, b) => sort === 'alphabetical' ? a.text.localeCompare(b.text) : sort === 'oldest' ? a.at - b.at : b.at - a.at);
+      panel.querySelector('#factCount').textContent = visibleFacts.length + ' of ' + state.facts.length + ' saved memories';
+      for (const fact of visibleFacts) {
+        const item = row(fact.text, (fact.source === 'conversation' ? 'Learned in conversation' : 'Saved by you') + ' · ' + new Date(fact.at).toLocaleDateString());
+        item.append(button('Edit', guarded(() => { const replacement = prompt('Correct this memory, or say update my memory followed by the old and new details.', fact.text); if (replacement !== null) store.updateFact(fact.id, replacement); })), button('Delete', guarded(() => store.deleteFact(fact.id)))); factList.append(item);
+      }
+      if (!visibleFacts.length) factList.append(el('p', state.facts.length ? 'No memories match your search.' : 'Tell Olanga a clear preference or everyday detail. Say “remember that…” when you want to explicitly keep something.', 'workspace-help'));
     }
-    if (!visibleFacts.length) factList.append(el('p', state.facts.length ? 'No memories match your search.' : 'Tell Olanga a clear preference or everyday detail. Say “remember that…” when you want to explicitly keep something.', 'workspace-help'));
-    const activity = panel.querySelector('#activityList'); activity.replaceChildren();
-    const latest = state.activity.at(-1);
-    const currentStep = latest?.steps.find(step => step.state === 'working') || latest?.steps.findLast(step => step.state !== 'pending' && step.state !== 'skipped');
-    peek.textContent = latest ? `${currentStep ? operationLabel(currentStep.operation) + ' · ' : ''}${pretty(latest.state)}` : '';
-    peek.hidden = !latest;
-    for (const entry of state.activity.slice().reverse()) {
-      const item = row(new Date(entry.at).toLocaleTimeString(), pretty(entry.state));
-      const steps = el('ol'); entry.steps.forEach(step => { const line = el('li', `${operationLabel(step.operation)} — ${pretty(step.state)}`); if (step.details) line.append(el('p', step.details, 'workspace-help')); steps.append(line); }); item.firstChild.append(steps);
-      if (entry.id === state.activity.at(-1)?.id && ['working', 'awaiting-input'].includes(entry.state)) item.append(button('Cancel request', () => { cancelAssistantRequest(); setState(State.IDLE); }));
-      item.append(button('Delete', guarded(() => store.clearActivity(entry.id)))); activity.append(item);
+    if (page === '0' && changedSection('activity', state.activity)) {
+      const activity = panel.querySelector('#activityList'); activity.replaceChildren();
+      for (const entry of state.activity.slice().reverse()) {
+        const item = row(new Date(entry.at).toLocaleTimeString(), pretty(entry.state));
+        const steps = el('ol'); entry.steps.forEach(step => { const line = el('li', `${operationLabel(step.operation)} — ${pretty(step.state)}`); if (step.details) line.append(el('p', step.details, 'workspace-help')); steps.append(line); }); item.firstChild.append(steps);
+        if (entry.id === state.activity.at(-1)?.id && ['working', 'awaiting-input'].includes(entry.state)) item.append(button('Cancel request', () => { cancelAssistantRequest(); setState(State.IDLE); }));
+        item.append(button('Delete', guarded(() => store.clearActivity(entry.id)))); activity.append(item);
+      }
+      if (!state.activity.length) activity.append(el('p', 'Your next request will appear here.', 'workspace-help'));
     }
-    if (!state.activity.length) activity.append(el('p', 'Your next request will appear here.', 'workspace-help'));
-    const routineList = panel.querySelector('#routineList'); routineList.replaceChildren();
-    for (const routine of state.routines) {
-      const item = row(routine.name, `${routine.lines.length} command${routine.lines.length === 1 ? '' : 's'}`);
-      const actions = el('div', undefined, 'workspace-actions');
-      actions.append(button('Review & run', guarded(() => reviewRoutine(routine))), button('Edit', () => { editingRoutine = routine.id; panel.querySelector('#routineName').value = routine.name; panel.querySelector('#routineLines').value = routine.lines.join('\n'); panel.querySelector('#routineName').focus(); }), button('Delete', guarded(() => store.deleteRoutine(routine.id))));
-      item.append(actions); routineList.append(item);
+    if (page === '1' && changedSection('routines', [state.routines, state.runs])) {
+      const routineList = panel.querySelector('#routineList'); routineList.replaceChildren();
+      for (const routine of state.routines) {
+        const item = row(routine.name, `${routine.lines.length} command${routine.lines.length === 1 ? '' : 's'}`);
+        const actions = el('div', undefined, 'workspace-actions');
+        actions.append(button('Review & run', guarded(() => reviewRoutine(routine))), button('Edit', () => { editingRoutine = routine.id; panel.querySelector('#routineName').value = routine.name; panel.querySelector('#routineLines').value = routine.lines.join('\n'); panel.querySelector('#routineName').focus(); }), button('Delete', guarded(() => store.deleteRoutine(routine.id))));
+        item.append(actions); routineList.append(item);
+      }
+      const runs = panel.querySelector('#routineRuns'); runs.replaceChildren();
+      for (const run of state.runs.slice().reverse()) {
+        const item = row(run.name, `${pretty(run.state)} · ${run.steps.filter(step => step.state === 'completed').length}/${run.steps.length} completed`);
+        if (run.steps.some(step => !['completed', 'skipped'].includes(step.state)) && run.state !== 'working') item.append(button('Review unfinished steps', guarded(() => reviewRoutine(null, run))));
+        if (run.state !== 'working') item.append(button('Delete record', guarded(() => store.deleteRun(run.id))));
+        runs.append(item);
+      }
     }
-    const runs = panel.querySelector('#routineRuns'); runs.replaceChildren();
-    for (const run of state.runs.slice().reverse()) {
-      const item = row(run.name, `${pretty(run.state)} · ${run.steps.filter(step => step.state === 'completed').length}/${run.steps.length} completed`);
-      if (run.steps.some(step => !['completed', 'skipped'].includes(step.state)) && run.state !== 'working') item.append(button('Review unfinished steps', guarded(() => reviewRoutine(null, run))));
-      if (run.state !== 'working') item.append(button('Delete record', guarded(() => store.deleteRun(run.id))));
-      runs.append(item);
+    if (page === '2' && changedSection('names', [state.aliases, state.playlists])) {
+      const memoryList = panel.querySelector('#memoryList'); memoryList.replaceChildren();
+      for (const kind of ['aliases', 'playlists']) for (const item of state[kind]) {
+        const line = row(item.alias, `${kind === 'aliases' ? 'App' : 'Private playlist'}: ${item.target}`);
+        line.append(button('Edit', () => { editingMemory = { kind, alias: item.alias }; panel.querySelector('#memoryKind').value = kind; panel.querySelector('#memoryAlias').value = item.alias; panel.querySelector('#memoryTarget').value = item.target; panel.querySelector('#memoryTarget').focus(); }), button('Delete', guarded(() => {
+          store.forget(kind, item.alias);
+          if (editingMemory?.kind === kind && editingMemory.alias === item.alias) { editingMemory = null; panel.querySelector('#memoryForm').reset(); }
+        }))); memoryList.append(line);
+      }
     }
-    const memoryList = panel.querySelector('#memoryList'); memoryList.replaceChildren();
-    for (const kind of ['aliases', 'playlists']) for (const item of state[kind]) {
-      const line = row(item.alias, `${kind === 'aliases' ? 'App' : 'Private playlist'}: ${item.target}`);
-      line.append(button('Edit', () => { editingMemory = { kind, alias: item.alias }; panel.querySelector('#memoryKind').value = kind; panel.querySelector('#memoryAlias').value = item.alias; panel.querySelector('#memoryTarget').value = item.target; panel.querySelector('#memoryTarget').focus(); }), button('Delete', guarded(() => {
-        store.forget(kind, item.alias);
-        if (editingMemory?.kind === kind && editingMemory.alias === item.alias) { editingMemory = null; panel.querySelector('#memoryForm').reset(); }
-      }))); memoryList.append(line);
+    if (page === '4' && changedSection('timings', state.timings)) {
+      const timings = panel.querySelector('#timingList'); timings.replaceChildren();
+      for (const sample of OlangaProductivity.statistics(state.timings)) timings.append(row(pretty(sample.phase), `${sample.count} samples · median ${Math.round(sample.median)} ms · p95 ${Math.round(sample.p95)} ms · ${sample.failures} errors/cancellations`));
+      if (!state.timings.length) timings.append(el('p', 'No measurements collected.', 'workspace-help'));
     }
-    const timings = panel.querySelector('#timingList'); timings.replaceChildren();
-    for (const sample of OlangaProductivity.statistics(state.timings)) timings.append(row(pretty(sample.phase), `${sample.count} samples · median ${Math.round(sample.median)} ms · p95 ${Math.round(sample.p95)} ms · ${sample.failures} errors/cancellations`));
-    if (!state.timings.length) timings.append(el('p', 'No measurements collected.', 'workspace-help'));
   }
   store.subscribe(render); render();
   const memoryNotice=el('div',undefined,'memory-insight');memoryNotice.hidden=true;memoryNotice.setAttribute('role','status');
   const memoryNoticeText=el('p'),memoryUndo=button('Undo',guarded(()=>{store.undoLearnedMemory(memoryUndo.dataset.token);memoryNotice.hidden=true;}));
   memoryNotice.append(memoryNoticeText,memoryUndo);document.getElementById('transcriptArea')?.append(memoryNotice);
   let noticeMemories=[],lastMemoriesUsed=[];
-  store.subscribeMemory(event=>{const removed=new Set(event?.removedIds||[]);if(noticeMemories.some(item=>removed.has(item.id)||!store.snapshot().facts.some(fact=>fact.id===item.id&&fact.text===item.text))){noticeMemories=[];memoryNoticeText.textContent='';memoryUndo.dataset.token='';memoryNotice.hidden=true;}});
+  store.subscribeMemory(event=>{const removed=new Set(event?.removedIds||[]),facts=(store.memorySnapshot?.()||store.snapshot()).facts;if(noticeMemories.some(item=>removed.has(item.id)||!facts.some(fact=>fact.id===item.id&&fact.text===item.text))){noticeMemories=[];memoryNoticeText.textContent='';memoryUndo.dataset.token='';memoryNotice.hidden=true;}});
   window.OlangaMemoryView={
     learned(result){const changed=[...(result?.learned||[]),...(result?.updated||[])];if(!changed.length)return;noticeMemories=changed.map(({id,text})=>({id,text}));memoryNoticeText.textContent=(result.updated?.length?'Updated memory: ':'Learned: ')+changed.map(item=>item.text).join('; ');memoryUndo.dataset.token=result.undoToken||'';memoryUndo.hidden=!result.undoToken;memoryNotice.hidden=false;},
     used(facts){lastMemoriesUsed=(facts||[]).map(({id,text})=>({id,text}));},
-    lastUsed(){return lastMemoriesUsed.filter(item=>store.snapshot().facts.some(fact=>fact.id===item.id&&fact.text===item.text));}
+    lastUsed(){const facts=(store.memorySnapshot?.()||store.snapshot()).facts;return lastMemoriesUsed.filter(item=>facts.some(fact=>fact.id===item.id&&fact.text===item.text));}
   };
   panel.querySelector('#factSearch').addEventListener('input', render);
   panel.querySelector('#factSort').addEventListener('change', render);

@@ -28,6 +28,8 @@ jobs:
           npm run smoke:recovery
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run smoke:news
+      - name: Check assistant latency paths, local memory and verified compound results
+        run: npm run smoke:assistant
       - name: Check conversational routine creation, review and cancellation
         run: npm run smoke:routines
       - name: Check local audio setup controls

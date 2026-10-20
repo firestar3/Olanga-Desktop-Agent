@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 function fixture(synthesize) {
   const context = {
-    console: { log() {}, warn() {}, error() {} }, setTimeout, clearTimeout, atob, Blob, Uint8Array, ArrayBuffer, DataView,
+    console: { log() {}, warn() {}, error() {} }, setTimeout, clearTimeout, atob, Blob, Uint8Array, ArrayBuffer, DataView, AbortController,
     window: { electronAPI: { nvidiaTtsSynthesize: synthesize } },
     synthesis: { cancel() {} }, currentTTSAudio: null, nvidiaApiKey: 'test', defaultNvidiaVoiceName: 'Aria',
     isTtsMuted: false, ttsEngine: 'magpie', State: { IDLE: 'idle', THINKING: 'thinking', LISTENING: 'listening', SPEAKING: 'speaking' }, setState() {}, speakingWatchdogTimer: null
@@ -632,4 +632,228 @@ test('acknowledgment exposes actual voice start once and ignores late start afte
   controller.abort(); await pending;
   assert.equal(utterance.onstart,null);
   started(); assert.equal(starts,1);
+});
+
+
+test('a verified result prepares during acknowledgment and hands the same first audio to playback once', async () => {
+  const { context, calls } = acknowledgementFixture();
+  const requested = [], played = []; let finishAudio;
+  context.window.electronAPI.nvidiaTtsSynthesize = request => { requested.push(request.text); return new Promise(resolve => { finishAudio = resolve; }); };
+  context.playSpeechChunk = async (blob, options) => { played.push(blob); options.onStart?.(); if (options.isFinal) options.onFinal(); return true; };
+  const controller = new AbortController();
+  const acknowledgement = context.speakAssistantAcknowledgement('I will open Spotify and set volume.', controller.signal);
+  const preparedSpeech = context.prepareAssistantResponseSpeech('Spotify is open. System volume is 75%.', { signal: controller.signal });
+  assert.equal(requested.length, 1, 'Synthesis starts while the acknowledgment is pending');
+  assert.equal(played.length, 0, 'Preparation never starts playback');
+  assert.equal(calls.spoken.length, 1); assert.equal(typeof calls.spoken[0].onend, 'function');
+  // Audio may be ready first; only the owner starts it after the acknowledgment.
+  finishAudio({ audioBase64: 'AAAAAA==' }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(played.length, 0); calls.spoken[0].onend(); await acknowledgement;
+  assert.equal((await context.speakResponse('Spotify is open. System volume is 75%.', { preparedSpeech })).status, 'completed');
+  assert.equal(requested.length, 1); assert.equal(played.length, 1);
+  assert.equal((await context.speakResponse('Spotify is open. System volume is 75%.', { preparedSpeech })).status, 'cancelled');
+  assert.equal(requested.length, 1, 'A consumed handle cannot synthesize or play again');
+  assert.equal(vm.runInContext('pendingAssistantResponses.size', context), 0);
+  assert.equal(vm.runInContext('magpieAudioCache.size', context), 1, 'Only this generic verified receipt enters the existing cache');
+});
+
+test('preparation covers a long first chunk without generating duplicate audio', async () => {
+  const context = fixture(async request => { requests.push(request.text); return { audioBase64: 'AAAAAA==' }; });
+  const requests = [], played = [];
+  const first = 'Verified result '.repeat(15).trim() + '.', second = 'The next result is ready.';
+  context.splitIntoSpeechChunks = () => [first, second];
+  context.playSpeechChunk = async (blob, options) => { played.push(blob); if (options.isFinal) options.onFinal(); return true; };
+  const text = first + ' ' + second, preparedSpeech = context.prepareAssistantResponseSpeech(text);
+  assert.deepEqual(requests, [first]);
+  assert.equal((await context.speakResponse(text, { preparedSpeech })).status, 'completed');
+  assert.deepEqual(requests, [first, second]); assert.equal(played.length, 2);
+});
+
+test('a prefetch failure is reused for the normal Windows fallback without a second provider call', async () => {
+  const { context, calls } = acknowledgementFixture(); let requests = 0;
+  context.window.electronAPI.nvidiaTtsSynthesize = async () => { requests++; throw new Error('Unavailable'); };
+  const preparedSpeech = context.prepareAssistantResponseSpeech('Playback resumed.');
+  await new Promise(resolve => setImmediate(resolve));
+  const pending = context.speakResponse('Playback resumed.', { preparedSpeech });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests, 1); assert.equal(calls.spoken.length, 1);
+  calls.spoken[0].onend(); assert.equal((await pending).status, 'completed');
+  assert.equal(vm.runInContext('pendingAssistantResponses.size', context), 0);
+});
+
+test('cancelled, muted and superseded result preparations discard late audio and cannot replay', async () => {
+  for (const mode of ['abort', 'stop', 'mute', 'supersede']) {
+    const { context, calls, timers } = acknowledgementFixture(); let finishAudio, requests = 0, decoded = 0;
+    context.window.electronAPI.nvidiaTtsSynthesize = () => { requests++; return new Promise(resolve => { finishAudio = resolve; }); };
+    context.decodeBase64ToUint8Array = () => { decoded++; return new Uint8Array([0, 0]); };
+    const controller = new AbortController(), preparedSpeech = context.prepareAssistantResponseSpeech('A private result with useful detail. '.repeat(7).trim(), { signal: controller.signal });
+    if (mode === 'abort') controller.abort();
+    else if (mode === 'stop') context.stopAssistantSpeech();
+    else if (mode === 'mute') { context.isTtsMuted = true; context.stopAssistantSpeech(); }
+    else context.speakAssistantAcknowledgement('The next task.');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(vm.runInContext('pendingAssistantResponses.size', context), 0, mode);
+    finishAudio({ audioBase64: 'AAAAAA==' }); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(decoded, 0, mode); assert.equal(requests, 1, mode);
+    assert.equal((await context.speakResponse('A private result with useful detail. '.repeat(7).trim(), { preparedSpeech })).status, 'cancelled', mode);
+    assert.equal(requests, 1, mode); context.stopAssistantSpeech();
+    assert.equal(timers.size, 0, mode);
+  }
+});
+
+test('cancellation while a prepared first chunk is awaiting synthesis never starts a fallback', async () => {
+  const { context, calls } = acknowledgementFixture(); let finishAudio;
+  context.window.electronAPI.nvidiaTtsSynthesize = () => new Promise(resolve => { finishAudio = resolve; });
+  const controller = new AbortController(), preparedSpeech = context.prepareAssistantResponseSpeech('A private result with useful detail. '.repeat(7).trim(), { signal: controller.signal });
+  const pending = context.speakResponse('A private result with useful detail. '.repeat(7).trim(), { preparedSpeech });
+  controller.abort(); assert.equal((await pending).status, 'cancelled');
+  finishAudio({ audioBase64: 'AAAAAA==' }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.spoken.length, 0); assert.equal(vm.runInContext('magpieUnavailableUntil', context), 0);
+});
+
+test('voice or key changes cannot reuse preparation for the previous selection', async () => {
+  for (const mode of ['voice', 'key']) {
+    const { context } = acknowledgementFixture(); const requests = [];
+    context.window.electronAPI.nvidiaTtsSynthesize = async request => { requests.push(request); return { audioBase64: 'AAAAAA==' }; };
+    context.playSpeechChunk = async (_blob, options) => { if (options.isFinal) options.onFinal(); return true; };
+    const text = 'A verified private result with context. '.repeat(7).trim();
+    context.splitIntoSpeechChunks = () => [text];
+    const preparedSpeech = context.prepareAssistantResponseSpeech(text);
+    if (mode === 'voice') context.getSelectedNvidiaVoiceConfig = () => ({ voiceName: 'Jason', languageCode: 'en-US' });
+    else context.nvidiaApiKey = 'replacement';
+    const result = await context.speakResponse(text, { preparedSpeech });
+    assert.equal(result.status, 'completed');
+    assert.equal(requests.length, 2);
+    assert.equal(mode === 'voice' ? requests[1].voiceName : requests[1].apiKey, mode === 'voice' ? 'Jason' : 'replacement');
+  }
+});
+
+test('disabled or unconfigured Magpie preparation is a no-op', () => {
+  for (const mode of ['windows', 'muted', 'no-key', 'aborted', 'empty']) {
+    let requests = 0; const context = fixture(() => { requests++; throw new Error('Unexpected synthesis'); });
+    const controller = new AbortController();
+    if (mode === 'windows') context.ttsEngine = 'windows';
+    if (mode === 'muted') context.isTtsMuted = true;
+    if (mode === 'no-key') context.nvidiaApiKey = '';
+    if (mode === 'aborted') controller.abort();
+    assert.equal(context.prepareAssistantResponseSpeech(mode === 'empty' ? '' : 'Done.', { signal: controller.signal }), null, mode);
+    assert.equal(requests, 0, mode);
+  }
+});
+
+
+test('overlapping result synthesis removes acknowledgment time from the critical path', async () => {
+  async function scenario(prefetch) {
+    const { context, calls } = acknowledgementFixture();
+    const timers = new Map(); let now = 0, nextId = 0, requests = 0, firstAudioAt = null;
+    context.setTimeout = (callback, delay) => { const id = ++nextId; timers.set(id, { callback, at: now + delay }); return id; };
+    context.clearTimeout = id => timers.delete(id);
+    context.window.electronAPI.nvidiaTtsSynthesize = () => { requests++; return new Promise(resolve => context.setTimeout(() => resolve({ audioBase64: 'AAAAAA==' }), 800)); };
+    context.playSpeechChunk = async (_blob, options) => { firstAudioAt ??= now; if (options.isFinal) options.onFinal(); return true; };
+    const acknowledgement = context.speakAssistantAcknowledgement('Opening Spotify.');
+    context.setTimeout(() => calls.spoken[0].onend(), 500);
+    const preparedSpeech = prefetch ? context.prepareAssistantResponseSpeech('Spotify is open.') : null;
+    const complete = acknowledgement.then(() => context.speakResponse('Spotify is open.', { preparedSpeech }));
+    async function advance(to) {
+      now = to;
+      for (;;) {
+        const next = [...timers.entries()].filter(([, item]) => item.at <= now).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        timers.delete(next[0]); next[1].callback(); await new Promise(resolve => setImmediate(resolve));
+      }
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await advance(500); assert.equal(firstAudioAt, null, 'Result never overlaps acknowledgment playback');
+    await advance(800); if (prefetch) assert.equal(firstAudioAt, 800); else assert.equal(firstAudioAt, null);
+    await advance(1300); assert.equal((await complete).status, 'completed');
+    assert.equal(requests, 1); assert.equal(timers.size, 0);
+    return firstAudioAt;
+  }
+  assert.equal(await scenario(false), 1300);
+  assert.equal(await scenario(true), 800);
+});
+
+
+test('explicit generic receipts retain one-call cache reuse across preparation and repeated commands', async () => {
+  const { context } = acknowledgementFixture(); let requests = 0;
+  context.window.electronAPI.nvidiaTtsSynthesize = async () => { requests++; return { audioBase64: 'AAAAAA==' }; };
+  context.playSpeechChunk = async (_blob, options) => { if (options.isFinal) options.onFinal(); return true; };
+  const text = 'Spotify is open. System volume is 75%.';
+  for (let turn = 0; turn < 3; turn++) {
+    context.stopAssistantSpeech();
+    const preparedSpeech = context.prepareAssistantResponseSpeech(text, {});
+    assert.equal((await context.speakResponse(text, { preparedSpeech })).status, 'completed');
+  }
+  assert.equal(requests, 1, 'Repeating a safe receipt keeps the existing cache benefit');
+  assert.equal(vm.runInContext('magpieAudioCache.size', context), 1);
+  // A preexisting normal-playback cache entry is also shared by preparation.
+  await context.getMagpieAudio('System audio is muted.', { voiceName: 'Aria', languageCode: 'en-US' });
+  const preparedSpeech = context.prepareAssistantResponseSpeech('System audio is muted.', {});
+  assert.equal((await context.speakResponse('System audio is muted.', { preparedSpeech })).status, 'completed');
+  assert.equal(requests, 2);
+});
+
+test('short nongeneric replies retain normal cache behavior and do not issue a prefetch', async () => {
+  for (const text of ['You live in Boston.', 'Added "Call my doctor" to your checklist.', 'Your private playlist is playing now.', 'System volume is 75%. You live in Boston.', 'Secret project is open.']) {
+    const { context } = acknowledgementFixture(); let requests = 0;
+    context.window.electronAPI.nvidiaTtsSynthesize = async () => { requests++; return { audioBase64: 'AAAAAA==' }; };
+    context.playSpeechChunk = async (_blob, options) => { if (options.isFinal) options.onFinal(); return true; };
+    for (let turn = 0; turn < 2; turn++) {
+      const preparedSpeech = context.prepareAssistantResponseSpeech(text);
+      assert.equal(preparedSpeech, null, text);
+      assert.equal((await context.speakResponse(text, { preparedSpeech })).status, 'completed');
+    }
+    assert.equal(requests, 1, text);
+  }
+});
+
+test('memory-sensitive receipts never enter the prepared generic cache', () => {
+  const { context } = acknowledgementFixture(); let requests = 0;
+  context.window.electronAPI.nvidiaTtsSynthesize = async () => { requests++; return { audioBase64: 'AAAAAA==' }; };
+  assert.equal(context.prepareAssistantResponseSpeech('System volume is 75%.', { memorySensitive: true }), null);
+  assert.equal(requests, 0); assert.equal(vm.runInContext('magpieAudioCache.size', context), 0);
+});
+
+test('a long personal reply with an ordinarily cached short first chunk also preserves normal reuse', async () => {
+  const { context } = acknowledgementFixture(); let requests = 0;
+  const text = 'A short personal sentence. ' + 'Additional useful detail. '.repeat(15);
+  context.splitIntoSpeechChunks = () => ['A short personal sentence.', 'Additional useful detail.'];
+  context.window.electronAPI.nvidiaTtsSynthesize = async () => { requests++; return { audioBase64: 'AAAAAA==' }; };
+  context.playSpeechChunk = async (_blob, options) => { if (options.isFinal) options.onFinal(); return true; };
+  for (let turn = 0; turn < 2; turn++) {
+    const preparedSpeech = context.prepareAssistantResponseSpeech(text);
+    assert.equal(preparedSpeech, null);
+    assert.equal((await context.speakResponse(text, { preparedSpeech })).status, 'completed');
+  }
+  assert.equal(requests, 2);
+});
+
+
+test('streamed confirmation suffix survives trailing whitespace without repeating the streamed answer', async () => {
+  for (const whitespace of [' ', '  ', '\n', '\r\n', '\t', ' \n ']) {
+    const context = fixture(async () => { throw new Error('Provider must not run'); });
+    const spoken = [];
+    context.OlangaConversation = require('../../shared/conversation');
+    context.ttsEngine = 'windows'; context.ttsRate = 1;
+    context.speakWithWindowsTts = async text => { spoken.push(text); return true; };
+    const stream = context.createSpeechStream();
+    stream.push('Boston grew around its harbor.' + whitespace);
+    const answer = 'Boston grew around its harbor.\n\nShould I replace your saved city?';
+    assert.equal(await stream.end(answer), true);
+    assert.deepEqual(spoken, ['Boston grew around its harbor.', 'Should I replace your saved city?'], JSON.stringify(whitespace));
+    assert.equal(await stream.end(answer), true);
+    assert.equal(spoken.length, 2, 'Repeated completion must never replay either sentence');
+  }
+});
+
+test('stream completion cannot reinterpret changed prefix text as an unheard suffix', async () => {
+  const context = fixture(async () => { throw new Error('Provider must not run'); });
+  const spoken = [];
+  context.OlangaConversation = require('../../shared/conversation');
+  context.ttsEngine = 'windows'; context.ttsRate = 1;
+  context.speakWithWindowsTts = async text => { spoken.push(text); return true; };
+  const stream = context.createSpeechStream();
+  stream.push('Boston is warm. ');
+  assert.equal(await stream.end('Boston is cold. Should I change your memory?'), true);
+  assert.deepEqual(spoken, ['Boston is warm.']);
 });

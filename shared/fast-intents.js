@@ -111,7 +111,7 @@
     return alias && appNames.test(alias.target) ? alias.target : null;
   }
   function single(input, options) {
-    const text = input.replace(/^(?:(?:hey\s+)?olanga[, ]+)?(?:(?:can|could|would) you\s+)?(?:please\s+)?/i, '').replace(/(?:,?\s+please)?[.!?]*$/i, '').trim();
+    const text = input.trim().replace(/^(?:(?:hey|okay|ok)[, ]+)?olanga[, ]+/i, '').replace(/^(?:please\s+(?:can|could|would)\s+you(?:\s+please)?|(?:can|could|would)\s+you(?:\s+please)?|please)\s+/i, '').replace(/(?:,?\s+please)?[.!?]*$/i, '').trim();
     const plain = text.replace(/[’‘]/g, "'");
     let match;
     if (/^(?:what(?:'s| is) the (?:current )?time(?: right now| now)?|what time is it(?: right now| now)?|(?:tell me|check) the time)$/i.test(plain)) return action('[TIME_STATUS]', 'Checking the time…');
@@ -144,11 +144,12 @@
     }
     if (/^(?:(?:cancel|stop|delete|dismiss|end|silence|turn off|shut off) (?:the |my |this |that )?(?:timer|alarm|reminder)|dismiss(?: it)?|stop (?:the )?(?:ringing|beeping))$/i.test(plain)) return action('[STOP_TIMER]', 'Stopping the alarm…');
     if (/^(?:what(?:'s| is) (?:the |my |system )?volume(?: (?:level|at))?|(?:check|show|get) (?:the |my |system )?volume)$/i.test(text)) return action('[VOLUME_STATUS]', 'Checking system volume…');
-    if (/^(?:(?:show|list|check) (?:my |the |all )?(?:active )?timers|what timers (?:are running|do i have))$/i.test(text)) return action('[TIMER_STATUS]', 'Checking your timers…');
+    if (/^(?:(?:show|list|check) (?:my |the |all )?(?:active |running )?timers|what timers (?:are running|do i have)|(?:how much time is left|how long is left|how long remains)(?: on (?:my |the )?timer)|(?:is (?:my |the )?timer still running|are (?:any |my )?timers running))$/i.test(text)) return action('[TIMER_STATUS]', 'Checking your timers…');
     if (/^(?:cancel|clear|stop|delete) all (?:my |the )?timers$/i.test(text)) return action('[CLEAR_ALL_TIMERS]', 'Clearing your timers…');
     if ((match = /^(?:cancel|stop|delete) (?:the |my )?timer(?: (?:called|named))? (.+)$/i.exec(text)) || (match = /^(?:cancel|stop|delete) (?:the |my )?(.+?) timer$/i.exec(text))) return action(`[CANCEL_TIMER: ${unquote(match[1])}]`, 'Cancelling your timer…');
-    if (/^(?:show|list|check) (?:my |the |all )?(?:tasks|checklist)$/i.test(text)) return action('[TASK_STATUS]', 'Checking your checklist…');
-    if ((match = /^add (.+?) to (?:my |the )?(?:tasks|checklist)$/i.exec(text)) && !match[1].includes(',')) return action(`[ADD_TASK: ${unquote(match[1])}]`, 'Adding your task…');
+    if (/^(?:(?:show|list|check) (?:my |the |all )?(?:tasks|checklist|to[ -]do list)|what(?:'s| is) on (?:my |the )?(?:checklist|to[ -]do list))$/i.test(text)) return action('[TASK_STATUS]', 'Checking your checklist…');
+    if ((match = /^add (.+?) to (?:my |the )?(?:tasks|checklist|to[ -]do list)$/i.exec(text)) && !match[1].includes(',')) return action(`[ADD_TASK: ${unquote(match[1])}]`, 'Adding your task…');
+    if ((match = /^mark (?:the |my )?task (.+?) (?:as )?(?:done|complete|completed)$/i.exec(text))) return action(`[COMPLETE_TASK: ${unquote(match[1])}]`, 'Updating your checklist…');
     if ((match = /^(?:complete|finish|check off) (?:the |my )?task (.+)$/i.exec(text))) return action(`[COMPLETE_TASK: ${unquote(match[1])}]`, 'Updating your checklist…');
     if ((match = /^(?:remove|delete) (?:the |my )?task (.+)$/i.exec(text))) return action(`[REMOVE_TASK: ${unquote(match[1])}]`, 'Updating your checklist…');
     if ((match = /^(?:reopen|uncheck) (?:the |my )?task (.+)$/i.exec(text))) return action(`[UNCOMPLETE_TASK: ${unquote(match[1])}]`, 'Updating your checklist…');
@@ -173,7 +174,7 @@
       return action(mute ? '[VOLUME_MUTE_ON]' : '[VOLUME_MUTE_OFF]', mute ? 'Muting system audio…' : 'Unmuting system audio…');
     }
     if (/^toggle (?:the )?(?:system|volume|audio|sound) mute$/i.test(text)) return action('[VOLUME_MUTE]', 'Toggling system mute…');
-    if ((match = /^(?:(set|raise|increase|lower|decrease|turn|change|adjust|make)\s+)?(?:(?:the|my|system|master)\s+)?volume(?:\s+(up|down))?\s+(?:(to|at)\s*)?([\w. -]+?)\s*(?:%|per\s*cent)?$/i.exec(text))) {
+    if ((match = /^(?:(set|raise|increase|lower|decrease|turn|change|adjust|make)\s+)?(?:(?:the|my)\s+)?(?:(?:system|master)\s+)?volume(?:\s+(up|down))?\s+(?:(to|at)\s*)?([\w. -]+?)\s*(?:%|per\s*cent)?$/i.exec(text))) {
       // Directional wording without "to"/"at" can mean a relative change.
       // Do not turn "volume down 10%" into an absolute target of 10%.
       const directional = /^(?:raise|increase|lower|decrease)$/i.test(match[1] || '') || !!match[2];
@@ -184,8 +185,8 @@
       const level = number(amount);
       if ((!directional || match[3]) && Number.isFinite(level) && level >= 0 && level <= 100) return action(`[VOLUME_SET: ${level}]`, `Setting the volume to ${level}%…`);
     }
-    if (/^(?:turn (?:it|the volume) up|volume up|louder|(?:raise|increase) (?:the )?volume)$/i.test(text)) return action('[VOLUME_UP]', 'Turning the volume up…');
-    if (/^(?:turn (?:it|the volume) down|volume down|quieter|lower (?:the )?volume|decrease (?:the )?volume)$/i.test(text)) return action('[VOLUME_DOWN]', 'Turning the volume down…');
+    if (/^(?:turn (?:it|(?:the |my |system )?volume) up|turn up (?:the |my |system )?volume|volume up|louder|(?:raise|increase) (?:the )?volume)$/i.test(text)) return action('[VOLUME_UP]', 'Turning the volume up…');
+    if (/^(?:turn (?:it|(?:the |my |system )?volume) down|turn down (?:the |my |system )?volume|volume down|quieter|lower (?:the )?volume|decrease (?:the )?volume)$/i.test(text)) return action('[VOLUME_DOWN]', 'Turning the volume down…');
     if (/^(?:reload|restart) spotify(?: and (?:resume|play)(?: (?:the |my )?(?:current )?(?:song|music))?)?$/i.test(text)) return action('[SPOTIFY_RELOAD]', 'Restarting Spotify…');
     if ((match = /^(?:play|put on|start|listen to)\s+(.+?)(?:\s+(?:on|in|using)\s+spotify)?$/i.exec(text))) {
       const target = match[1].trim();
@@ -220,6 +221,9 @@
     }
     return null;
   }
+  // A sticky expression reads the original string in place; scanning a long
+  // ordinary question no longer allocates a suffix at every character.
+  const clauseSeparator = /,?\s+(?:and(?:\s+then)?|then)\s+/iy;
   function clauses(input) {
     const parts = [];
     let start = 0;
@@ -230,11 +234,12 @@
         if (character === quote) quote = null;
       } else if (character === '"' || character === '“') {
         quote = character === '“' ? '”' : '"';
-      } else {
-        const separator = /^,?\s+(?:and(?:\s+then)?|then)\s+/i.exec(input.slice(index));
+      } else if (character === ',' || /\s/.test(character)) {
+        clauseSeparator.lastIndex = index;
+        const separator = clauseSeparator.exec(input);
         if (separator) {
           parts.push(input.slice(start, index).trim());
-          index += separator[0].length - 1;
+          index = clauseSeparator.lastIndex - 1;
           start = index + 1;
         }
       }
@@ -248,20 +253,28 @@
     for (const part of parts) {
       const previous = merged.at(-1);
       const durationPart = part.replace(/\s+(?:named|called|for)\s+.+$/i, '');
-      if (previous && /^a half(?=$|\s)/i.test(part)) merged[merged.length - 1] += ` and ${part}`;
-      else if (previous && /^\[SET_TIMER: \d+, Timer\]$/.test(single(previous, options)?.command || '') && duration(durationPart) && !/\b(?:named|called)\b/i.test(previous)) merged[merged.length - 1] += ` and ${part}`;
-      else merged.push(part);
+      if (previous && (/^a half(?=$|\s)/i.test(part) ||
+          (/^\[SET_TIMER: \d+, Timer\]$/.test(previous.action?.command || '') && duration(durationPart) && !/\b(?:named|called)\b/i.test(previous.text)))) {
+        previous.text += ' and ' + part;
+        previous.action = single(previous.text, options);
+      } else {
+        if (merged.length === 4) return null;
+        merged.push({ text: part, action: single(part, options) });
+      }
     }
-    if (merged.length > 4) return null;
-    const actions = merged.map(part => single(part, options));
-    return actions.every(Boolean) ? actions : null;
+    return merged.every(item => item.action) ? merged.map(item => item.action) : null;
   }
   function parse(input, options = {}) {
-    if (typeof input !== 'string' || !input.trim() || input.length > 1000 || /[\[\]\r\n]/.test(input)) return null;
-    const complete = single(input.trim(), options);
+    if (typeof input !== 'string' || !input.trim() || input.length > 1000 || /[\[\]\r\n\x00-\x08\x0b\x0c\x0e-\x1f]/.test(input)) return null;
+    const text = input.trim();
+    const complete = single(text, options);
     if (complete?.command === '[SPOTIFY_RELOAD]') return [complete];
-    const parts = clauses(input.trim());
-    const actions = parts && compound(parts, options);
+    const parts = clauses(text);
+    if (!parts) return null;
+    // Most turns contain one command. Reuse its resolved action rather than
+    // running the complete intent table a second time.
+    if (parts.length === 1) return complete ? [complete] : null;
+    const actions = compound(parts, options);
     if (actions) return actions;
     return complete && FREE_TEXT_COMMAND.test(complete.command) ? [complete] : null;
   }

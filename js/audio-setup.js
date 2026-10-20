@@ -18,37 +18,41 @@
     <p id="audioSetupStatus" class="settings-hint settings-hint-after" role="status" aria-live="polite">No audio checks have been run this session.</p>`;
   const speech = document.getElementById('speechSettingsHeading')?.closest('section');
   if (speech) speech.after(section); else panel.append(section);
-  const $ = id => section.querySelector('#' + id), device = $('audioSetupDevice'), refreshButton = $('audioSetupRefresh'), phraseButton = $('audioSetupPhrase'), replyButton = $('audioSetupReply'), status = $('audioSetupStatus'), meter = $('audioSetupLevel'), levelRow = $('audioSetupLevelRow');
-  let phrase = null, reply = null, timer = null, busy = false, deviceSequence = 0, disposed = false;
+  const $ = id => section.querySelector('#' + id), device = $('audioSetupDevice'), refreshButton = $('audioSetupRefresh'), phraseButton = $('audioSetupPhrase'), replyButton = $('audioSetupReply'), status = $('audioSetupStatus'), meter = $('audioSetupLevel'), levelRow = $('audioSetupLevelRow'), levelStatus = $('audioSetupLevelStatus');
+  let phrase = null, reply = null, timer = null, busy = false, refreshing = false, deviceSequence = 0, disposed = false;
   const api = () => window.OlangaAudioInput;
   const engine = () => typeof ttsEngine === 'string' ? ttsEngine : document.getElementById('ttsEngineSelect')?.value || 'windows';
   const current = () => { try { return api()?.snapshot?.() || {}; } catch (_) { return {}; } };
   const visible = () => !disposed && !document.hidden && !screen.classList.contains('hidden') && !panel.hidden && (window.OlangaVisibility?.isVisible?.() ?? true);
   const announce = (text, error = false) => { status.textContent = text; status.dataset.state = error ? 'error' : ''; };
+  const setValue = (element, key, value) => { if (element[key] !== value) element[key] = value; };
   function render() {
     const state = current();
     if (!busy) {
       const saved = state.preferredDeviceId === 'default' ? '' : state.preferredDeviceId || '';
-      if (saved && ![...device.options].some(option => option.value === saved)) { const option = document.createElement('option'); option.value = saved; option.textContent = state.label || 'Saved microphone'; device.append(option); }
-      device.value = saved;
+      if (device.value !== saved) {
+        if (saved && ![...device.options].some(option => option.value === saved)) { const option = document.createElement('option'); option.value = saved; option.textContent = state.label || 'Saved microphone'; device.append(option); }
+        device.value = saved;
+      }
     }
-    meter.value = state.active && !state.muted && Number.isFinite(state.level) ? Math.max(0, Math.min(100, state.level)) : 0;
-    levelRow.hidden = !visible();
-    $('audioSetupLevelStatus').textContent = state.muted ? 'The microphone is muted. Unmute on the home screen to check it.'
+    setValue(meter, 'value', state.active && !state.muted && Number.isFinite(state.level) ? Math.max(0, Math.min(100, state.level)) : 0);
+    setValue(levelRow, 'hidden', !visible());
+    setValue(levelStatus, 'textContent', state.muted ? 'The microphone is muted. Unmute on the home screen to check it.'
       : !state.active ? 'The microphone is off. Enable voice input on the home screen to check it.'
         : state.modelReady === false ? 'Microphone active. The local speech model is still loading.'
-          : 'Microphone active. Speak normally and watch for a changing level.';
-    phraseButton.disabled = busy || !api()?.testPhrase || !state.active || !!state.muted || state.modelReady === false;
-    replyButton.disabled = busy || !api()?.testReply;
-    refreshButton.disabled = busy || !api()?.devices;
-    device.disabled = busy || !api()?.choose;
+          : 'Microphone active. Speak normally and watch for a changing level.');
+    setValue(phraseButton, 'disabled', busy || !api()?.testPhrase || !state.active || !!state.muted || state.modelReady === false);
+    setValue(replyButton, 'disabled', busy || !api()?.testReply);
+    setValue(refreshButton, 'disabled', busy || refreshing || !api()?.devices);
+    setValue(device, 'disabled', busy || !api()?.choose);
   }
   function refreshVisibility() {
     if (visible()) { render(); if (!timer) timer = setInterval(render, 250); }
     else { if (timer) clearInterval(timer); timer = null; meter.value = 0; levelRow.hidden = true; }
   }
   async function refreshDevices() {
-    if (!api()?.devices || busy) return;
+    if (!api()?.devices || busy || refreshing) return;
+    refreshing = true;
     const sequence = ++deviceSequence; refreshButton.disabled = true;
     try {
       const items = await api().devices();
@@ -63,7 +67,7 @@
       device.value = selection === 'default' ? '' : selection;
       $('audioSetupDeviceStatus').textContent = selection && !seen.has(selection) ? 'Your saved microphone is unavailable. Choose an available device or Windows default.' : `${Math.max(0, seen.size - 2)} named microphone${seen.size === 3 ? '' : 's'} listed. Labels may appear only after Windows microphone access is enabled.`;
     } catch (error) { if (sequence === deviceSequence) announce(error.message || 'The microphone list could not be read.', true); }
-    finally { if (sequence === deviceSequence && !disposed) render(); }
+    finally { refreshing = false; if (!disposed) render(); }
   }
   device.addEventListener('change', async () => {
     if (busy || !api()?.choose) return;

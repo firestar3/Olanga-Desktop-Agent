@@ -141,6 +141,51 @@ app.whenReady().then(async () => {
       await screenshot('home');
     });
 
+    await scenario('Closed Workspace does no list rebuilding or session-activity persistence at full memory capacity', async () => {
+      const result = await evaluate(() => {
+        const store = window.OlangaWorkspace;
+        for (let i = 0; i < 50; i++) store.rememberFact('Fixture reference number ' + i);
+        const observer = new MutationObserver(() => {}), lists = ['factList', 'activityList', 'routineList', 'routineRuns', 'memoryList', 'timingList'];
+        for (const id of lists) observer.observe(document.getElementById(id), { childList: true, subtree: true });
+        const original = Storage.prototype.setItem; let writes = 0;
+        Storage.prototype.setItem = function (key, value) { if (key === 'olanga_productivity_v1') writes++; return original.call(this, key, value); };
+        const started = performance.now();
+        try {
+          for (let i = 0; i < 40; i++) {
+            const id = store.begin(); store.plan(id, ['OPEN_APP', 'VOLUME_SET']);
+            const first = store.step(id, 'OPEN_APP'); store.receipt(id, first, 'completed');
+            const second = store.step(id, 'VOLUME_SET'); store.receipt(id, second, 'completed'); store.finish(id, 'completed');
+          }
+          return { elapsedMs: performance.now() - started, mutations: observer.takeRecords().length, writes, memories: store.snapshot().facts.length, activity: store.snapshot().activity.length, summary: document.getElementById('activityPeek').textContent };
+        } finally { Storage.prototype.setItem = original; observer.disconnect(); }
+      });
+      report.efficiency = result;
+      assert.equal(result.mutations, 0); assert.equal(result.writes, 0); assert.equal(result.memories, 50); assert.equal(result.activity, 40); assert.match(result.summary, /completed/);
+      await open(); await tab(5);
+      assert.equal(await evaluate(() => document.querySelectorAll('#factList .workspace-item').length), 50);
+    });
+
+    await scenario('Unchanged memories retain keyboard focus through activity events and hidden deleted rows are cleared', async () => {
+      const result = await evaluate(() => {
+        const store = window.OlangaWorkspace, list = document.getElementById('factList'), button = list.querySelector('button');
+        button.focus(); const observer = new MutationObserver(() => {}); observer.observe(list, { childList: true, subtree: true });
+        const id = store.begin(); store.plan(id, ['TIMER_STATUS']); const step = store.step(id, 'TIMER_STATUS'); store.receipt(id, step, 'completed'); store.finish(id, 'completed');
+        const result = { focusRetained: document.activeElement === button, sameButton: list.querySelector('button') === button, mutations: observer.takeRecords().length };
+        observer.disconnect(); return result;
+      });
+      assert.deepEqual(result, { focusRetained: true, sameButton: true, mutations: 0 });
+      await tab(0);
+      assert.equal(await evaluate(() => document.querySelectorAll('#activityList .workspace-item').length), 40);
+      assert.equal(await evaluate(() => document.getElementById('factList').textContent), '');
+      await click('#workspaceClose');
+      await evaluate(() => { window.OlangaWorkspace.clearFacts(); window.OlangaWorkspace.clearActivity(); });
+      assert.equal(await evaluate(() => document.getElementById('factList').textContent + document.getElementById('activityList').textContent), '');
+      await open(); await tab(5);
+      assert.equal(await evaluate(() => document.querySelectorAll('#factList .workspace-item').length), 0);
+      assert.match(await evaluate(() => document.getElementById('factCount').textContent), /0 of 0/);
+      await click('#workspaceClose');
+    });
+
     await scenario('Saved app aliases and playlists can be saved, edited, enabled, disabled and restored', async () => {
       await open(); await tab(2);
       assert.equal(await evaluate(() => document.getElementById('memoryEnabled').checked), false);

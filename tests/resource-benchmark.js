@@ -92,14 +92,16 @@ function performanceDelta(before,after){
 }
 function collectResumeReadiness(){
  const tracks=micStream?.getAudioTracks?.()||[];
+ const captureReady=!!micStream && micStream.active!==false && tracks.some(track=>track.enabled && track.readyState==='live');
+ const recognizerPresent=typeof voskRecognizer!=='undefined' && !!voskRecognizer;
  return {
-  ready:!isMicMuted && isVoskReady && !!micStream && audioContext?.state==='running',
+  ready:!isMicMuted && isVoskReady && captureReady && recognizerPresent && audioContext?.state==='running',
   micMuted:isMicMuted,modelReady:isVoskReady,
   modelPresent:typeof voskModel!=='undefined' && !!voskModel,
   modelLoading:typeof voskModelLoadPromise!=='undefined' && !!voskModelLoadPromise,
-  recognizerPresent:typeof voskRecognizer!=='undefined' && !!voskRecognizer,
+  recognizerPresent,
   micPresent:!!micStream,micActive:micStream?.active??null,
-  captureReady:!!micStream && micStream.active!==false && tracks.some(track=>track.enabled && track.readyState==='live'),
+  captureReady,
   audioContextState:audioContext?.state||null
  };
 }

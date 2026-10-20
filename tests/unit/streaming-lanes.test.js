@@ -13,7 +13,7 @@ function harness({ interrupted = false, failedSpeech = false, truncated = false,
   const storage = new Map();
   const context = vm.createContext({
     AbortController, DOMException, setTimeout, clearTimeout, console: { log() {}, warn() {}, error() {} },
-    OlangaGemini: require('../../shared/gemini-request'), OlangaIntents: require('../../shared/fast-intents'), OlangaConversation: require('../../shared/conversation'),
+    OlangaGemini: require('../../shared/gemini-request'), OlangaIntents: require('../../shared/fast-intents'), OlangaConversation: require('../../shared/conversation'), OlangaChecklistContext: require('../../shared/checklist-context'),
     window: { electronAPI: {
       openApp: async name => { calls.opened.push(name); return { ok: true, verified: true, message: `${name} is open.` }; },
       providerStream: async (payload, onText) => {
@@ -238,4 +238,143 @@ test('the router system prompt keeps a long static prefix so repeated requests c
   while (shared < first.length && first[shared] === second[shared]) shared++;
   assert.ok(shared / first.length > 0.9, `Only ${shared} of ${first.length} characters are shared`);
   assert.match(first.slice(-400), /current local time for the user/);
+});
+
+
+test('a final transcript selects a streamed answer even when the rough transcript was unavailable', async () => {
+  const { context, calls, speech } = harness({ replies: [['Canberra is the capital.']] });
+  context.transcribeAssistantAudio = async () => { calls.transcriptions++; return 'What is the capital of Australia?'; };
+  await context.processAudioBlobWithGemini({}, { rough: '' });
+  assert.equal(calls.transcriptions, 1);
+  assert.equal(calls.streams.length, 1);
+  assert.equal(calls.router + calls.audioRouter, 0);
+  assert.equal(calls.streams[0].body.generationConfig.thinkingConfig.thinkingLevel, 'MINIMAL');
+  assert.equal(calls.streams[0].body.contents[0].parts.some(part => part.inline_data), false);
+  assert.equal(speech.ended, 'Canberra is the capital.');
+});
+
+test('a final weather transcript goes directly to search without a redundant routing request', async () => {
+  const { context, calls, speech } = harness({ replies: [['The forecast is cloudy.']] });
+  context.transcribeAssistantAudio = async () => { calls.transcriptions++; return 'What is the weather here?'; };
+  await context.processAudioBlobWithGemini({}, { rough: '' });
+  assert.equal(calls.transcriptions, 1);
+  assert.equal(calls.streams.length, 1);
+  assert.deepEqual(plain(calls.streams[0].body.tools), [{ google_search: {} }]);
+  assert.equal(calls.router + calls.audioRouter, 0);
+  assert.equal(speech.ended, 'The forecast is cloudy.');
+});
+
+test('an explicit spoken answer-lane escape never loops through another answer request', async () => {
+  const { context, calls, speech } = harness({ replies: [['USER_SAID: How do I organize my week?\nRESPONSE: [ROUTE]']] });
+  await context.processAudioBlobWithGemini({}, { rough: 'How do I organize my week?' });
+  assert.equal(calls.streams.length, 1);
+  assert.equal(calls.router, 1);
+  assert.equal(calls.transcriptions, 0);
+  assert.deepEqual(speech.pushed, []);
+});
+
+test('an answer escape after standalone transcription routes once without executing streamed markers', async () => {
+  const { context, calls } = harness({ replies: [['[ROUTE]']] });
+  context.transcribeAssistantAudio = async () => { calls.transcriptions++; return 'How do I organize my week?'; };
+  await context.processAudioBlobWithGemini({});
+  assert.equal(calls.transcriptions, 1);
+  assert.equal(calls.streams.length, 1);
+  assert.equal(calls.router, 1);
+  assert.deepEqual(calls.opened, []);
+});
+
+test('reviewed offline information streams only the approved text and never uploads its audio', async () => {
+  const { context, calls, store } = harness({ replies: [['The forecast is cloudy.']] });
+  store.preference('speechInput', 'offline-general');
+  context.window.OlangaOfflineSpeech = { transcribe: async () => 'What is the capital of France?' };
+  context.window.reviewOfflineTranscript = async () => 'What is the weather in Paris?';
+  context.blobToBase64 = () => { throw Error('Offline recording must not be encoded for a provider'); };
+  await context.processAudioBlobWithGemini({});
+  assert.equal(calls.transcriptions + calls.router + calls.audioRouter, 0);
+  assert.equal(calls.streams.length, 1);
+  assert.deepEqual(plain(calls.streams[0].body.tools), [{ google_search: {} }]);
+  assert.equal(calls.streams[0].body.contents[0].parts.some(part => part.inline_data), false);
+  assert.match(JSON.stringify(calls.streams[0].body), /weather in Paris/);
+  assert.doesNotMatch(JSON.stringify(calls.streams[0].body), /capital of France/);
+});
+
+
+function enableRealControls(context) {
+ context.OlangaMemoryLearning=require('../../shared/memory-learning');context.OlangaConversationalControls=require('../../shared/conversational-controls');
+ context.window.addEventListener=()=>{};
+ vm.runInContext(fs.readFileSync(path.join(__dirname,'../../js/assistant-controls.js'),'utf8'),context);
+}
+
+test('typed and spoken known facts answer from current memory without an answer model',async()=>{
+ for(const spoken of [false,true]){
+  const {context,calls,store}=harness({replies:[['USER_SAID: What is my name?\nRESPONSE: Your name is Invented.']]});enableRealControls(context);store.rememberFact('My name is Aarav');
+  context.transcribeAssistantAudio=async()=>{calls.transcriptions++;return 'What is my name?';};
+  if(spoken)await context.processAudioBlobWithGemini({}, {rough:'What is my name?'});else await context.processTextCommandWithGemini('What is my name?');
+  assert.equal(calls.streams.length,0);assert.equal(calls.router,0);assert.equal(calls.transcriptions,spoken?1:0);assert.equal(calls.spoken.at(-1),'Your name is Aarav.');if(!spoken)assert.deepEqual(calls.acks,[]);
+ }
+});
+
+test('a final spoken transcript revealing a known fact escapes before invented model text can be spoken',async()=>{
+ const {context,calls,speech,store}=harness({replies:[['USER_SAID: What is my name?\nRESPONSE: Your name is Invented.']]});enableRealControls(context);store.rememberFact('My name is Aarav');
+ await context.processAudioBlobWithGemini({}, {rough:'What is a name?'});assert.equal(calls.streams.length,1);assert.equal(calls.router,0);assert.deepEqual(speech.pushed,[]);assert.equal(calls.spoken.at(-1),'Your name is Aarav.');assert.equal(calls.transcriptions,0);
+});
+
+test('a clear fact and weather question learn locally and use one search, preserving the full request',async()=>{
+ const {context,calls,speech,store}=harness({replies:[['It is cool in Boston.']]});enableRealControls(context);
+ const goal='I live in Boston. What is the weather here?';await context.processTextCommandWithGemini(goal);
+ assert.equal(store.memorySnapshot().facts[0].text,'I live in Boston');assert.equal(calls.streams.length,1,JSON.stringify(calls));assert.equal(calls.router,0);assert.deepEqual(plain(calls.streams[0].body.tools),[{google_search:{}}]);assert.match(JSON.stringify(calls.streams[0].body),/I live in Boston/);assert.equal(speech.ended,'It is cool in Boston.');
+});
+
+test('mixed streamed answer appends a protected memory review only after success and accepts voice confirmation',async()=>{
+ const {context,calls,speech,store}=harness({replies:[['Boston grew around its harbor.']]});enableRealControls(context);const old=store.rememberFact('I live in Seattle');
+ await context.processTextCommandWithGemini('I live in Boston. What is its history?');assert.equal(calls.router,0);assert.equal(calls.streams.length,1);assert.match(speech.ended,/^Boston grew.*[\s\S]*Should I replace/);assert.equal(context.hasAssistantReview(),true);assert.equal(store.memorySnapshot().facts[0].text,'I live in Seattle');assert.equal(calls.followUps,1);assert.equal(store.snapshot().activity.at(-1).state,'awaiting-input');
+ await context.processTextCommandWithGemini('yes please');assert.equal(store.memorySnapshot().facts[0].text,'I live in Boston');assert.equal(store.memorySnapshot().facts[0].id,old.id);assert.equal(calls.streams.length,1);
+});
+
+test('a failed mixed stream does not open a memory confirmation',async()=>{
+ const {context,calls,store}=harness({truncated:true,replies:[['Boston has a harbor but']]});enableRealControls(context);store.rememberFact('I live in Seattle');
+ await context.processTextCommandWithGemini('I live in Boston. What is its history?');assert.equal(context.hasAssistantReview(),false);assert.equal(store.memorySnapshot().facts[0].text,'I live in Seattle');assert.doesNotMatch(context.aiText.textContent,/Should I replace/);assert.equal(calls.router,0);
+});
+
+
+test('unrelated answers neither scan nor upload a large private checklist',async()=>{
+ const {context,calls}=harness({replies:[['Canberra.']]});context.activeTasks=new Proxy([],{get(){throw Error('Unrelated question inspected checklist');}});
+ await context.processTextCommandWithGemini('What is the capital of Australia?');assert.equal(calls.streams.length,1);assert.equal(calls.errors.length,0);assert.doesNotMatch(JSON.stringify(calls.streams[0]),/CHECKLIST DATA/);
+});
+
+test('checklist context is bounded and an omitted target cannot become a model-picked ID',async()=>{
+ const {context,calls}=harness();context.activeTasks=Array.from({length:120},(_,i)=>({id:'task-'+i,text:'Milk shopping '+i+' '+('detail '.repeat(80)),completed:false}));
+ const goal='Finish the milk shopping';const request=context.beginAssistantRequest();request.goal=goal;let payload,dispatches=0;
+ context.callGeminiSpecialist=async(purpose,messages)=>{payload=JSON.parse(messages[1].content);return JSON.stringify({kind:'commands',commands:['[COMPLETE_TASK: task-0]']});};
+ context.dispatchActionPlan=async()=>{dispatches++;};const result=await context.handleSimpleActionWithSpecialists('[COMPLETE_TASK: task-0]',goal,request);
+ assert.ok(payload.checklist.omittedCount>0);assert.ok(JSON.stringify(payload.checklist).length<=6000);assert.equal(payload.tasks,undefined);assert.match(result.spokenResponse,/Which exact checklist task/);assert.equal(result.wantsFollowUp,true);assert.equal(dispatches,0);assert.equal(calls.generates.length,0);
+});
+
+test('explicit task identity remains usable with a bounded shortlist and unrelated actions omit tasks',async()=>{
+ for(const taskAction of [true,false]){
+  const {context}=harness();context.activeTasks=Array.from({length:80},(_,i)=>({id:'task-'+i,text:'Fixture item '+i,completed:false}));
+  const goal=taskAction?'Please finish task-79':'Could you bring up the browser for me';const request=context.beginAssistantRequest();request.goal=goal;const command=taskAction?'[COMPLETE_TASK: task-79]':'[OPEN_APP: chrome]';let payload,dispatched;
+  context.callGeminiSpecialist=async(purpose,messages)=>{payload=JSON.parse(messages[1].content);return JSON.stringify({kind:'commands',commands:[command]});};context.dispatchActionPlan=async plan=>{dispatched=plan.commands;return{spokenResponse:'Fixture verified.'};};
+  await context.handleSimpleActionWithSpecialists(command,goal,request);assert.deepEqual(Array.from(dispatched),[command]);
+  if(taskAction){assert.ok(payload.checklist.tasks.some(task=>task.id==='task-79'));assert.ok(payload.checklist.omittedCount>0);}else assert.equal(payload.checklist,undefined);
+ }
+});
+
+
+test('a synthesized clarification command is never treated as a user-provided task ID',async()=>{
+ const {context}=harness();context.activeTasks=Array.from({length:80},(_,i)=>({id:'task-'+i,text:'Milk shopping '+i,completed:false}));
+ context.rememberActionClarification('[COMPLETE_TASK: task-0]','Which milk task?','Finish the milk shopping');
+ const request=context.beginAssistantRequest();request.goal='whichever';let dispatched=false;
+ context.callGeminiSpecialist=async()=>JSON.stringify({kind:'commands',commands:['[COMPLETE_TASK: task-0]']});context.dispatchActionPlan=async()=>{dispatched=true;};
+ const result=await context.handleSimpleActionWithSpecialists('[CONTINUE_ACTION]','whichever',request);assert.match(result.spokenResponse,/Which exact checklist task/);assert.equal(dispatched,false);
+});
+
+
+test('an exact fresh answer can resolve a task clarification after an overlong original request',async()=>{
+ const {context}=harness();context.activeTasks=Array.from({length:80},(_,i)=>({id:'task-'+i,text:'Review report '+i,completed:false}));
+ let dispatched=0;context.callGeminiSpecialist=async()=>JSON.stringify({kind:'commands',commands:['[COMPLETE_TASK: task-79]']});context.dispatchActionPlan=async plan=>{dispatched++;assert.equal(plan.commands[0],'[COMPLETE_TASK: task-79]');return{spokenResponse:'Done.'};};
+ const original='Finish my checklist item '+('background information '.repeat(350));let request=context.beginAssistantRequest();request.goal=original;
+ const first=await context.handleSimpleActionWithSpecialists('[COMPLETE_TASK: task-79]',original,request);assert.match(first.spokenResponse,/Which exact checklist task/);assert.equal(dispatched,0);
+ assert.ok(vm.runInContext('pendingActionClarification.goal.length',context)<=6000);assert.equal(vm.runInContext('pendingActionClarification.userGoal',context),'');
+ request=context.beginAssistantRequest();request.goal='task-79';const second=await context.handleSimpleActionWithSpecialists('[CONTINUE_ACTION]','task-79',request);assert.equal(second.spokenResponse,'Done.');assert.equal(dispatched,1);
 });

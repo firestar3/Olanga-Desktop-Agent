@@ -96,6 +96,25 @@ test('the live transcript shortens the pause only for a complete local command a
   assert.equal(sent.blob.type, 'audio/wav');
 });
 
+test('rough transcript stays current across repeated partials, finalized segments and cancellation', () => {
+  const { context } = fixture({ state: 'idle' }); context.handlePushToTalk();
+  context.handleVoskResult('open [unk] notepad', false);
+  assert.equal(context.getLiveTranscript(), 'open notepad');
+  for (let index = 0; index < 100; index++) {
+    context.handleVoskResult('open [unk] notepad', false);
+    assert.equal(context.getLiveTranscript(), 'open notepad');
+    assert.equal(context.endOfSpeechDelay(), 900);
+  }
+  context.handleVoskResult('open notepad', true);
+  context.handleVoskResult('and set volume', false);
+  assert.equal(context.getLiveTranscript(), 'open notepad and set volume');
+  assert.equal(context.endOfSpeechDelay(), 1500);
+  context.handleVoskResult('and set volume to 75 percent', true);
+  assert.equal(context.getLiveTranscript(), 'open notepad and set volume to 75 percent');
+  assert.equal(context.endOfSpeechDelay(), 900);
+  context.cancelRecording(); assert.equal(context.getLiveTranscript(), '');
+});
+
 test('push-to-talk falls back to typing when voice is unavailable and waits for desktop work', () => {
   const muted = fixture({ state: 'idle', muted: true });
   muted.context.handlePushToTalk();

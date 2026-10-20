@@ -299,6 +299,7 @@ function setState(newState, preserveHistory = false) {
   document.body.classList.remove('state-idle', 'state-listening', 'state-thinking', 'state-speaking');
   document.body.classList.add(`state-${newState}`);
   refreshOrbAnimation();
+  if (typeof refreshMicrophoneMonitor === 'function') refreshMicrophoneMonitor();
 
   switch (newState) {
     case State.IDLE:

@@ -346,10 +346,16 @@ let cancelAssistantAcknowledgement = null;
 let cancelAssistantPlayback = null;
 let cancelAssistantSynthesis = null;
 const magpieAudioCache = new Map();
+// Final-response prefetches belong to one waiting turn. Only explicitly
+// approved generic receipts can reuse cache; personal speech stays transient.
+const preparedAssistantResponses = new WeakMap();
+const pendingAssistantResponses = new Set();
+const cancelledAssistantResponses = new WeakSet();
 
-function stopAssistantSpeech() {
+function stopAssistantSpeech({ preservePrepared } = {}) {
   speechRequestSequence++;
   magpieSpeechSequence++;
+  for (const record of pendingAssistantResponses) if (record.handle !== preservePrepared) record.cancel();
   if (cancelAssistantAcknowledgement) cancelAssistantAcknowledgement();
   if (cancelAssistantSynthesis) cancelAssistantSynthesis();
   if (cancelAssistantPlayback) cancelAssistantPlayback();
@@ -426,19 +432,32 @@ function speakAssistantAcknowledgement(text, signal, { onStart } = {}) {
   });
 }
 
-function getMagpieAudio(text, voiceConfig) {
+function speechCancelledError() { return Object.assign(new Error('Speech cancelled'), { name: 'AbortError' }); }
+
+function getMagpieAudio(text, voiceConfig, { cache = true, signal } = {}) {
+  if (signal?.aborted) return Promise.reject(speechCancelledError());
   const cacheKey = JSON.stringify([voiceConfig.voiceName, voiceConfig.languageCode, text]);
-  if (magpieAudioCache.has(cacheKey)) return magpieAudioCache.get(cacheKey);
-  let timeout;
+  const cacheable = cache && !signal && text.length <= 180;
+  if (cacheable && magpieAudioCache.has(cacheKey)) return magpieAudioCache.get(cacheKey);
+  let timeout, abort;
+  const cancelled = signal && new Promise((_, reject) => {
+    abort = () => reject(speechCancelledError());
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  let request;
+  try { request = window.electronAPI.nvidiaTtsSynthesize({ apiKey: nvidiaApiKey, text, voiceName: voiceConfig.voiceName || defaultNvidiaVoiceName, languageCode: voiceConfig.languageCode || 'en-US' }); }
+  catch (error) { signal?.removeEventListener('abort', abort); return Promise.reject(error); }
   const audio = Promise.race([
-    window.electronAPI.nvidiaTtsSynthesize({ apiKey: nvidiaApiKey, text, voiceName: voiceConfig.voiceName || defaultNvidiaVoiceName, languageCode: voiceConfig.languageCode || 'en-US' }),
-    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Magpie TTS timed out')), text.length <= 180 ? 8000 : 20000); })
+    request,
+    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Magpie TTS timed out')), text.length <= 180 ? 8000 : 20000); }),
+    ...(cancelled ? [cancelled] : [])
   ]).then(result => {
+    if (signal?.aborted) throw speechCancelledError();
     const audioBytes = decodeBase64ToUint8Array(result.audioBase64 || '');
     if (!audioBytes.length) throw new Error('Magpie returned empty audio');
     return pcmToWav(audioBytes, 22050, 1, 16);
-  }).finally(() => clearTimeout(timeout));
-  if (text.length <= 180) {
+  }).finally(() => { clearTimeout(timeout); signal?.removeEventListener('abort', abort); });
+  if (cacheable) {
     if (magpieAudioCache.size >= 24) magpieAudioCache.delete(magpieAudioCache.keys().next().value);
     magpieAudioCache.set(cacheKey, audio);
     audio.catch(() => { if (magpieAudioCache.get(cacheKey) === audio) magpieAudioCache.delete(cacheKey); });
@@ -446,12 +465,67 @@ function getMagpieAudio(text, voiceConfig) {
   return audio;
 }
 
+// Start only the verified reply's first chunk while its local acknowledgment
+// finishes. The opaque handle is consumed once by the normal playback path.
+function isReusableAssistantSpeechReceipt(text) {
+  // Complete, fixed-format receipts only: no task labels, song titles, memory
+  // details, arbitrary app names or generated prose enter this reusable cache.
+  const value = String(text || '').trim();
+  return value.length > 0 && value.length <= 180 && /^(?:(?:System volume is \d{1,3}(?:\.\d{1,2})?%|System audio is (?:muted|unmuted)|Playback (?:paused|resumed)|Your liked songs are playing now|(?:Spotify|Discord|Chrome|Google Chrome|Edge|Microsoft Edge|Firefox|Notepad|Calculator|Word|Excel|PowerPoint|Outlook|Teams|Slack|Visual Studio Code|File Explorer) is open|It has multiple windows open|Windows kept the current app in front|Muted|Okay)\.(?:\s+|$))+$/i.test(value);
+}
+
+function prepareAssistantResponseSpeech(text, { signal, memorySensitive = false } = {}) {
+  if (signal?.aborted || isTtsMuted || ttsEngine !== 'magpie' || !nvidiaApiKey || Date.now() < magpieUnavailableUntil) return null;
+  const chunks = splitIntoSpeechChunks(text);
+  if (!chunks.length) return null;
+  const reusable = memorySensitive !== true && isReusableAssistantSpeechReceipt(text);
+  // Short non-generic first chunks already benefit from normal playback's
+  // cache. Leave them on that path, preserving repeated-reply call counts.
+  if (!reusable && chunks[0].length <= 180) return null;
+  const voiceConfig = getSelectedNvidiaVoiceConfig(), controller = new AbortController();
+  const handle = Object.freeze({});
+  const record = { handle, text: String(text), chunk: chunks[0], voiceName: voiceConfig.voiceName, languageCode: voiceConfig.languageCode,
+    key: nvidiaApiKey, audio: null, cancelled: false, released: false, signal };
+  record.release = () => {
+    if (record.released) return;
+    record.released = true;
+    signal?.removeEventListener('abort', record.cancel);
+    pendingAssistantResponses.delete(record);
+    preparedAssistantResponses.delete(handle);
+    record.text = ''; record.chunk = ''; record.key = ''; record.audio = null;
+  };
+  record.discard = () => { controller.abort(); record.release(); };
+  record.cancel = () => { record.cancelled = true; cancelledAssistantResponses.add(handle); record.discard(); };
+  signal?.addEventListener('abort', record.cancel, { once: true });
+  preparedAssistantResponses.set(handle, record); pendingAssistantResponses.add(record);
+  record.audio = getMagpieAudio(chunks[0], voiceConfig, reusable ? { cache: true } : { cache: false, signal: controller.signal });
+  // Synthesis may fail before the acknowledgment ends. Keep that same failure
+  // for playback's existing fallback instead of issuing another remote request.
+  record.audio.catch(() => {});
+  return handle;
+}
+
+function discardPreparedAssistantSpeech(handle) {
+  preparedAssistantResponses.get(handle)?.cancel();
+}
+
+function takePreparedAssistantSpeech(handle, text, chunk, voiceConfig) {
+  const record = preparedAssistantResponses.get(handle);
+  if (!record) { if (handle) throw speechCancelledError(); return null; }
+  if (record.cancelled || record.signal?.aborted || record.text !== String(text) || record.chunk !== chunk ||
+      record.key !== nvidiaApiKey || record.voiceName !== voiceConfig.voiceName || record.languageCode !== voiceConfig.languageCode) {
+    record.discard(); return null;
+  }
+  preparedAssistantResponses.delete(handle);
+  return record;
+}
+
 function prepareAssistantSpeech(text) {
   if (isTtsMuted || ttsEngine !== 'magpie' || !nvidiaApiKey || Date.now() < magpieUnavailableUntil) return;
   getMagpieAudio(text, getSelectedNvidiaVoiceConfig()).catch(() => {});
 }
 
-async function speakWithNvidiaTts(text, callback, { onStart } = {}) {
+async function speakWithNvidiaTts(text, callback, { onStart, preparedSpeech } = {}) {
   if (!nvidiaApiKey) {
     throw new Error('NVIDIA API key is missing');
   }
@@ -462,6 +536,7 @@ async function speakWithNvidiaTts(text, callback, { onStart } = {}) {
   }
 
   const voiceConfig = getSelectedNvidiaVoiceConfig();
+  const prepared = takePreparedAssistantSpeech(preparedSpeech, text, chunks[0], voiceConfig);
   if (cancelAssistantSynthesis) cancelAssistantSynthesis();
   const token = ++magpieSpeechSequence;
   const requestSequence = speechRequestSequence;
@@ -469,7 +544,7 @@ async function speakWithNvidiaTts(text, callback, { onStart } = {}) {
   let cancelGeneration;
   const cancelled = new Promise(resolve => { cancelGeneration = () => { interrupted = true; resolve(null); }; });
   cancelAssistantSynthesis = cancelGeneration;
-  const isCurrent = () => !interrupted && token === magpieSpeechSequence && requestSequence === speechRequestSequence;
+  const isCurrent = () => !interrupted && !prepared?.cancelled && token === magpieSpeechSequence && requestSequence === speechRequestSequence;
 
   const synthesize = chunk => {
     const audio = getMagpieAudio(chunk, voiceConfig);
@@ -513,7 +588,7 @@ async function speakWithNvidiaTts(text, callback, { onStart } = {}) {
 
   try {
   // Always keep the next chunk synthesizing while the current one plays.
-  let pending = synthesize(chunks[0]);
+  let pending = prepared?.audio || synthesize(chunks[0]);
 
   for (let index = 0; index < chunks.length; index += 1) {
     let blob;
@@ -525,6 +600,7 @@ async function speakWithNvidiaTts(text, callback, { onStart } = {}) {
       return resumeWithWindows(index, error);
     }
 
+    if (index === 0) prepared?.release();
     if (!isCurrent()) return true; // a newer reply took over
 
     pending = index + 1 < chunks.length ? synthesize(chunks[index + 1]) : null;
@@ -549,6 +625,7 @@ async function speakWithNvidiaTts(text, callback, { onStart } = {}) {
 
   return true;
   } finally {
+    prepared?.release();
     if (cancelAssistantSynthesis === cancelGeneration) cancelAssistantSynthesis = null;
   }
 }
@@ -675,11 +752,11 @@ function speakWithWindowsTts(text, callback, { onStart } = {}) {
 const MAGPIE_COOLDOWN_MS = 5 * 60 * 1000;
 let magpieUnavailableUntil = 0;
 
-async function speakWithSelectedEngine(text, callback, { onStart } = {}) {
+async function speakWithSelectedEngine(text, callback, { onStart, preparedSpeech } = {}) {
   const sequence = speechRequestSequence;
   let completed = false;
   const finish = (ok = true) => { completed = ok; if (sequence === speechRequestSequence && callback) callback(ok); };
-  const options = { onStart: () => { if (sequence === speechRequestSequence) onStart?.(); } };
+  const options = { preparedSpeech, onStart: () => { if (sequence === speechRequestSequence) onStart?.(); } };
   if (ttsEngine === 'magpie') {
     if (!nvidiaApiKey) {
       throw new Error('Add an NVIDIA API key in Settings to use Magpie TTS, or switch to Windows voice.');
@@ -695,7 +772,7 @@ async function speakWithSelectedEngine(text, callback, { onStart } = {}) {
       if (sequence === speechRequestSequence && completedWithMagpie) magpieUnavailableUntil = 0;
       return completed && sequence === speechRequestSequence;
     } catch (err) {
-      if (sequence !== speechRequestSequence) return;
+      if (sequence !== speechRequestSequence || err.name === 'AbortError') return false;
       magpieUnavailableUntil = Date.now() + MAGPIE_COOLDOWN_MS;
       console.warn(
         `[Olanga] Magpie TTS failed, using the Windows voice for ${MAGPIE_COOLDOWN_MS / 60000} min:`,
@@ -713,10 +790,12 @@ async function speakWithSelectedEngine(text, callback, { onStart } = {}) {
 }
 
 // Speaks a response then fires a callback once done
-async function speakResponseAndThen(text, callback, { onStart } = {}) {
-  stopAssistantSpeech();
+async function speakResponseAndThen(text, callback, { onStart, preparedSpeech } = {}) {
+  if (preparedSpeech && !preparedAssistantResponses.has(preparedSpeech)) return { status: 'cancelled' };
+  stopAssistantSpeech({ preservePrepared: preparedSpeech });
   const sequence = speechRequestSequence;
   if (isTtsMuted) {
+    discardPreparedAssistantSpeech(preparedSpeech);
     clearSpeakingWatchdog();
     if (callback) callback();
     else setState(State.IDLE);
@@ -731,8 +810,8 @@ async function speakResponseAndThen(text, callback, { onStart } = {}) {
       clearSpeakingWatchdog();
       if (callback) callback();
       else setState(State.IDLE);
-    }, { onStart });
-    return { status: sequence !== speechRequestSequence ? 'cancelled' : completed ? 'completed' : 'failed' };
+    }, { onStart, preparedSpeech });
+    return { status: sequence !== speechRequestSequence || preparedSpeech && cancelledAssistantResponses.has(preparedSpeech) ? 'cancelled' : completed ? 'completed' : 'failed' };
   } catch (err) {
     if (sequence !== speechRequestSequence) return;
     console.error('[Olanga] TTS failed:', err.message);
@@ -741,13 +820,15 @@ async function speakResponseAndThen(text, callback, { onStart } = {}) {
     if (callback) callback();
     else setState(State.IDLE);
     return { status: 'failed' };
-  }
+  } finally { discardPreparedAssistantSpeech(preparedSpeech); }
 }
 
-async function speakResponse(text, { onStart } = {}) {
-  stopAssistantSpeech();
+async function speakResponse(text, { onStart, preparedSpeech } = {}) {
+  if (preparedSpeech && !preparedAssistantResponses.has(preparedSpeech)) return { status: 'cancelled' };
+  stopAssistantSpeech({ preservePrepared: preparedSpeech });
   const sequence = speechRequestSequence;
   if (isTtsMuted) {
+    discardPreparedAssistantSpeech(preparedSpeech);
     clearSpeakingWatchdog();
     setState(State.IDLE);
     return { status: 'muted' };
@@ -760,8 +841,8 @@ async function speakResponse(text, { onStart } = {}) {
       if (sequence !== speechRequestSequence) return;
       clearSpeakingWatchdog();
       setState(State.IDLE);
-    }, { onStart });
-    return { status: sequence !== speechRequestSequence ? 'cancelled' : completed ? 'completed' : 'failed' };
+    }, { onStart, preparedSpeech });
+    return { status: sequence !== speechRequestSequence || preparedSpeech && cancelledAssistantResponses.has(preparedSpeech) ? 'cancelled' : completed ? 'completed' : 'failed' };
   } catch (e) {
     if (sequence !== speechRequestSequence) return;
     console.error('[Olanga] TTS failed:', e.message);
@@ -769,7 +850,7 @@ async function speakResponse(text, { onStart } = {}) {
     showError(e.message || 'TTS failed');
     setState(State.IDLE);
     return { status: 'failed' };
-  }
+  } finally { discardPreparedAssistantSpeech(preparedSpeech); }
 }
 
 // ============================================
@@ -870,7 +951,14 @@ function createSpeechStream({ onStart } = {}) {
       if (!ended) {
         ended = true;
         if (!current() || failed) settle(false);
-        else enqueue([...splitter.push(typeof finalText === 'string' && finalText.startsWith(received) ? finalText.slice(received.length) : ''), ...splitter.flush()]);
+        else {
+          // The parser trims the answer before appending a local follow-up.
+          // Ignore only trailing whitespace when matching an already-spoken
+          // prefix; changed words must never replay or become a new suffix.
+          const prefix = typeof finalText === 'string' && finalText.startsWith(received) ? received : received.trimEnd();
+          const tail = typeof finalText === 'string' && finalText.startsWith(prefix) ? finalText.slice(prefix.length) : '';
+          enqueue([...splitter.push(tail), ...splitter.flush()]);
+        }
       }
       return done;
     },

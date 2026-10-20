@@ -30,20 +30,42 @@
 
   function createPreRoll(sampleRate, milliseconds = 750) {
     const capacity = Math.ceil(sampleRate * Math.min(1000, Math.max(0, milliseconds)) / 1000);
-    let chunks = [], end = 0;
-    function clear() { chunks = []; }
+    // Retain one fixed sample buffer. The wake listener runs all day; allocating
+    // and trimming a copied chunk on every packet creates avoidable GC pressure.
+    const buffer = new Float32Array(capacity);
+    const packetEnds = [];
+    let write = 0, count = 0, end = 0;
+    function clear() { if (count) buffer.fill(0); write = 0; count = 0; packetEnds.length = 0; }
     function push(samples, endFrame) {
+      // Never join audio across a capture discontinuity. Normal packets are
+      // contiguous, but recovery/flush boundaries may discard earlier samples.
+      if (count && endFrame - samples.length !== end) clear();
       end = endFrame;
-      chunks.push({ start: endFrame - samples.length, samples: new Float32Array(samples) });
-      const first = endFrame - capacity;
-      while (chunks.length && chunks[0].start + chunks[0].samples.length <= first) chunks.shift();
-      if (chunks.length && chunks[0].start < first) {
-        chunks[0] = { start: first, samples: chunks[0].samples.slice(first - chunks[0].start) };
-      }
+      if (!capacity || !samples.length) return;
+      const length = Math.min(samples.length, capacity), start = samples.length - length;
+      const first = Math.min(length, capacity - write);
+      buffer.set(samples.subarray(start, start + first), write);
+      if (first < length) buffer.set(samples.subarray(start + first), 0);
+      write = (write + length) % capacity;
+      count = Math.min(capacity, count + length);
+      packetEnds.push(endFrame);
+      while (packetEnds.length && packetEnds[0] <= endFrame - capacity) packetEnds.shift();
     }
     function after(frame) {
-      if (!Number.isFinite(frame) || frame > end) return [];
-      return chunks.map(chunk => new Float32Array(chunk.samples.subarray(Math.max(0, frame - chunk.start)))).filter(chunk => chunk.length);
+      if (!count || !Number.isFinite(frame) || frame >= end) return [];
+      const skip = Math.max(0, Math.trunc(frame - (end - count))), result = [];
+      let from = end - count + skip, start = (write - count + skip + capacity) % capacity;
+      // Preserve packet boundaries: recording startup feeds these chunks to
+      // the RMS endpoint, where merging speech and silence changes decisions.
+      for (const packetEnd of packetEnds) {
+        const length = packetEnd - from;
+        if (length <= 0) continue;
+        const first = Math.min(length, capacity - start), samples = new Float32Array(length);
+        samples.set(buffer.subarray(start, start + first));
+        if (first < length) samples.set(buffer.subarray(0, length - first), first);
+        result.push(samples); from = packetEnd; start = (start + length) % capacity;
+      }
+      return result;
     }
     return { push, after, clear, get endFrame() { return end; } };
   }
