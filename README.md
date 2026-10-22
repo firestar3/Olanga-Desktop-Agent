@@ -186,6 +186,7 @@ In a small offline comparison, the command vocabulary produced transcripts match
 
 ## Made for everyday use
 
+- **Microphone control.** Brief mute toggles keep speech ready. After five seconds muted, Olanga releases microphone capture and the unused speech model; unmuting restores them automatically.
 - **Quick access.** The corner orb opens five customizable shortcuts, responds to number keys 1–5, and can be hidden for five seconds or an hour. Enable **Settings → User preferences → Corner status light → All Lights** to keep it available while idle.
 - **Visible status.** Purple means idle, green means listening, orange means thinking or working, and blue means speaking.
 - **Natural follow-ups.** Olanga keeps a bounded recent conversation and listens for 12 seconds after asking a question. Older context is trimmed automatically; inactive context is discarded when next checked after 30 minutes, or when you quit. Saved memories remain separate.

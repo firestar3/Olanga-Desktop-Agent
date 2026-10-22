@@ -58,6 +58,10 @@ Opt-in diagnostics keep at most 200 phase/duration/outcome measurements with loc
 
 Keyless setup opens the UI without starting microphone capture. Adding the first Gemini key waits for encrypted storage before activating cloud input; recognition-mode initialization rechecks the latest selection after model loading. Idle hints distinguish an absent or muted microphone from active wake-word listening.
 
+Voice capture suspends immediately on mute. After five seconds of sustained mute, a separate capture timer stops the native tracks and closes Web Audio; offline transcription leases can retain the shared Vosk model without retaining the microphone. Short mute toggles cancel release and reuse the existing graph. Cold unmute initializes capture and the model concurrently, rechecks mute/disconnection before publication, and attaches one recognizer after both are ready. A failed capture request is not retried implicitly in the same attempt. A track that ends during asynchronous setup is rejected before the candidate graph can replace active capture.
+
+The bundled `vosk-browser` 0.0.8 recognizer has no `reset()` method. Recording and wake-enrollment boundaries remove and replace the recognizer while preserving the capture graph. Callback identity checks reject results from the removed recognizer, so queued wake results cannot contaminate a new rough transcript.
+
 The built-in Terminal was removed in 1.5.2, including its renderer, native shell sessions and command-execution IPC. Old Terminal preference entries are filtered out; unrelated optional panels and desktop controls remain available.
 
 ## Conversational latency

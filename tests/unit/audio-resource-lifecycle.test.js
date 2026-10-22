@@ -12,8 +12,8 @@ class Events {
   emit(name, detail) { for (const callback of [...(this.listeners.get(name) || [])]) callback({ type: name, detail }); }
 }
 
-function fixture({ muted = false, legacy = false, workletSetup } = {}) {
-  const calls = { models: [], recognizers: [], contexts: [], requests: 0, terminated: 0, removed: 0, errors: [], analyses: [], waveWrites: 0, accepted: 0 };
+function fixture({ muted = false, legacy = false, workletSetup, captureFailure = false } = {}) {
+  const calls = { models: [], recognizers: [], contexts: [], requests: 0, terminated: 0, removed: 0, errors: [], analyses: [], waveWrites: 0, accepted: 0, stopped: 0 };
   const timers = new Map(), frames = new Map(); let sequence = 0, visible = true, visibilityListener, screenHidden = false, screenListener;
   const node = () => ({ connect() {}, disconnect() {} });
   class Context {
@@ -40,13 +40,17 @@ function fixture({ muted = false, legacy = false, workletSetup } = {}) {
     }
     load() { this.ready = true; this.emit('load', { result: true }); }
   }
-  const track = { enabled: true, stop() {}, addEventListener(name, callback) { this[name] = callback; }, removeEventListener(name) { delete this[name]; } };
-  const stream = { active: true, getTracks: () => [track] };
+  let track;
+  const createStream = () => {
+    const current = { enabled: true, readyState: 'live', stop() { this.readyState = 'ended'; calls.stopped++; }, addEventListener(name, callback) { this[name] = callback; }, removeEventListener(name) { delete this[name]; } };
+    track = current;
+    return { get active() { return current.readyState === 'live'; }, getTracks: () => [current] };
+  };
   const context = vm.createContext({
     window: { Vosk: { Model }, OlangaVisibility: { isVisible: () => visible, subscribe: listener => { visibilityListener = listener; listener(); return () => {}; } } },
     console: { log() {}, error() {} }, Float32Array, Uint8Array, AudioContext: Context,
     AudioWorkletNode: class { constructor() { Object.assign(this, node()); this.port = { postMessage() {} }; } },
-    navigator: { mediaDevices: { getUserMedia: async () => { calls.requests++; return stream; }, addEventListener() {} } },
+    navigator: { mediaDevices: { getUserMedia: async () => { calls.requests++; if (captureFailure) throw new Error('Fixture capture unavailable'); return createStream(); }, addEventListener() {} } },
     mainScreen: { classList: { contains: () => screenHidden } },
     MutationObserver: class { constructor(callback) { screenListener = callback; } observe() {} },
     setTimeout: (callback, ms) => { timers.set(++sequence, { callback, ms }); return sequence; }, clearTimeout: id => timers.delete(id),
@@ -60,9 +64,9 @@ function fixture({ muted = false, legacy = false, workletSetup } = {}) {
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../js/voice.js'), 'utf8'), context);
   const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
-  return { context, calls, timers, frames, track, settle,
+  return { context, calls, timers, frames, get track() { return track; }, settle,
     async start() { const pending = context.initVosk({ microphone: true }); calls.models.at(-1)?.load(); await pending; await context.initMicrophone(); },
-    mute(value) { context.isMicMuted = value; track.enabled = !value; context.refreshMicrophoneActivity(); },
+    mute(value) { context.isMicMuted = value; if (track) track.enabled = !value; context.refreshMicrophoneActivity(); },
     expireIdle() { for (const [id, timer] of [...timers]) if (timer.ms === 5000) { timers.delete(id); timer.callback(); } },
     visible(value) { visible = value; visibilityListener?.(); },
     screen(value) { screenHidden = !value; screenListener?.(); },
@@ -80,14 +84,22 @@ test('muted startup loads no model or microphone and unmute initializes one reus
   assert.equal(f.frames.size, 0); assert.deepEqual(f.calls.errors, []);
 });
 
-test('mute suspends capture immediately, unloads the unused model, and unmute reloads without another permission request', async () => {
-  const f = fixture(); await f.start(); const graph = f.context.audioContext;
+test('sustained mute releases native capture and unmute reloads model and capture concurrently', async () => {
+  const f = fixture(); await f.start(); const graph = f.context.audioContext, track = f.track;
   f.mute(true);
   assert.equal(graph.state, 'suspended'); assert.equal(f.context.voskRecognizer, null); assert.equal(f.frames.size, 0);
-  f.expireIdle(); assert.equal(f.calls.terminated, 1); assert.equal(f.context.voskModel, null); assert.equal(f.context.isVoskReady, false);
-  f.mute(false); assert.equal(f.calls.models.length, 2); f.calls.models[1].load(); await f.settle();
-  assert.equal(f.context.audioContext, graph); assert.equal(graph.state, 'running'); assert.equal(f.calls.requests, 1);
-  assert.equal(f.context.isVoskReady, true); assert.equal(f.frames.size, 0); assert.deepEqual(f.calls.errors, []);
+  f.expireIdle();
+  assert.equal(f.calls.terminated, 1); assert.equal(f.context.voskModel, null); assert.equal(f.context.isVoskReady, false);
+  assert.equal(track.readyState, 'ended'); assert.equal(graph.state, 'closed');
+  assert.equal(f.context.micStream, null); assert.equal(f.context.audioContext, null);
+  f.expireIdle(); assert.equal(f.calls.stopped, 1, 'An old timer cannot close capture twice');
+  f.mute(false);
+  assert.equal(f.calls.models.length, 2); assert.equal(f.calls.requests, 2, 'Capture opens while the model is loading');
+  f.calls.models[1].load(); await f.settle();
+  assert.notEqual(f.context.audioContext, graph); assert.equal(f.context.audioContext.state, 'running');
+  assert.equal(f.track.readyState, 'live'); assert.equal(f.track.enabled, true);
+  assert.equal(f.context.isVoskReady, true); assert.notEqual(f.context.voskRecognizer, null);
+  assert.equal(f.frames.size, 0); assert.deepEqual(f.calls.errors, []);
 });
 
 test('push-to-talk preserves the first words while the wake model reloads after a sustained mute', async () => {
@@ -113,11 +125,14 @@ test('short mute toggles retain the warm model and offline users prevent worker 
   assert.equal(f.calls.terminated, 1); assert.equal(vm.runInContext('voskModelUsers', f.context), 0);
 });
 
-test('muting during model reload never opens or resumes the microphone and the unused result can be released', async () => {
+test('muting during parallel reload disables late capture and releases its unused resources', async () => {
   const f = fixture({ muted: true }); await f.start(); f.mute(false); f.mute(true);
   f.calls.models[0].load(); await f.settle();
-  assert.equal(f.calls.requests, 0); assert.equal(f.context.isMicMuted, true);
-  f.expireIdle(); assert.equal(f.calls.terminated, 1); assert.deepEqual(f.calls.errors, []);
+  assert.equal(f.calls.requests, 1); assert.equal(f.context.isMicMuted, true);
+  assert.equal(f.track.enabled, false); assert.equal(f.context.audioContext.state, 'suspended');
+  assert.equal(f.context.voskRecognizer, null);
+  f.expireIdle(); assert.equal(f.calls.terminated, 1); assert.equal(f.calls.stopped, 1);
+  assert.equal(f.context.micStream, null); assert.deepEqual(f.calls.errors, []);
 });
 
 test('mute wins a pending AudioContext resume and stale recognizer callbacks remain inert', async () => {
@@ -275,4 +290,56 @@ test('an offline cancellation during lazy library loading also releases its subs
   f.models[0].worker.terminate = () => { terminated++; }; f.models[0].load(); await pending;
   [...f.timers.values()].find(timer => timer.ms === 5000).callback();
   assert.equal(terminated, 1); assert.equal(f.context.voskModel, null);
+});
+
+test('recording starts a fresh native recognizer and ignores the previous wake transcript', async () => {
+  const f = fixture(); await f.start();
+  const old = f.calls.recognizers[0], heard = [];
+  f.context.handleVoskResult = text => heard.push(text);
+  f.context.currentState = 'listening';
+  assert.equal(f.context.startRecording(), true);
+  old.handlers.partialresult({ result: { partial: 'old wake words' } });
+  old.handlers.result({ result: { text: 'old wake words' } });
+  assert.deepEqual(heard, [], 'Pending wake callbacks cannot contaminate the new request');
+  assert.equal(f.calls.removed, 1);
+  assert.equal(f.calls.recognizers.length, 2);
+  f.calls.recognizers[1].handlers.partialresult({ result: { partial: 'fresh command' } });
+  assert.deepEqual(heard, ['fresh command']);
+  assert.equal(f.context.audioContext.state, 'running');
+  assert.equal(f.calls.requests, 1, 'Resetting recognition must not reopen capture');
+});
+
+test('offline model users do not keep a muted native capture device alive', async () => {
+  const f = fixture(); await f.start(); const release = f.context.retainVoskModel();
+  f.mute(true); f.expireIdle();
+  assert.equal(f.calls.terminated, 0, 'An offline transcription keeps its shared model');
+  assert.equal(f.calls.stopped, 1, 'The unused microphone is independent of the offline lease');
+  assert.equal(f.context.micStream, null);
+  release(); f.expireIdle(); assert.equal(f.calls.terminated, 1);
+});
+
+test('short mute keeps native capture warm and cancels its release when unmuted', async () => {
+  const f = fixture(); await f.start(); const graph = f.context.audioContext, track = f.track;
+  f.mute(true); f.mute(false); await f.settle(); f.expireIdle();
+  assert.equal(f.calls.stopped, 0); assert.equal(f.context.audioContext, graph); assert.equal(f.track, track);
+  assert.equal(graph.state, 'running'); assert.equal(f.calls.requests, 1); assert.equal(f.calls.models.length, 1);
+});
+
+test('a failed cold capture opens once and leaves an actionable error without a second permission attempt', async () => {
+  const f = fixture({ muted: true, captureFailure: true }); await f.start(); f.mute(false);
+  f.calls.models[0].load(); await f.settle();
+  assert.equal(f.calls.requests, 1); assert.equal(f.context.micStream, null); assert.equal(f.context.audioContext, null);
+  assert.equal(f.calls.errors.length, 1); assert.match(f.calls.errors[0], /Microphone access denied or unavailable/);
+});
+
+
+test('a device ending before worklet setup finishes cannot publish a dead microphone graph', async () => {
+  let complete;
+  const f = fixture({ workletSetup: new Promise(resolve => { complete = resolve; }) });
+  const pending = f.start(); await f.settle();
+  f.track.stop(); f.track.ended(); complete(); await pending;
+  assert.equal(f.context.micStream, null); assert.equal(f.context.audioContext, null); assert.equal(f.context.voskRecognizer, null);
+  assert.equal(f.calls.contexts[0].state, 'closed'); assert.equal(f.frames.size, 0);
+  assert.equal(f.calls.removed, f.calls.recognizers.length, 'The unpublished recognizer is released too');
+  assert.equal(f.calls.errors.length, 1); assert.match(f.calls.errors[0], /Microphone access denied or unavailable/);
 });

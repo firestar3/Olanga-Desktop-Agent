@@ -56,6 +56,10 @@ function collectRendererState(){
  const main=document.getElementById('mainScreen'),canvas=document.getElementById('orbCanvas'),orb=document.getElementById('orb');
  return {
   state:currentState,micMuted:isMicMuted,mic:!!micStream,voskReady:isVoskReady,
+  audioContextState:audioContext?.state||null,
+  captureTracks:micStream?.getAudioTracks?.().map(track=>({enabled:track.enabled,readyState:track.readyState}))||[],
+  nativeRecognizerCount:voskModel?.recognizers?.size??0,
+  navigation:window.olangaBenchmarkNavigation||[],
   documentHidden:document.hidden,nativeVisibility:window.OlangaVisibility?.isVisible?.() ?? null,heapBytes:performance.memory?.usedJSHeapSize,
   rendering:{
    visibleScreens:[...document.querySelectorAll('.screen')].filter(rendered).map(node=>node.id),
@@ -116,12 +120,14 @@ const median=a=>[...a].sort((x,y)=>x-y)[Math.floor(a.length/2)];
 async function sample(name,settle=8000){
  console.log('Settling '+name);await pause(settle);
  const state=await evaluate('('+collectRendererState.toString()+')()');
+ report.currentPhase={name,state};
  assertPhaseState(name,state);
  const requestedSamples=phaseSampleCount(name);
  const performanceBefore=await performanceSnapshot();
  const text=await run(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(root,'tests/resource-sample.ps1'),'-Executable',exe,'-Samples',String(requestedSamples)]);
  const performanceAfter=await performanceSnapshot();
  const stateAfter=await evaluate('('+collectRendererState.toString()+')()');
+ report.currentPhase.stateAfter=stateAfter;
  assertPhaseState(name,stateAfter);
  // CDP deltas include sampler startup and the existing end-of-phase CIM query;
  // CPU and resident-memory metrics still come from the unchanged OS sampler.
@@ -151,10 +157,21 @@ async function sample(name,settle=8000){
  await new Promise((r,j)=>{socket.addEventListener('open',r,{once:true});socket.addEventListener('error',j,{once:true})});
  socket.addEventListener('message',e=>{const m=JSON.parse(String(e.data)),p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.error?p.reject(Error(m.error.message)):p.resolve(m.result)});
  await send('Network.enable');await send('Network.setBlockedURLs',{urls:['http://*','https://*']});
- for(let i=0;i<100;i++){if(await evaluate("document.readyState==='complete' && typeof initVosk==='function' && !!window.OlangaWorkspace && !!window.electronAPI"))break;await pause(150)}
+ let initialized=false;
+ for(let i=0;i<100;i++){if(await evaluate("document.readyState==='complete' && window.OlangaAppInitialized===true && typeof initVosk==='function' && !!window.OlangaWorkspace && !!window.electronAPI")){initialized=true;break;}await pause(150)}
+ assert(initialized,'Production initialization did not complete within the existing startup wait');
  report.startupReadyMs=Date.now()-started;
  report.version=await evaluate('window.electronAPI.getAppInfo()');
  await send('Performance.enable');
+ await evaluate(`(() => {
+   window.olangaBenchmarkNavigation=[];
+   document.addEventListener('click',event=>{
+     const button=event.target?.closest?.('.floating-icon[data-screen]');
+     if(!button)return;
+     window.olangaBenchmarkNavigation.push({screen:button.dataset.screen,trusted:event.isTrusted,at:performance.now(),stack:event.isTrusted?null:new Error().stack});
+     if(window.olangaBenchmarkNavigation.length>16)window.olangaBenchmarkNavigation.shift();
+   },true);
+ })()`);
  await evaluate("document.getElementById('startLocalBtn').click(); muteTts(); window.electronAPI.expandWindow(); void 0");
  await sample('visible-idle');
  await evaluate("document.querySelector('[data-screen=settingsScreen]').click(); void 0");

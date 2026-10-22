@@ -419,7 +419,7 @@ test('microphone disconnection discards recording data, releases the graph, and 
   track.listeners.get('ended')();
   assert.equal(context.isRecording, false); assert.equal(context.pcmChunks.length, 0);
   assert.equal(context.audioContext, null); assert.equal(context.micStream, null);
-  assert.equal(calls.closed, 1); assert.equal(calls.removed, 1); assert.equal(track.listeners.size, 0);
+  assert.equal(calls.closed, 1); assert.equal(calls.removed, calls.recognizers, 'Every wake/recording recognizer is released'); assert.equal(track.listeners.size, 0);
   context.stopRecording(); assert.equal(calls.recordings.length, 0); assert.equal(context.currentState, 'idle');
 });
 

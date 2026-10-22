@@ -1,3 +1,49 @@
+# Audio lifecycle fixes and validation — October 21, 2026
+
+Three confirmed audio defects were corrected after the follow-up run below. Recording and wake-enrollment boundaries now replace the bundled recognizer instead of calling its nonexistent `reset()` method; stale wake callbacks cannot enter the next rough transcript. A sustained mute now stops native microphone tracks and closes Web Audio after five seconds, while short mute toggles retain their warm graph. Capture reloads alongside the speech model. A microphone disconnected during asynchronous setup is rejected and its unpublished graph/recognizer released before it can become active.
+
+Each defect has a regression that failed before its fix. Offline model leases retain only the model they need and do not keep a muted microphone alive. New tests also cover muted permission completion, first-word capture during reload, short-toggle reuse, disconnect/recovery, and avoiding an implicit second permission request after failure.
+
+| Check | Result |
+| --- | --- |
+| Full unit suite | **1045 passed, 0 failed, 1 explicit Windows file-symlink permission skip** (1046 total) |
+| Targeted voice regressions | **70/70 passed** |
+| Real speech/capture lifecycle | **7/7 passed**, using production voice code, bundled Vosk and Chromium fake capture. Actual ended tracks are rejected; old recognizer events are ignored; three sustained-mute/cold-resume cycles restore one recognizer each |
+| Offline transcription | **6/6 passed** across 16 generated-audio runs, including command vocabulary, cancellation, native recognizer cleanup, closed decoders and no remote requests |
+| Source/assets | **86 JavaScript files/assets passed** |
+| Rebuilt Windows installer | **117 packaged source files match**; embedded app/installer/tray orb pixels verified; explicit **unsigned** policy verified |
+| Fresh standard resource comparison | **22/23 original limits passed**, with seven states, 20 records / 19 measured intervals per state, and three cold resumes per package |
+
+The real speech lifecycle fixture measured a short-toggle resume of **33 ms** and cold resumes of **703, 707, 1065 ms**. These are synthetic-device readiness observations on this machine, not acoustic or provider latency guarantees.
+
+## Resource evidence
+
+A pre-fix diagnostic measured the same isolated app while muted, first retaining its suspended graph and then explicitly closing that unused graph. Mean tray CPU was **5.58% → 0.44% of one logical core**; total working-set p95 was **698.27 → 610.94 MiB**, with ten measured intervals per phase. This established avoidable native capture work after mute; it does not establish a whole-app percentage reduction.
+
+For the fresh standard comparison, the baseline archive was rechecked against bf68716: 116 tracked packaged files matched, including 85 text files differing only by Git-normalized CRLF/LF line endings. Both packages used Electron 44.7.0 and the same sampler and numerical budgets. Startup now requires the app initialization flag within the existing 100 × 150 ms wait, rather than accepting script globals alone; both packages used that stronger readiness definition. Resource runs retain native capture state and bounded navigation events so interrupted measurements can be diagnosed.
+
+| State | CPU p95, baseline → candidate | Private resident MiB | Total working-set p95 MiB |
+| --- | --- | --- | --- |
+| visible-idle | 30.01 → 21.29 | 223.75 → 219.31 | 577.14 → 553.32 |
+| visible-settings | 0.00 → 1.46 | 230.30 → 223.83 | 560.31 → 557.14 |
+| tray-idle | 0.00 → 1.52 | 234.09 → 230.66 | 561.13 → 561.57 |
+| visible-voice-ready | 53.91 → 64.76 | 484.54 → 478.87 | 1137.02 → 1021.43 |
+| tray-voice-ready | 53.83 → 33.19 | 486.98 → 485.88 | 1024.07 → 1021.00 |
+| tray-muted | 10.47 → 1.49 | 284.24 → 284.46 | 690.82 → 819.94 |
+| visible-muted | 24.34 → 21.08 | 280.57 → 277.89 | 697.39 → 817.40 |
+
+Packaged startup readiness: **969 → 1931 ms**. Cold-resume p95/maximum: **1243 → 1851 ms** across three samples each. Both muted candidate phases confirmed microphone capture absent and AudioContext released at both phase boundaries.
+
+**Performance sign-off remains open.** Failed limits: cold-voice-resume-p95-ms (1851.00 against 1743.00). Capture became ready in 215–278 ms; model readiness was the last stage in all three candidate resumes (1504–1850 ms). Host snapshots recorded CPU load of 32% before baseline, 30% between packages and 51% after candidate, with about 2.48 → 1.93 → 1.49 GiB available memory. The cause of the slower model reload was not isolated. All CPU and resident-memory limits passed in this shorter standard window; the earlier 100-interval memory comparison was not repeated or reclassified.
+
+The first new baseline attempt changed from Settings to Home during sampling and correctly failed its phase-state assertion. The test operator confirmed no interaction with that window. The attempt was preserved and excluded from the comparison; the automatic screen change remains unexplained. The repeated run requires completed initialization and retains navigation diagnostics. Ambient workloads were left running, and OS paging/cache/clocks were not controlled. Earlier failed runs were not deleted or reclassified.
+
+No physical microphone, real Spotify playback, system volume changes, saved provider keys, live provider/GitHub requests or installation over the normal profile were used. This is local development validation; no public release was made. The README and architecture notes describe the new mute behavior.
+
+Evidence: ignored build/qa/memory-fixes-20261021/, build/qa/voice-lifecycle/report.json, build/qa/offline-speech-grammar-comparison.json and build/qa/resources/audio-fix-*.json. The local unsigned installer is build/qa/audio-fix-package/Olanga-Setup-1.6.0.exe (155301926 bytes), SHA-256 0dbd6ad1b9abb73eb567c8398ca7e96db09c81e87400f345916a4806c5efbf24. Generated installers, profiles, recordings, logs and media are not committed.
+
+---
+
 # Follow-up validation — October 21, 2026
 
 The resumed installer, renderer, native fixture and source checks passed. The final extended resource comparison remains **18/23**: five resident-memory limits failed in tray voice-ready, tray-muted and visible-muted states. **Performance sign-off remains open.** The earlier failed runs remain recorded below. This is local development validation with disposable profiles and synthetic audio; no public release or installation over the normal Olanga profile was performed.

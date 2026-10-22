@@ -157,6 +157,7 @@ let microphoneRecoveryNeeded = false;
 let microphoneDeviceListenerInstalled = false;
 let microphoneRequested = false;
 let microphoneResumePromise = null;
+let microphoneIdleTimer = null;
 let microphoneVisualSubscription = null;
 let microphoneScreenObserver = null;
 
@@ -196,6 +197,19 @@ async function resumeMicrophoneGraph(resources) {
   return true;
 }
 
+function scheduleIdleMicrophoneRelease() {
+  clearTimeout(microphoneIdleTimer); microphoneIdleTimer = null;
+  const resources = microphoneResources;
+  if (!isMicMuted || !resources) return;
+  // Suspension stops Web Audio, but Windows capture and its audio-processing
+  // service can keep running. Brief toggles reuse this graph; sustained mute
+  // also closes native capture, independently of offline model leases.
+  microphoneIdleTimer = setTimeout(() => {
+    microphoneIdleTimer = null;
+    if (isMicMuted && microphoneResources === resources) releaseMicrophoneResources(resources);
+  }, VOSK_IDLE_RELEASE_MS);
+}
+
 function refreshMicrophoneActivity() {
   if (isMicMuted) {
     cancelAudioPhraseTest('The microphone was muted.');
@@ -208,26 +222,29 @@ function refreshMicrophoneActivity() {
       if (resources?.context.state === 'running') resources.suspendPromise = Promise.resolve(resources.context.suspend?.()).catch(() => {});
     } catch (_) {}
     scheduleIdleVoskRelease();
+    scheduleIdleMicrophoneRelease();
     return;
   }
+  clearTimeout(microphoneIdleTimer); microphoneIdleTimer = null;
   clearTimeout(voskIdleTimer); voskIdleTimer = null;
   if (!microphoneRequested) { resetMicrophoneRecognition(); return; }
   if (microphoneResumePromise) return;
   microphoneResumePromise = (async () => {
     try {
-      // Microphone permission and the suspended graph are reused when possible.
-      // A muted startup has neither and creates them only after unmuting.
       const existing = microphoneResources;
-      // Push-to-talk can capture immediately on the existing graph while the
-      // full wake model reloads. Its WAV and endpointing do not depend on Vosk.
-      await Promise.all([initVosk({ microphone: true }), existing ? resumeMicrophoneGraph(existing) : Promise.resolve()]);
+      // Reuse short-mute capture. After a sustained mute, rebuild capture in
+      // parallel with the model so push-to-talk need not wait for model load.
+      const [, captured] = await Promise.all([
+        initVosk({ microphone: true }),
+        existing ? resumeMicrophoneGraph(existing) : initMicrophone()
+      ]);
       if (isMicMuted) { scheduleIdleVoskRelease(); return; }
-      // A disconnect during resume belongs to the device-recovery path. Do
-      // not silently reopen the microphone while finishing this old attempt.
-      if (existing && !microphoneResources) return;
-      if (!await initMicrophone() || isMicMuted) return;
+      // A disconnect or failed permission request belongs to recovery. Never
+      // reopen it a second time while completing this same unmute attempt.
+      if (!captured || !microphoneResources) return;
       const resources = microphoneResources;
       if (!resources) return;
+      attachMicrophoneRecognizer(resources);
       await resources.suspendPromise;
       if (microphoneResources !== resources || isMicMuted) return;
       if (resources.context.state === 'suspended' && !await resumeMicrophoneGraph(resources)) return;
@@ -360,6 +377,7 @@ function releaseMicrophoneResources(resources) {
   if (audioPhraseTest?.resources === resources) cancelAudioPhraseTest('The microphone changed or disconnected.');
   clearTimeout(resources.captureFlushTimer); resources.captureBarrier = null;
   if (microphoneResources === resources) {
+    clearTimeout(microphoneIdleTimer); microphoneIdleTimer = null;
     microphoneResources = null;
     if (microphoneMonitorFrame !== null) cancelAnimationFrame(microphoneMonitorFrame);
     microphoneMonitorFrame = null;
@@ -545,6 +563,12 @@ async function initializeMicrophoneResources({ deviceId = microphonePreferredDev
     // Selecting an input may await Windows permission or graph setup. A new
     // recording/request in that interval retains its original capture graph.
     if (!canPublish()) { releaseMicrophoneResources(resources); return false; }
+    // A device can end while addModule/permission setup is still pending.
+    // Its ended listener cannot release the unpublished candidate graph.
+    if (resources.stream.active === false || resources.stream.getTracks().some(track => track.readyState === 'ended')) {
+      if (!microphoneResources) microphoneRecoveryNeeded = true;
+      throw new Error('The microphone disconnected before capture was ready.');
+    }
 
     const previous = microphoneResources;
     microphoneResources = resources;
@@ -679,7 +703,6 @@ function handleBargeIn(text) {
   else if (typeof cancelAssistantRequest === 'function') cancelAssistantRequest();
   else if (typeof stopAssistantSpeech === 'function') stopAssistantSpeech();
   if (followUpTimer) { clearTimeout(followUpTimer); followUpTimer = null; }
-  try { voskRecognizer?.reset(); } catch (_) {}
   setState(State.LISTENING);
   if (startRecording() === false) return;
   if (typeof warmProviderConnection === 'function') warmProviderConnection();
@@ -823,9 +846,7 @@ function handleWakeWordCaptureResult(text, isFinal) {
   console.log(`[Olanga] Wake capture sample ${wakeCaptureSamples.length} accepted.`);
   renderWakeCaptureUi();
 
-  if (voskRecognizer) {
-    try { voskRecognizer.reset(); } catch (_) {}
-  }
+  resetMicrophoneRecognition();
 
   if (wakeCaptureSamples.length >= WAKE_CAPTURE_TARGET) {
     finishWakeWordCapture();
@@ -858,7 +879,7 @@ function beginWakeWordRecording() {
   if (els.doneBtn) els.doneBtn.disabled = true;
   renderWakeCaptureUi();
 
-  try { voskRecognizer.reset(); } catch (_) {}
+  resetMicrophoneRecognition();
 }
 
 function openWakeWordCaptureScreen() {
@@ -1084,7 +1105,9 @@ function startRecording({ afterFrame = null } = {}) {
     if (microphoneResources?.endpoint?.process(chunk, { recording: true }).speech) hasSpokenDuringRecording = true;
   }
   resetLiveTranscript();
-  try { if (typeof voskRecognizer !== 'undefined') voskRecognizer?.reset(); } catch (_) {}
+  // vosk-browser 0.0.8 has no reset(). Replace its recognizer so queued wake
+  // callbacks cannot enter this recording; the capture graph stays running.
+  resetMicrophoneRecognition();
   if (microphoneResources) microphoneResources.recognizerStartFrame = microphoneResources.frame;
   console.log('[Olanga] 🎙️ Recording user query started');
   return true;
