@@ -16,8 +16,11 @@ assert.equal(fs.realpathSync(path.dirname(root)).toLowerCase(), fs.realpathSync(
 const config = JSON.parse(fs.readFileSync(path.join(root, 'e2e-config.json'), 'utf8'));
 assert.equal(config.fixture, 'olanga-update-e2e-v1');
 assert.equal(path.resolve(config.installation).toLowerCase(), installation.toLowerCase());
-assert.equal(config.targetVersion, '1.6.0');
-const assetPath = path.join(root, 'assets', 'Olanga-Setup-1.6.0.exe');
+const { compareVersions, parseVersion } = require('../../desktop/release-service');
+const { baselineVersion, targetVersion } = config;
+assert(parseVersion(baselineVersion) && parseVersion(targetVersion) && compareVersions(targetVersion, baselineVersion) > 0);
+assert([baselineVersion, targetVersion].includes(app.getVersion()));
+const assetPath = path.join(root, 'assets', 'Olanga-Setup-' + targetVersion + '.exe');
 const profile = path.join(root, 'profile');
 fs.mkdirSync(profile, { recursive: true });
 app.setPath('userData', profile);
@@ -47,8 +50,8 @@ const assetSize = fs.statSync(assetPath).size;
 const assetHash = crypto.createHash('sha256').update(fs.readFileSync(assetPath)).digest('hex');
 const filename = path.basename(assetPath), checksums = `${assetHash}  ${filename}\n`;
 const releaseBase = 'https://github.com/firestar3/Olanga-Desktop-Agent/releases';
-const downloadBase = releaseBase + '/download/v1.6.0/';
-const metadata = { tag_name: 'v1.6.0', draft: false, prerelease: false, html_url: releaseBase + '/tag/v1.6.0', assets: [
+const downloadBase = releaseBase + '/download/v' + targetVersion + '/';
+const metadata = { tag_name: 'v' + targetVersion, draft: false, prerelease: false, html_url: releaseBase + '/tag/v' + targetVersion, assets: [
   { name: filename, state: 'uploaded', size: assetSize, browser_download_url: downloadBase + filename, digest: 'sha256:' + assetHash },
   { name: 'SHA256SUMS', state: 'uploaded', size: Buffer.byteLength(checksums), browser_download_url: downloadBase + 'SHA256SUMS' },
 ] };
@@ -65,6 +68,18 @@ async function fixtureFetch(url, options = {}) {
 }
 net.fetch = fixtureFetch;
 globalThis.fetch = fixtureFetch;
+// Optionally exercise the exact helper from the installed public release.
+// Every production payload still matches current source; only this test host
+// selects the hash-verified published helper for the baseline launch.
+if (app.getVersion() === baselineVersion && config.baselineSupervisor) {
+  const helperSource = path.join(root, 'baseline-supervisor.ps1');
+  assert.match(config.baselineSupervisor.commit, /^[a-f0-9]{40}$/);
+  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(helperSource)).digest('hex'), config.baselineSupervisor.sha256);
+  const installer = require('../../desktop/update-installer');
+  const launch = installer.createInstallerLauncher;
+  installer.createInstallerLauncher = options => launch({ ...options, helperSource });
+  report.coverage.publishedBaselineSupervisor = config.baselineSupervisor;
+}
 const updater = require('../../desktop/manual-updater');
 updater.createElectronUpdateFetch = () => fixtureFetch;
 const unsafe = new Set(['provider-generate', 'provider-generate-stream', 'nvidia-tts-config', 'nvidia-tts-synthesize', 'open-app', 'arrange-app', 'close-app', 'play-spotify', 'reload-spotify', 'media-control', 'desktop-capture', 'desktop-run', 'desktop-undo', 'execute-command', 'fetch-news-bundle', 'open-external', 'set-open-at-login']);
@@ -99,7 +114,7 @@ app.whenReady().then(async () => {
   await waitFor(() => { main = BrowserWindow.getAllWindows().find(win => /[\\/]index\.html$/.test(win.webContents.getURL())); return main && !main.webContents.isLoading(); }, 'Main renderer did not load.');
   await waitFor(() => evaluate(() => window.OlangaAppInitialized === true && !!window.OlangaWorkspace), 'Production initialization did not finish.');
   main.setContentSize(1050, 760);
-  if (app.getVersion() === '1.5.2') {
+  if (app.getVersion() === baselineVersion) {
     check('First launch performs no automatic update check or download', report.requests.length === 0);
     await click('#startLocalBtn');
     await click('[data-screen="settingsScreen"]');
@@ -117,7 +132,7 @@ app.whenReady().then(async () => {
     report.baselineComplete = true; report.expectedAssetHash = assetHash; writeReport();
     await click('#installUpdate');
   } else {
-    check('Supervisor reopened the requested version', app.getVersion() === '1.6.0');
+    check('Supervisor reopened the requested version', app.getVersion() === targetVersion);
     await waitFor(() => main.isVisible() && !main.isMinimized(), 'Restarted window did not become visible.');
     check('Restarted main window is visible and initialized', main.isVisible() && !main.isMinimized());
     await waitFor(async () => { const state = await evaluate(() => window.electronAPI.getUpdateState()); return state.installationResult?.ok === true; }, 'Updater did not confirm usable restart.', 60000);

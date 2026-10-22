@@ -3,8 +3,8 @@
 const path = require('node:path');
 const packageMetadata = require('../../package.json');
 const production = packageMetadata.build;
-const version = process.env.OLANGA_UPDATE_FIXTURE_VERSION || '1.6.0';
-if (!['1.5.2', '1.6.0'].includes(version)) throw new Error('Unknown updater fixture version.');
+const version = process.env.OLANGA_UPDATE_FIXTURE_VERSION || packageMetadata.version;
+if (!['1.5.2', '1.6.0', packageMetadata.version].includes(version)) throw new Error('Unknown updater fixture version.');
 module.exports = {
   ...production, extends: null,
   // Test-only payloads need no expensive recompression; NSIS install/restart is real.

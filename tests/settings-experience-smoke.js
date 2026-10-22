@@ -133,6 +133,26 @@ app.whenReady().then(async () => {
     });
     await click('#startLocalBtn');
     await click('[data-screen="settingsScreen"]');
+    await check('Opening Core during intro replay cancels stale return-to-Home callbacks', async () => {
+      const state = await evaluate(() => {
+        const nativeTimeout = window.setTimeout, callbacks = [];
+        window.setTimeout = (callback, delay, ...args) => {
+          const timer = nativeTimeout(callback, delay, ...args);
+          if ([6500, 7200, 700].includes(delay)) callbacks.push(callback);
+          return timer;
+        };
+        try {
+          playSetupIntroReplay();
+          const replayMode = setupScreen.classList.contains('setup-intro-replay');
+          window.OlangaSettingsNavigation.open('core', { focus: false });
+          callbacks.forEach(callback => callback());
+          return { replayMode, settings: !settingsScreen.classList.contains('hidden'), home: !mainScreen.classList.contains('hidden'),
+            setup: !setupScreen.classList.contains('hidden'), core: document.getElementById('settingsTabCore').getAttribute('aria-selected'),
+            setupRestricted: settingsScreen.classList.contains('settings-before-setup') };
+        } finally { window.setTimeout = nativeTimeout; cancelSetupIntroReplay(); }
+      });
+      assert.deepEqual(state, { replayMode: true, settings: true, home: false, setup: false, core: 'true', setupRestricted: false });
+    });
     await check('User, Core and Privacy tabs expose exactly one labelled panel with keyboard navigation', async () => {
       await click('#settingsTabUser');
       main.webContents.debugger.attach('1.3');

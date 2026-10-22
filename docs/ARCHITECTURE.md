@@ -150,3 +150,9 @@ See the [improvement plan](IMPROVEMENTS.md) for implemented capabilities, remain
 | `desktop/signing-policy.js` | Optional packaged publisher-certificate pin for signed builds. Unsigned builds remain explicitly unsigned. Manual update recovery trusts fresh release metadata and rehashed bytes, not saved cache metadata. |
 
 File receipts and saved window sessions stay in the local profile. Project text, imported calendar events, MCP credentials, companion pairing credentials and phone sessions stay in memory. The browser/editor session lists contain only items the user selected to save. Reload/crash cleanup cancels outstanding service work; an already delivered native action may still require inspection before retrying.
+
+## Intro replay navigation
+
+Intro presentation and return timers are separately bounded by generation counters. Replaying cancels older timers, and opening a normal app screen cancels the replay before navigating. The return-to-Home callback checks that its generation and visible replay still own the screen. Replay keeps its presentation class and is distinguished from first-run setup when opening Settings.
+
+Updater receipts are written to a sibling temporary file and renamed with Windows REPLACE_EXISTING, with bounded retries for sharing conflicts. Readers keep seeing a complete prior or current record; the supervisor never deletes the destination before replacement. A native concurrent-reader regression exercises this production writer. The isolated NSIS journey can select a hash-verified helper from a pinned published commit to check compatibility with an updater already installed by users.

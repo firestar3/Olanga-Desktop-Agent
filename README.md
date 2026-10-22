@@ -26,9 +26,7 @@ Olanga is an open-source Windows assistant for the things you do throughout the 
 
 Common commands run directly through local controls, with no API key required for typed requests. Choose cloud transcription or optional on-device English recognition. Gemini handles questions and requests that need interpretation. A small corner orb keeps Olanga within reach while you work in other apps.
 
-**Olanga 1.6.0** brings clearer results, personal Workspace backups, organized memories and a faster News panel. Set your conversation style, adjust the familiar interface, and reach Projects, Schedules and Updates straight from Workspace. [What’s new in 1.6.0](docs/releases/1.6.0.md).
-
-**Current source:** the guide below also covers conversational learning, faster local memory answers, leaner voice processing, named workspaces, guided audio checks and broader personal backup controls implemented after 1.6.0. These source changes are not part of the published 1.6.0 installer; the release notes describe that stable download.
+**Olanga 1.6.1** adds conversational learning, faster local memory answers, guided audio checks and named workspaces. Voice capture now releases unused resources during sustained mute, recordings reject stale wake results, and intro replay respects your current screen. The familiar interface and manual in-app update flow stay in place. [What’s new in 1.6.1](docs/releases/1.6.1.md).
 
 Use **Workspace** to save app layouts, review file changes, search a project, schedule reminders and connect optional browser, editor and phone companions. Request progress and spoken action results keep you informed as Olanga works.
 
@@ -276,7 +274,7 @@ Gemini **3.5 Flash-Lite** handles transcription, routing and responses; **3.5 Fl
 
 Use **Workspace → Apps & updates → Check for updates** to compare your version with the latest stable GitHub release. Choose **Download update** to download it inside Olanga, with progress and cancellation. Once the download is verified, **Install & restart** updates the existing installation and reopens Olanga, preserving your settings and saved data. Checks, downloads and installation happen only when you choose them; nothing installs on ordinary quit.
 
-A separate progress window stays open during installation. The 1.6.0 updater reports success only after the expected installed version confirms that its renderer has initialized and its main window is visible with usable controls. A process merely starting is not enough. Failed attempts return a recovery result. The update into 1.6.0 is handled by the updater already installed on your computer.
+A separate progress window stays open during installation. The updater reports success only after the expected installed version confirms that its renderer has initialized and its main window is visible with usable controls. A process merely starting is not enough. Failed attempts return a recovery result. The update into 1.6.1 is handled by the updater already installed on your computer.
 
 Olanga verifies the downloaded installer's SHA-256 against the release checksum and checks the file again before installation. An explicit update check can recover a complete cached installer after a restart, using fresh release metadata and a new hash check. Interrupted partial downloads restart when you choose Download again.
 
@@ -317,4 +315,4 @@ These screenshots show earlier releases; Settings and News have been updated in 
 
 ---
 
-[Release notes](docs/releases/1.6.0.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](docs/VALIDATION.md) · [MIT license](LICENSE)
+[Release notes](docs/releases/1.6.1.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](docs/VALIDATION.md) · [MIT license](LICENSE)

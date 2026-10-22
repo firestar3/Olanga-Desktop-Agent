@@ -68,9 +68,23 @@ function Refresh-Progress {
 }
 
 function Write-JsonFile([string]$FilePath, $Value) {
+    if (-not ('OlangaUpdateFile' -as [type])) {
+        Add-Type 'using System.Runtime.InteropServices; public static class OlangaUpdateFile { [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool MoveFileEx(string source, string destination, int flags); }'
+    }
     $temporaryPath = $FilePath + '.' + $PID + '.tmp'
-    [System.IO.File]::WriteAllText($temporaryPath, ($Value | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
-    Move-Item -LiteralPath $temporaryPath -Destination $FilePath -Force
+    try {
+        [System.IO.File]::WriteAllText($temporaryPath, ($Value | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+        for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            # Rename on the same volume with REPLACE_EXISTING. Move-Item -Force
+            # deletes the old receipt first; File.Replace also has a rename gap.
+            if ([OlangaUpdateFile]::MoveFileEx($temporaryPath, $FilePath, 1)) { return }
+            $code = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            if ($attempt -eq 19 -or $code -notin @(5, 32, 33)) { throw (New-Object System.ComponentModel.Win32Exception($code)) }
+            [System.Threading.Thread]::Sleep(20)
+        }
+    } finally {
+        if ([System.IO.File]::Exists($temporaryPath)) { [System.IO.File]::Delete($temporaryPath) }
+    }
 }
 
 function Write-Result([string]$Stage, [string]$Code) {

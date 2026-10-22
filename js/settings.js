@@ -381,66 +381,62 @@ function hydrateKeyInputs(geminiKeys, nvidiaKey) {
 
 const SETUP_INTRO_MS = 6500;
 const SETUP_INTRO_REPLAY_MS = 7200;
+let setupIntroTimer = null;
+let setupIntroRevision = 0;
+let introReplayTimer = null;
+let introReplayRevision = 0;
 
-function restartSetupIntro() {
+function restartSetupIntro({ replay = false } = {}) {
   if (!setupScreen) return;
+  const revision = ++setupIntroRevision;
+  clearTimeout(setupIntroTimer);
   setupScreen.classList.remove('setup-first-launch', 'setup-intro-done', 'setup-intro-replay');
+  if (replay) setupScreen.classList.add('setup-intro-replay');
   void setupScreen.offsetWidth;
   setupScreen.classList.add('setup-first-launch');
-  window.setTimeout(() => {
-    if (setupScreen && setupScreen.classList.contains('setup-first-launch')) {
+  setupIntroTimer = window.setTimeout(() => {
+    if (revision !== setupIntroRevision) return;
+    setupIntroTimer = null;
+    if (!setupScreen.classList.contains('hidden') && setupScreen.classList.contains('setup-first-launch')) {
       setupScreen.classList.add('setup-intro-done');
     }
   }, SETUP_INTRO_MS);
 }
 
-let introReplayTimer = null;
+function cancelSetupIntroReplay() {
+  ++introReplayRevision;
+  ++setupIntroRevision;
+  clearTimeout(introReplayTimer); introReplayTimer = null;
+  clearTimeout(setupIntroTimer); setupIntroTimer = null;
+  if (setupScreen?.classList.contains('setup-intro-replay')) {
+    setupScreen.classList.add('hidden');
+    setupScreen.classList.remove('setup-first-launch', 'setup-intro-done', 'setup-intro-replay');
+  }
+}
 
 function returnHomeFromIntroReplay() {
-  if (introReplayTimer) {
-    clearTimeout(introReplayTimer);
-    introReplayTimer = null;
-  }
-  if (!setupScreen) return;
-
-  setupScreen.classList.add('hidden');
-  setupScreen.classList.remove('setup-first-launch', 'setup-intro-done', 'setup-intro-replay');
-
-  Object.keys(screens).forEach((key) => {
-    if (screens[key]) screens[key].classList.add('hidden');
-  });
-  if (mainScreen) mainScreen.classList.remove('hidden');
-
-  floatingIcons.forEach((icon) => icon.classList.remove('active'));
-  const homeIcon = document.querySelector('.floating-icon[data-screen="mainScreen"]');
-  if (homeIcon) homeIcon.classList.add('active');
-
-  const floatingIconsWrapper = document.querySelector('.floating-icons');
-  if (floatingIconsWrapper) floatingIconsWrapper.classList.add('visible');
+  const active = setupScreen && !setupScreen.classList.contains('hidden') && setupScreen.classList.contains('setup-intro-replay');
+  cancelSetupIntroReplay();
+  // A delayed or already queued callback cannot leave a newer screen/replay.
+  if (!active) return;
+  Object.keys(screens).forEach(key => screens[key]?.classList.add('hidden'));
+  mainScreen?.classList.remove('hidden');
+  floatingIcons.forEach(icon => icon.classList.remove('active'));
+  document.querySelector('.floating-icon[data-screen="mainScreen"]')?.classList.add('active');
+  document.querySelector('.floating-icons')?.classList.add('visible');
 }
 
 function playSetupIntroReplay() {
   if (!setupScreen) return;
-
-  if (introReplayTimer) {
-    clearTimeout(introReplayTimer);
-    introReplayTimer = null;
-  }
-
-  // Hide app screens and nav while the intro plays.
-  Object.keys(screens).forEach((key) => {
-    if (screens[key]) screens[key].classList.add('hidden');
-  });
-  const floatingIconsWrapper = document.querySelector('.floating-icons');
-  if (floatingIconsWrapper) floatingIconsWrapper.classList.remove('visible');
-
+  cancelSetupIntroReplay();
+  const revision = introReplayRevision;
+  Object.keys(screens).forEach(key => screens[key]?.classList.add('hidden'));
+  document.querySelector('.floating-icons')?.classList.remove('visible');
   setupScreen.classList.remove('hidden');
-  setupScreen.classList.add('setup-intro-replay');
-  restartSetupIntro();
-
+  restartSetupIntro({ replay: true });
   const prefersReduced = window.OlangaAppearance?.isReducedMotion() ?? window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   introReplayTimer = window.setTimeout(() => {
-    returnHomeFromIntroReplay();
+    if (revision === introReplayRevision) returnHomeFromIntroReplay();
   }, prefersReduced ? 700 : SETUP_INTRO_REPLAY_MS);
 }
 
@@ -1247,6 +1243,7 @@ const screens = {
 floatingIcons.forEach(icon => {
   icon.addEventListener('click', () => {
     const targetScreen = icon.getAttribute('data-screen');
+    if (setupScreen?.classList.contains('setup-intro-replay')) cancelSetupIntroReplay();
 
     // Reselecting Settings must not reload stale runtime values over unsaved edits.
     if (targetScreen === 'settingsScreen' && !settingsScreen.classList.contains('hidden')) return;

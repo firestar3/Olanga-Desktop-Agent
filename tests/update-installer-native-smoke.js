@@ -10,6 +10,10 @@ const { createInstallerLauncher } = require('../desktop/update-installer');
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+const readPendingJson = file => {
+  try { return readJson(file); }
+  catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) return null; throw error; }
+};
 async function waitFor(predicate, message, timeout = 30000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -115,6 +119,53 @@ delegate bool WindowCallback(IntPtr window, IntPtr data);
     return exePath;
   }
   try {
+    // Exercise the production writer while a native reader observes replacements.
+    const supervisor = fs.readFileSync(path.join(__dirname, '..', 'desktop', 'update-supervisor.ps1'), 'utf8');
+    const writer = supervisor.slice(supervisor.indexOf('function Write-JsonFile('), supervisor.indexOf('function Write-Result('));
+    assert.ok(writer.startsWith('function Write-JsonFile(') && writer.length > 100);
+    const probeScript = path.join(root, 'receipt-probe.ps1');
+    fs.writeFileSync(probeScript, `$ErrorActionPreference = 'Stop'
+Add-Type -ReferencedAssemblies System.Web.Extensions -TypeDefinition @'
+using System; using System.IO; using System.Threading; using System.Web.Script.Serialization;
+public class ReceiptProbe {
+  public volatile bool Running = true; public int Reads, Missing, Invalid; public string Failure;
+  public Thread Start(string path) { var thread = new Thread(new ParameterizedThreadStart(Read)); thread.Start(path); return thread; }
+  public void Read(object target) {
+    var json = new JavaScriptSerializer();
+    while (Running) {
+      try {
+        using (var stream = new FileStream((string)target, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        using (var reader = new StreamReader(stream)) {
+          var value = json.DeserializeObject(reader.ReadToEnd());
+          if (value == null) Interlocked.Increment(ref Invalid);
+        }
+        Interlocked.Increment(ref Reads);
+      } catch (FileNotFoundException) { Interlocked.Increment(ref Missing); }
+        catch (ArgumentException) { Interlocked.Increment(ref Invalid); }
+        catch (Exception error) { Failure = error.ToString(); Running = false; }
+    }
+  }
+}
+'@
+${writer}
+$file = Join-Path $PSScriptRoot 'receipt-probe.json'
+Write-JsonFile $file @{ sequence = 0; stage = 'old' }
+$probe = New-Object ReceiptProbe
+$thread = $probe.Start($file)
+try {
+  for ($sequence = 1; $sequence -le 500; $sequence++) { Write-JsonFile $file @{ sequence = $sequence; stage = 'new'; padding = ('x' * 500) } }
+} finally { $probe.Running = $false; $thread.Join() }
+@{ reads = $probe.Reads; missing = $probe.Missing; invalid = $probe.Invalid; failure = $probe.Failure } | ConvertTo-Json -Compress
+`);
+    const probe = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', probeScript], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+    assert.equal(probe.status, 0, probe.stderr || probe.stdout || probe.error?.message);
+    const atomicReceipt = JSON.parse(probe.stdout.trim());
+    report.atomicReceipt = { ...atomicReceipt, replacements: 500 };
+    assert.equal(atomicReceipt.failure, null);
+    assert.ok(atomicReceipt.reads > 500, 'Concurrent native reader must overlap the replacements');
+    assert.equal(atomicReceipt.missing, 0, 'Replacing an existing receipt must never remove it');
+    assert.equal(atomicReceipt.invalid, 0, 'Replacing an existing receipt must never expose partial JSON');
+    report.atomicReceipt = { ...atomicReceipt, replacements: 500, passed: true };
     const before = compile('before', fixtureCode('1.5.1.0'));
     const after = compile('after', fixtureCode('1.5.2.0'));
     const afterThree = compile('after-three', fixtureCode('1.5.2'));
@@ -174,9 +225,8 @@ delegate bool WindowCallback(IntPtr window, IntPtr data);
       assert.equal(fs.existsSync(config.quitMarker), true);
       const resultPath = path.join(updatesDir, 'install-result.json');
       const result = await waitFor(() => {
-        if (!fs.existsSync(resultPath)) return null;
-        const value = readJson(resultPath);
-        return ['restarted', 'failed'].includes(value.stage) ? value : null;
+        const value = readPendingJson(resultPath);
+        return ['restarted', 'failed'].includes(value?.stage) ? value : null;
       }, 'Supervisor did not report completion');
       const appMarker = path.join(testDirectory, 'app-started.txt');
       await waitFor(() => fs.existsSync(appMarker), 'App was not restarted after installer completed');
@@ -195,7 +245,7 @@ delegate bool WindowCallback(IntPtr window, IntPtr data);
         assert.equal(result.code, 'installed-version-mismatch');
         assert.equal(result.installedVersion, '1.5.2.1');
         assert.match(appStart, /^--update-recovery .*\n1\.5\.2\.1$/);
-        await waitFor(() => readJson(resultPath).recoveryReady === true, 'Different-revision installation must recover without claiming update success');
+        await waitFor(() => readPendingJson(resultPath)?.recoveryReady === true, 'Different-revision installation must recover without claiming update success');
       } else if (mode === 'orphan') {
         assert.equal(result.stage, 'failed', 'an orphan process without a main window cannot count as successful restart');
         assert.equal(result.code, 'app-restart-failed');
@@ -211,7 +261,7 @@ delegate bool WindowCallback(IntPtr window, IntPtr data);
         assert.equal(result.stage, 'failed');
         assert.equal(result.code, mode === 'failure' ? 'installer-exit-code' : 'installed-version-mismatch');
         assert.match(appStart, /^--update-recovery .*\n1\.5\.1\.0$/);
-        await waitFor(() => readJson(resultPath).recoveryReady === true, 'Previous version must be usable after recovery');
+        await waitFor(() => readPendingJson(resultPath)?.recoveryReady === true, 'Previous version must be usable after recovery');
       }
       report.cases.push({ mode, passed: true, exitCode: result.exitCode, stage: result.stage, installedVersion: result.installedVersion });
     }

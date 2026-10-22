@@ -1,6 +1,6 @@
 // Two real fixture NSIS installers with separate product identity are required.
 // Build each using tests/fixtures/update-e2e-builder.cjs, then pass their paths:
-// node tests/update-installer-e2e-smoke.js --baseline=<1.5.2.exe> --target=<1.6.0.exe>
+// node tests/update-installer-e2e-smoke.js --baseline=<previous.exe> --target=<current.exe>
 // This invokes production UI actions, not mocked update IPC. Only the release
 // transport is local fixture data. The normal installed Olanga is never opened.
 const assert = require('node:assert/strict');
@@ -11,6 +11,10 @@ const crypto = require('node:crypto');
 const { spawn, spawnSync } = require('node:child_process');
 const asar = require('@electron/asar');
 const root = path.resolve(__dirname, '..');
+const targetVersion = require('../package.json').version;
+const baselineVersion = process.env.OLANGA_UPDATE_FIXTURE_BASELINE_VERSION || '1.6.0';
+const { compareVersions, parseVersion } = require('../desktop/release-service');
+assert(parseVersion(targetVersion) && parseVersion(baselineVersion) && compareVersions(targetVersion, baselineVersion) > 0, 'Fixture versions must describe a real upgrade');
 const output = path.join(root, 'build', 'qa');
 const fixtureGuid = 'd2e33a92-193e-46ee-87bc-0d079f2471a2';
 const fixtureRegistryKeys = ['HKCU', 'HKLM'].flatMap(hive => [`${hive}\\Software\\${fixtureGuid}`, `${hive}\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${fixtureGuid}`]);
@@ -58,13 +62,26 @@ function stopOnlyFixture(appExe) {
   // filtering and process termination stay in one PowerShell invocation.
   const escapedPath = appExe.replace(/'/g, "''");
   const escapedRoot = path.dirname(path.dirname(appExe)).replace(/'/g, "''");
-  const command = `$fixtureExecutable = '${escapedPath}'; Get-CimInstance Win32_Process -Filter "Name='OlangaUpdateFixture.exe'" | Where-Object { $_.ExecutablePath -eq $fixtureExecutable } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; $fixtureRoot = '${escapedRoot}'; Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains($fixtureRoot) -and $_.CommandLine.Contains('update-supervisor.ps1') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Get-CimInstance Win32_Process -Filter "Name='Olanga-Setup-1.6.0.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($fixtureRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { & taskkill.exe /PID $_.ProcessId /T /F }`;
+  const command = `$fixtureExecutable = '${escapedPath}'; Get-CimInstance Win32_Process -Filter "Name='OlangaUpdateFixture.exe'" | Where-Object { $_.ExecutablePath -eq $fixtureExecutable } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; $fixtureRoot = '${escapedRoot}'; Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains($fixtureRoot) -and $_.CommandLine.Contains('update-supervisor.ps1') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Get-CimInstance Win32_Process -Filter "Name='Olanga-Setup-${targetVersion}.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($fixtureRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { & taskkill.exe /PID $_.ProcessId /T /F }`;
   return spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], { windowsHide: true, encoding: 'utf8' });
 }
 async function run() {
   assert.equal(process.platform, 'win32');
   const baseline = argument('baseline'), target = argument('target');
-  const verifiedSourceFiles = { baseline: validateInstaller(baseline, '1.5.2'), target: validateInstaller(target, '1.6.0') };
+  let baselineSupervisor = null;
+  const baselineRef = process.env.OLANGA_UPDATE_FIXTURE_BASELINE_REF;
+  if (baselineRef) {
+    const git = args => { const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }); assert.equal(result.status, 0, result.stderr); return result.stdout; };
+    const commit = git(['rev-parse', '--verify', baselineRef + '^{commit}']).trim();
+    assert.match(commit, /^[a-f0-9]{40}$/);
+    assert.equal(JSON.parse(git(['show', commit + ':package.json'])).version, baselineVersion);
+    for (const relative of ['desktop/update-installer.js', 'desktop/update-readiness.js']) {
+      assert.equal(git(['show', commit + ':' + relative]).replace(/\r\n/g, '\n'), fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n'), 'Compatibility fixture requires the published launcher/readiness protocol: ' + relative);
+    }
+    const source = git(['show', commit + ':desktop/update-supervisor.ps1']);
+    baselineSupervisor = { commit, source, sha256: crypto.createHash('sha256').update(source).digest('hex') };
+  }
+  const verifiedSourceFiles = { baseline: validateInstaller(baseline, baselineVersion), target: validateInstaller(target, targetVersion) };
   for (const key of fixtureRegistryKeys) assert.equal(registryExists(key), false, 'A previous fixture install exists. Clean that known fixture before retrying.');
   const temp = fs.realpathSync.native(os.tmpdir());
   const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(temp, 'olanga-update-e2e-')));
@@ -74,7 +91,9 @@ async function run() {
   try {
     fs.mkdirSync(path.join(directory, 'assets'));
     fs.copyFileSync(target, path.join(directory, 'assets', path.basename(target)));
-    fs.writeFileSync(path.join(directory, 'e2e-config.json'), JSON.stringify({ fixture: 'olanga-update-e2e-v1', installation, targetVersion: '1.6.0' }));
+    if (baselineSupervisor) fs.writeFileSync(path.join(directory, 'baseline-supervisor.ps1'), baselineSupervisor.source);
+    fs.writeFileSync(path.join(directory, 'e2e-config.json'), JSON.stringify({ fixture: 'olanga-update-e2e-v1', installation, baselineVersion, targetVersion,
+      baselineSupervisor: baselineSupervisor && { commit: baselineSupervisor.commit, sha256: baselineSupervisor.sha256 } }));
     // NSIS requires /D last and without quoting, even if the path has spaces.
     // No command shell is involved; path bytes are never interpreted as code.
     await execute(baseline, ['/S', '/currentuser', '/D=' + installation], 180000, { windowsVerbatimArguments: true });
@@ -100,7 +119,7 @@ async function run() {
     }
     assert.equal(report.passed, true, 'Full NSIS journey did not finish. ' + appOutput.slice(-4000));
     const receipt = JSON.parse(fs.readFileSync(path.join(directory, 'profile', 'updates', 'install-result.json'), 'utf8').replace(/^\uFEFF/, ''));
-    assert.equal(receipt.schema, 2); assert.equal(receipt.stage, 'restarted'); assert.equal(receipt.rendererReady, true); assert.equal(receipt.version, '1.6.0');
+    assert.equal(receipt.schema, 2); assert.equal(receipt.stage, 'restarted'); assert.equal(receipt.rendererReady, true); assert.equal(receipt.version, targetVersion);
     report.receipt = receipt;
     assert.equal(fileHash(path.join(installation, 'resources', 'app.asar')), fileHash(path.join(path.dirname(target), 'win-unpacked', 'resources', 'app.asar')), 'The installed update must exactly match the verified final source.');
     report.installedArchivesMatchVerifiedFixtures = true;

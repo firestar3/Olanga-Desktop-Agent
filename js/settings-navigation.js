@@ -62,7 +62,7 @@
 
   function open(name, options = {}) {
     if (!tabs.some(tab => tab.dataset.settingsTab === name)) return false;
-    const fromSetup = setup && !setup.classList.contains('hidden');
+    const fromSetup = setup && !setup.classList.contains('hidden') && !setup.classList.contains('setup-intro-replay');
     if (fromSetup) {
       setupOpener = document.activeElement;
       setBeforeSetup(true);

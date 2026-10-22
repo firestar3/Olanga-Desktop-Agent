@@ -32,6 +32,8 @@ jobs:
         run: npm run smoke:assistant
       - name: Check conversational routine creation, review and cancellation
         run: npm run smoke:routines
+      - name: Check native speech capture lifecycle with synthetic audio
+        run: npm run smoke:voice:lifecycle
       - name: Check local audio setup controls
         run: npm run smoke:audio-setup
       - name: Check personal backups and Notes history
