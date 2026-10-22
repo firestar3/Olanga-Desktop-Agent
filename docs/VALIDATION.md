@@ -1,3 +1,46 @@
+# Follow-up validation — October 21, 2026
+
+The resumed installer, renderer, native fixture and source checks passed. The final extended resource comparison remains **18/23**: five resident-memory limits failed in tray voice-ready, tray-muted and visible-muted states. **Performance sign-off remains open.** The earlier failed runs remain recorded below. This is local development validation with disposable profiles and synthetic audio; no public release or installation over the normal Olanga profile was performed.
+
+| Check | Current result |
+| --- | --- |
+| Full unit suite | **1040 passed, 0 failed, 1 explicit file-symlink permission skip** (1041 total) |
+| Source and package | **86 JavaScript files/assets passed**; all **117 packaged source files** still match production source |
+| Real NSIS update journey | **10/10 passed**, using the same verified fixture installers and original deadlines. Target 1.6.0 reopened with a visible initialized renderer, preserved preferences, and received schema-2 completion: stage=restarted, code=complete, rendererReady=true. Installed archives matched the verified fixture packages |
+| Renderer resource/pixel comparison | **8/8 passed** within the original 45-second deadline. Equal 960×640 native client areas produced 1200×800 captures: **0 changed bytes out of 3,840,000**. No cropping, rescaling or pixel tolerance was used |
+| Native app adapters | **16/16 passed**. Cleanup now verifies process exit as well as zero windows, including cancelled/delayed launches; all cleanup observations reported zero remaining processes |
+| Final extended resource gate | **18/23 passed** with original limits, seven states, 100 measured intervals per state and three cold resumes. The final matched post-resume comparison used candidate first, then baseline |
+
+The native adapter harness now waits for its uniquely identified synthetic processes to exit. If fallback termination is necessary, it rechecks the private executable/command line and process creation time, then confirms exit. Natural exit during that check is handled safely. It records cleanup results and fails if a live fixture remains. Current native checks left no processes behind.
+
+## Resource findings
+
+The first resumed standard pair passed **22/23**. Its sole miss was tray-idle CPU p95: 1.515% → 4.435% of one logical core, against the unchanged 3.515% limit. The maximum interval contained 46.875 ms of app CPU over about 1.057 seconds. Both renderers recorded zero script duration, style recalculation and layout work in that phase; the candidate UI was paused. The cause of that isolated burst was not established.
+
+A separate longer tray-only diagnostic used **90 snapshots / 89 intervals per package**, after matched visible-main/Settings warm-up and an eight-second tray settle. CPU p95 was **0.00% → 0.00%**, and mean was **0.116% → 0.083% of one core**. Neither renderer performed script/layout work. This did not reproduce a sustained tray-idle increase. It is diagnostic evidence, not a replacement for the failed short comparison.
+
+A second short confirmation reversed package order and passed 22/23, missing visible-muted CPU p95 by 0.476 percentage points (22.490% → 30.838%, limit 30.362%); its mean was 15.330% → 15.074%. These short runs had only 19 measured intervals, making p95 the maximum. The final extended comparison kept the same sampler and numerical limits, requested 101 sample records (100 measured intervals) per state, and measured both packages after resume on battery, with candidate first and baseline second. CPU is percent of one logical core; private resident memory is one end-of-phase snapshot; total working set includes shared pages and is sampled over the phase. Both packages used Electron 44.7.0, the same machine, fresh profiles and synthetic silence. Host snapshots around the first pair showed 41% CPU and about 1.24 → 1.13 GiB available memory; after the standby interruption another host snapshot showed 45% CPU and 0.38 GiB available memory. Ambient workloads, clocks and cache state were not controlled.
+
+| State | CPU p95, baseline → candidate | Private resident MiB | Total working-set p95 MiB |
+| --- | --- | --- | --- |
+| visible-idle | 20.73 → 19.21 | 219.61 → 220.51 | 506.79 → 566.69 |
+| visible-settings | 0.00 → 1.47 | 228.67 → 229.63 | 503.87 → 562.55 |
+| tray-idle | 1.47 → 1.47 | 233.92 → 235.79 | 510.68 → 568.48 |
+| visible-voice-ready | 94.60 → 83.67 | 446.99 → 487.29 | 986.53 → 1026.19 |
+| tray-voice-ready | 68.04 → 66.72 | 358.78 → 513.62 | 890.34 → 1017.63 |
+| tray-muted | 8.69 → 10.13 | 88.53 → 179.05 | 328.54 → 808.33 |
+| visible-muted | 29.08 → 30.12 | 110.49 → 174.68 | 352.30 → 673.69 |
+
+All seven CPU p95 limits, startup and cold-resume limits passed. The five failed resident-memory limits remain failures. Committed private memory was much closer: tray voice-ready **610.93 → 616.82 MiB**, tray-muted **378.14 → 387.96 MiB**, and visible-muted **375.01 → 377.21 MiB**. Resident results also varied substantially between runs of the unchanged baseline. These observations do not prove an allocation leak or establish the cause of the resident-memory differences; changing memory pressure, paging and cache state were not isolated. No threshold was relaxed and no committed-memory metric replaced the failed resident-memory checks.
+
+Final startup readiness was **1307 → 2032 ms**. Cold voice resume median was **2173 → 2071 ms**, and p95/maximum was **2415 → 2074 ms** across three samples each. These observations do not establish a universal speedup, total CPU/RAM reduction, acoustic latency or a guarantee of no regression on other systems.
+
+One full candidate attempt was interrupted by lid-triggered Modern Standby. Windows System events 506/507 confirmed standby entry and resume, so no aggregate comparison was computed from that incomplete attempt. The candidate was repeated. Voice CPU shifted substantially with the identical binary after resume, so the baseline was also measured again under the current battery conditions. The comparison against the pre-sleep baseline was preserved separately, along with the interrupted data. The earlier installer-startup and short renderer-resource failures did not recur with the same production packages and unchanged deadlines. Their exact causes remain unproven. Live Spotify, physical microphone, provider latency, live GitHub transport, UAC and signed-publisher acceptance remain outside this fixture-only run. The existing unsigned policy and earlier artwork verification still apply.
+
+Evidence is retained under ignored `build/qa/resume-20261021/` and `build/qa/resources/resume-20261021-*.json`, including both short pairs, the full extended comparison, extended tray reports, the source-hashed diagnostic reproducer, unit/static logs, verified restart receipt and cleanup observations. The unpublished development installer remains `build/qa/efficiency-package/Olanga-Setup-1.6.0.exe`; its production bytes were unchanged by the test-only cleanup work. No generated installers, profiles, logs, screenshots or media are committed.
+
+---
+
 # Acceptance validation — October 19–20, 2026
 
 This local acceptance run checks the development source after `21f7f0b`. An unrelated Python workload remained active throughout the run. Host samples recorded 100% CPU, 297–551 MB available RAM and heavy paging. Suites were subsequently serialized to avoid adding concurrent test/build contention. A passing rerun does not erase an earlier timeout or establish normal responsiveness on an idle computer.

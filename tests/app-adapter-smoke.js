@@ -34,11 +34,49 @@ async function waitSignal(name) {
   }
 }
 
+function closeFixtureProcesses() {
+  // Cancellation can leave a delayed, windowless process. Match the private
+  // executable and process creation time again before any forced test cleanup.
+  const quote = value => value.replace(/'/g, "''");
+  const script = `$ErrorActionPreference = 'Stop'
+$expected = '${quote(executable)}'
+$name = '${quote(processName + '.exe')}'
+function Owned($candidate) {
+  if ($candidate.ExecutablePath) { return [String]::Equals($candidate.ExecutablePath, $expected, [StringComparison]::OrdinalIgnoreCase) }
+  return $candidate.CommandLine -and ($candidate.CommandLine.StartsWith('"' + $expected + '"', [StringComparison]::OrdinalIgnoreCase) -or $candidate.CommandLine.StartsWith($expected + ' ', [StringComparison]::OrdinalIgnoreCase))
+}
+$observed = @()
+foreach ($candidate in @(Get-CimInstance Win32_Process -Filter "Name='$name'")) {
+  if (-not (Owned $candidate)) { throw 'Fixture process identity could not be established.' }
+  $process = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
+  if (-not $process) { continue }
+  $forced = $false
+  if (-not $process.WaitForExit(4000)) {
+    $current = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $candidate.ProcessId)
+    if ($current -and (Owned $current) -and $current.CreationDate -eq $candidate.CreationDate) {
+      try { $process.Kill(); $forced = $true } catch { if (-not $process.HasExited) { throw } }
+      if (-not $process.WaitForExit(2000)) { throw 'The owned fixture process did not exit.' }
+    } elseif ($current) { throw 'Fixture identity changed during cleanup.' }
+  }
+  $observed += @{ pid = $candidate.ProcessId; forced = $forced; exited = $true }
+  $process.Dispose()
+}
+$remaining = @(foreach ($candidate in @(Get-CimInstance Win32_Process -Filter "Name='$name'")) {
+  $process = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
+  if ($process) { try { if (-not $process.HasExited) { $candidate.ProcessId } } finally { $process.Dispose() } }
+})
+if ($remaining.Count) { throw 'A fixture process remains after cleanup.' }
+@{ observed = $observed; remaining = $remaining.Count } | ConvertTo-Json -Depth 4 -Compress`;
+  const result = JSON.parse(execFileSync(powershell, encoded(script), { encoding: 'utf8', timeout: 20000, windowsHide: true }).trim());
+  (report.processCleanup ||= []).push(result);
+  assert.equal(result.remaining, 0, 'Every private fixture process must exit');
+}
+
 async function waitClosed() {
   fs.writeFileSync(path.join(directory, 'exit.signal'), 'exit');
   for (let attempt = 0; attempt < 40; attempt++) {
     const result = await controller.listCapabilities();
-    if (result.ok && result.apps[0].windowCount === 0) return;
+    if (result.ok && result.apps[0].windowCount === 0) { closeFixtureProcesses(); return; }
     await pause(100);
   }
   throw new Error('The disposable fixture did not close.');
@@ -135,7 +173,7 @@ public static class Fixture {
     report.receipts.cancelled = await cancellation.open('fixture');
     check('Cancellation after dispatch is an honest possibly-applied result', !report.receipts.cancelled.ok && report.receipts.cancelled.status === 'cancelled' && report.receipts.cancelled.dispatched);
     fs.writeFileSync(path.join(directory, 'exit.signal'), 'exit');
-    await pause(3300);
+    await waitClosed();
     fs.unlinkSync(path.join(directory, 'exit.signal'));
     const timeout = createAppController({ catalog: [delayedApp], startupTimeoutMs: 100 });
     controllers.push(timeout);
@@ -147,9 +185,8 @@ public static class Fixture {
   } finally {
     for (const item of controllers) item.cancel();
     fs.writeFileSync(path.join(directory, 'exit.signal'), 'exit');
-    // A cancelled delayed launch may still be starting; its own signal prevents
-    // a late window, without killing a process belonging to another app.
-    await pause(3300);
+    // Verify both zero windows and exit of every uniquely identified fixture.
+    // Any forced cleanup is restricted to this test's private executable.
     try { await waitClosed(); report.fixtureClosed = true; } catch (error) { report.cleanupError = error.message; report.passed = false; }
     for (const item of controllers) item.dispose();
     report.finishedAt = new Date().toISOString();
