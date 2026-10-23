@@ -1,3 +1,43 @@
+# Olanga 1.6.1 functional release acceptance — October 22, 2026
+
+The final functional, renderer, packaging and isolated installer checks passed on source **539e0b5d014c00257678d444a8e9227f8906c0d7**. The latest extended performance comparison is **incomplete**: the frozen baseline finished four of seven sampling states before Windows Modern Standby interrupted the debugger. **The final candidate was not measured, no comparison was computed, and earlier failures against the 23 original limits remain open.** This entry records functional release acceptance without a new performance sign-off.
+
+This candidate includes conversational learning, local memory answers, reviewed routines and the background-efficiency work recorded below. Follow-up fixes preserve intro presentation and reject stale return callbacks, restore normal navigation after replay, and clear both typed and recording wake-word enrollment when another screen opens. Changing microphones while a Settings save is pending preserves those edits. Microphone selection changes only after capture succeeds; overlapping ordinary saves and failed device switches preserve the previous working microphone and newer non-device choices.
+
+Audio faults stop the interrupted Live session or microphone check, replace recognition, and reject queued callbacks before fallback capture continues. Sustained mute releases unused capture/model resources while brief toggles retain their warm graph. Explicit update checks/downloads reclaim strictly identified completed installers for versions already installed, preserving ready/newer caches, unknown contents and linked paths. Cleanup errors cannot invalidate an otherwise usable update; checking feedback and metadata retrieval start while cleanup is pending.
+
+| Check | Final result |
+| --- | --- |
+| Full unit suite | **1,073 total: 1,071 passed, 0 failed, 2 explicit Windows file-symlink permission skips**; 13.26 seconds |
+| Source/assets | **86 JavaScript files, version and required assets passed** |
+| Electron fixture acceptance | **13 suites passed**: synthetic voice lifecycle, Settings, renderer races, manual updates, responsive layouts, Workspace recovery, News, assistant efficiency, routines, audio setup, backups, renderer resource/pixel checks and workbench |
+| Native synthetic voice | **9/9 passed** with production voice code, bundled Vosk and fake capture; trusted offline worklet error observation, stale-result rejection and **4,096 fresh fallback samples** after injected processor failure |
+| Native updater/recovery | **10/10 passed**; atomic status writing completed **500 replacements / 158,824 concurrent reads**, with zero missing or partial records |
+| Real NSIS update journey | **11/11 passed**, 1.6.0 → 1.6.1; verified download, separate install action, visible initialized restart, preserved preferences, cache reclamation and fixture cleanup |
+| Production packaged startup | **29/29 in each of three modes**: hidden, updated and recovery |
+| Package, artwork and signing | **117 packaged source files match**; final app/installer embedded pixels and native light/dark tray alpha verified; explicitly **unsigned** |
+| Latest extended resource comparison | **Incomplete; candidate not measured and no numerical comparison produced. Earlier limit failures remain open** |
+
+An initial native audio fault fixture failed because its synthetic Event('processorerror') did not invoke Chromium's property callback. That failed report is retained. The corrected probe triggers a real trusted offline worklet ErrorEvent, observes its type (error), and injects the same event type into the production capture path. It verifies that Live stops, recognition changes, stale speech is rejected, and the fallback processor delivers new samples. The corrected probe does not reclassify the failed attempt or establish physical-device fault behavior.
+
+The updater status writer uses same-volume Windows replacement with bounded sharing retries. An earlier native recovery run exposed a missing receipt, and the concurrent-reader regression reproduced the original replacement gap. The final native run covers successful installation, mismatched revisions, installer failure, tampering, orphan processes, absent readiness and wrong restart nonces. Process existence alone is insufficient to report update completion.
+
+The real NSIS fixtures have their own Windows identity and disposable profile. They contain the final production payload with 1.6.0/1.6.1 version metadata; 100 / 100 production files plus the test host were verified, and installed archives matched those fixtures. The baseline selects the exact hash-verified public supervisor from d168028, with its compatible launcher/readiness protocol. This tests that installed updater protocol with real NSIS rather than replaying every historical application file. A post-update explicit Check reclaimed 156,294,880 installer-cache bytes while preserving the usable new installation.
+
+## Interrupted performance attempt
+
+The latest attempt used the frozen bf68716 baseline and the unchanged sampler/readiness rules, with 101 records requested per state. Its four completed states were visible-idle, visible-settings, tray-idle, visible-voice-ready. Each retained 100 measured interval records with increasing adjacent timestamps and gaps below 10 seconds. The remaining three baseline states did not produce validated completed results, and the final candidate never started. These baseline-only observations are not a comparison and cannot establish candidate speed, memory usage or a percentage reduction.
+
+The retained Windows event report records screen-off and lid-triggered Modern Standby during the baseline. The run ended with Performance.getMetrics timing out. A temporary system/display execution request was active, but it did not prevent those standby entries; its matching release record is present afterward. No interrupted data was promoted to a pass, and no performance limits were relaxed. Earlier interrupted runs, failed numerical comparisons and unresolved performance findings remain in the historical entries below. The earlier unexplained Settings-to-Home observation also remains unproven; independently reproduced intro defects are not claimed as its established cause.
+
+Functional checks use disposable profiles, synthetic audio and blocked or scripted provider/native actions. They do not use a physical microphone, live Spotify playback, Windows volume changes, saved provider credentials or the normal installed Olanga profile. Two unit file-symlink cases explicitly report Windows permission skips; real directory-junction coverage passed. Live GitHub discovery/download is verified separately after publication. The installer remains unsigned because no publisher certificate is configured; checksums identify bytes rather than publisher identity. Unattended updates and automatic rollback remain disabled.
+
+The final local installer is **155,303,561 bytes**, SHA-256 **bfeecebdb05a29c12a2bf3f6f61049c388a98f78c32c7a5d5526f3ef8dbc02dc**. GitHub builds its own installer and publishes that artifact's checksum and source commit. Generated installers, profiles, recordings, screenshots, logs and videos are excluded from Git.
+
+Evidence: ignored `build/qa/release-161/final/` (unit/static/native reports, production verification/startup modes, real NSIS result, `standby-interruption.json`, and matching awake-ready/released records), `build/qa/resources/release-161-final-baseline.json`, and the retained `navigation-followup/`, `voice-followup/` and `cache-followup/` diagnostics under `build/qa/release-161/`. Historical entries below are preserved unchanged.
+
+---
+
 # Audio lifecycle fixes and validation — October 21, 2026
 
 Three confirmed audio defects were corrected after the follow-up run below. Recording and wake-enrollment boundaries now replace the bundled recognizer instead of calling its nonexistent `reset()` method; stale wake callbacks cannot enter the next rough transcript. A sustained mute now stops native microphone tracks and closes Web Audio after five seconds, while short mute toggles retain their warm graph. Capture reloads alongside the speech model. A microphone disconnected during asynchronous setup is rejected and its unpublished graph/recognizer released before it can become active.
