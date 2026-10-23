@@ -51,6 +51,33 @@ async function waitFor(fn, label, timeout = 8000) {
   while (Date.now() - start < timeout) { if (await fn()) return; await pause(35); }
   throw new Error(label);
 }
+// Native resize acknowledgement can precede Chromium's responsive style/layout commit.
+// Compare scrolling only after the requested viewport and its CSS have settled.
+async function resizeSettings(width, height) {
+  main.setContentSize(width, height);
+  let previous = null, settled = null;
+  await waitFor(async () => {
+    await evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+    const state = await evaluate((width, height) => {
+      const container = document.querySelector('.settings-container'), header = document.querySelector('.settings-screen-header');
+      const box = container.getBoundingClientRect(), heading = header.getBoundingClientRect(), style = getComputedStyle(container);
+      return { width: innerWidth, height: innerHeight, short: matchMedia('(max-height: 650px)').matches,
+        narrow: matchMedia('(max-width: 760px)').matches, paddingTop: Number.parseFloat(style.paddingTop),
+        containerWidth: box.width, containerHeight: box.height, headerTop: heading.top, headerBottom: heading.bottom,
+        headerWidth: heading.width };
+    }, width, height);
+    const expectedTop = height <= 650 ? 40 : 48;
+    const ready = state.width === width && state.height === height && state.short === (height <= 650)
+      && state.narrow === (width <= 760) && state.paddingTop === expectedTop && state.headerTop === expectedTop
+      && Math.abs(state.containerWidth - width) <= 1 && Math.abs(state.containerHeight - height) <= 1;
+    const signature = JSON.stringify(state), stable = ready && signature === previous;
+    previous = ready ? signature : null; settled = state;
+    return stable;
+  }, 'Settings responsive CSS did not settle at ' + width + 'x' + height).catch(error => {
+    report.viewportFailure = { requested: { width, height }, observed: settled }; throw error;
+  });
+  (report.viewportSettles ||= []).push(settled);
+}
 async function click(selector) {
   await evaluate(selector => {
     const node = document.querySelector(selector);
@@ -270,7 +297,7 @@ app.whenReady().then(async () => {
       assert.notEqual(strong.text, normal.text); assert.notEqual(strong.border, normal.border); assert.notEqual(strong.background, normal.background);
       assert.equal(strong.orbBackground, normal.orbBackground); assert.equal(strong.orbAnimation, normal.orbAnimation); assert.deepEqual(strong.semanticColors, normal.semanticColors); assert.equal(strong.state, normal.state);
       await click('[data-screen="mainScreen"]'); await screenshot('home-high-contrast'); await click('[data-screen="settingsScreen"]');
-      main.setContentSize(400, 700);
+      await resizeSettings(400, 700);
       const accents = new Set();
       for (const accent of ['violet', 'blue', 'mint', 'rose', 'amber']) {
         await select('#appearanceAccentSelect', accent); await saved();
@@ -283,7 +310,7 @@ app.whenReady().then(async () => {
       }
       assert.equal(accents.size, 5, 'Every accent choice must change the rendered accent color');
       await screenshot('appearance-strong-minimum-width');
-      main.setContentSize(1100, 800);
+      await resizeSettings(1100, 800);
       const originalMode = await evaluate(() => statusLightMode);
       await evaluate(() => { statusLightMode = 'off'; window.electronAPI.setStatusLightMode('off'); });
       for (const state of ['listening', 'thinking', 'speaking']) {
@@ -472,9 +499,23 @@ app.whenReady().then(async () => {
       for (const [id, value] of [['appearanceAccentSelect', 'violet'], ['appearanceContrastSelect', 'standard'], ['appearanceGlowSelect', 'standard'], ['appearanceMotionSelect', 'system']]) await select('#' + id, value);
       await saved();
       report.settingsLayouts = [];
+      // Cross the short-window breakpoint in both directions, including rapid
+      // superseded native resizes, before taking the full layout baselines.
+      report.resizeTransitions = [];
+      for (const height of [652, 648, 652, 560]) {
+        main.setContentSize(1280, height === 652 ? 560 : 900);
+        await resizeSettings(1280, height);
+        const state = await evaluate(() => {
+          const header = document.querySelector('.settings-screen-header'), scroll = document.querySelector('.settings-scroll');
+          const before = header.getBoundingClientRect().top; scroll.scrollTop = scroll.scrollHeight;
+          return { height: innerHeight, before, after: header.getBoundingClientRect().top };
+        });
+        assert.equal(state.before, height <= 650 ? 40 : 48, 'Header must use the requested responsive layout');
+        assert.equal(state.after, state.before, 'Tab navigation must remain fixed after a rapid resize and scroll');
+        report.resizeTransitions.push(state);
+      }
       for (const [width, height] of [[400, 700], [768, 800], [1280, 900], [1536, 960], [2048, 1100], [1280, 560]]) {
-        main.setContentSize(width, height);
-        await waitFor(() => evaluate((width, height) => innerWidth === width && innerHeight === height, width, height), 'Settings fixture did not reach requested viewport');
+        await resizeSettings(width, height);
         for (const tab of ['User', 'Core', 'Privacy']) {
           await click('#settingsTab' + tab);
           await evaluate(() => { document.querySelector('.settings-scroll').scrollTop = 0; });
@@ -512,8 +553,7 @@ app.whenReady().then(async () => {
       await saved();
     });
     await check('Short Settings windows keep save errors, retry and focused controls reachable', async () => {
-      main.setContentSize(768, 560);
-      await waitFor(() => evaluate(() => innerWidth === 768 && innerHeight === 560), 'Short Settings viewport was not applied');
+      await resizeSettings(768, 560);
       await click('#settingsTabUser');
       const originalGlow = await evaluate(() => document.getElementById('appearanceGlowSelect').value);
       failNextPrefs = true;

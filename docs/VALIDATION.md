@@ -1,3 +1,15 @@
+# Release pipeline follow-up — October 23, 2026
+
+The first Windows CI run passed all **1,073 unit tests with no skips**, then caught a Settings fixture resize race: its baseline header was read before the short-window media rule committed. The test now waits for the requested viewport, matching responsive CSS and stable geometry across rendered frames. The original exact header-position assertion remains. All **22 local Settings checks and 18 layouts passed**, including rapid 652 → 648 → 652 → 560 px transitions. Production CSS is unchanged. [Original CI evidence](https://github.com/firestar3/Olanga-Desktop-Agent/actions/runs/39914094700).
+
+Compatible updates refresh **13 development-only lockfile entries**. Electron 44.7.0, electron-builder 26.15.3, Vosk 0.0.8 and the application dependencies remain unchanged. An isolated metadata install leaves the user's existing node_modules untouched. The refreshed full audit reports **0 critical, 0 high and 2 moderate warnings**, compared with 1 critical, 6 high and 2 moderate before the refresh. The critical node-tar build-host finding is covered by tar 7.5.22; these development packages are absent from the inspected application archive. The http-cache-semantics refresh is a compatible update; its maintainer disputes the original advisory.
+
+The remaining warnings represent [one UUID advisory](https://github.com/uuidjs/uuid/security/advisories/GHSA-w5hq-g745-h8pq) propagated through Vosk. Inspection of the bundled browser code finds a sole UUID call of v4() without buffers; affected v3/v5/v6 operations are unused and unexported. Overriding the separate UUID package would not replace that prebundled code. This is a scoped reachability assessment, not a claim that all dependencies are vulnerability-free.
+
+The local installer evidence below describes its recorded source/build. The release pipeline uses the refreshed lockfile and checks its own resulting installer. **Extended performance acceptance remains incomplete**, as recorded below; no new performance pass is claimed.
+
+---
+
 # Olanga 1.6.1 functional release acceptance — October 22, 2026
 
 The final functional, renderer, packaging and isolated installer checks passed on source **539e0b5d014c00257678d444a8e9227f8906c0d7**. The latest extended performance comparison is **incomplete**: the frozen baseline finished four of seven sampling states before Windows Modern Standby interrupted the debugger. **The final candidate was not measured, no comparison was computed, and earlier failures against the 23 original limits remain open.** This entry records functional release acceptance without a new performance sign-off.
