@@ -187,3 +187,74 @@ test('a lost flush acknowledgement falls back safely and obsolete processor call
   f.context.scriptNode.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(3200).fill(.1) } });
   assert.equal(f.context.pcmChunks.length, 1); assert.equal(f.context.isMicMuted, false); assert.equal(f.calls.requests, 1);
 });
+
+
+function recognitionFixture() {
+  const f = fixture(), recognizers = [], heard = [];
+  f.context.voskModel = { ready: true, KaldiRecognizer: class {
+    constructor() { this.handlers = {}; recognizers.push(this); }
+    setWords() {} on(name, handler) { this.handlers[name] = handler; }
+    remove() { this.removed = true; } acceptWaveformFloat() {}
+  } };
+  f.context.isVoskReady = true;
+  f.context.handleVoskResult = text => heard.push(text);
+  return { ...f, recognizers, heard };
+}
+
+test('processor recovery replaces recognition and ignores obsolete processor errors and audio', async () => {
+  const f = recognitionFixture(); await f.context.initMicrophone();
+  f.context.currentState = 'listening'; f.context.startRecording();
+  const before = f.recognizers.at(-1), failed = f.nodes[0];
+  const oldFailure = failed.onprocessorerror, oldReceive = failed.port.onmessage;
+  oldReceive({ data: { samples: new Float32Array(3200).fill(.1) } });
+  oldFailure();
+  assert.notEqual(f.recognizers.at(-1), before, 'Recovered capture must own a new recognizer');
+  assert.equal(before.removed, true);
+  before.handlers.result({ result: { text: 'old wake phrase' } });
+  before.handlers.partialresult({ result: { partial: 'old partial speech' } });
+  assert.deepEqual(f.heard, []);
+  f.recognizers.at(-1).handlers.result({ result: { text: 'fresh speech' } });
+  assert.deepEqual(f.heard, ['fresh speech']);
+  assert.equal(f.calls.records.length, 0); assert.equal(f.context.isRecording, false);
+  assert.equal(f.calls.fallback, 1); const errors = f.calls.errors.length;
+  oldFailure();
+  assert.equal(f.calls.fallback, 1, 'A queued error from the obsolete processor must be ignored');
+  assert.equal(f.calls.errors.length, errors);
+  f.context.currentState = 'listening'; f.context.startRecording();
+  oldReceive({ data: { samples: new Float32Array(3200).fill(.1) } });
+  assert.equal(f.context.pcmChunks.length, 0);
+  f.context.scriptNode.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(3200).fill(.1) } });
+  assert.equal(f.context.pcmChunks.length, 1); assert.equal(f.calls.requests, 1);
+});
+
+test('processor failure stops Live before recovered capture can stream across its discontinuity', async () => {
+  const f = fixture(); let active = true, streamed = 0; const stopped = [];
+  f.context.window.OlangaLiveConversation = {
+    isActive: () => active, acceptSamples() { streamed++; },
+    stop(message) { stopped.push(message); active = false; }
+  };
+  await f.context.initMicrophone(); f.context.currentState = 'listening';
+  f.nodes[0].port.onmessage({ data: { samples: new Float32Array(1024).fill(.1) } });
+  assert.equal(streamed, 1);
+  f.nodes[0].onprocessorerror();
+  assert.equal(active, false);
+  assert.deepEqual(stopped, ['Audio capture was interrupted. Start again when ready.']);
+  assert.equal(f.context.currentState, 'idle'); assert.equal(f.calls.fallback, 1);
+  f.context.scriptNode.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(1024).fill(.1) } });
+  assert.equal(streamed, 1); assert.equal(f.calls.records.length, 0);
+});
+
+test('a phrase check interrupted by processor failure rejects instead of reporting a healthy microphone', async () => {
+  const f = recognitionFixture(); await f.context.initMicrophone();
+  const phrase = f.context.window.OlangaAudioInput.testPhrase();
+  // A complete phrase before the discontinuity must not conceal the failure.
+  vm.runInContext("audioPhraseTest.finals.push('olanga audio check')", f.context);
+  const outcome = phrase.then(value => ({ value }), error => ({ error }));
+  try {
+    f.nodes[0].onprocessorerror();
+    const result = await Promise.race([outcome, new Promise(resolve => setTimeout(() => resolve({ pending: true }), 100))]);
+    assert.match(result.error?.message || '', /audio capture was interrupted/i);
+    assert.equal(vm.runInContext('audioPhraseTest', f.context), null);
+    assert.equal(f.calls.records.length, 0); assert.equal(f.context.isMicMuted, false);
+  } finally { f.context.cancelAudioPhraseTest('Fixture finished.'); await outcome; }
+});

@@ -14,6 +14,8 @@ const OPTIONAL_FEATURES = OlangaPrefs.OPTIONAL_FEATURES;
 let settingsSaveTimer = null;
 let settingsSaveQueue = Promise.resolve();
 let settingsSaveRevision = 0;
+// Durable device choice can lead capture readiness; ordinary saves must not undo it.
+let persistedMicrophoneDeviceId = null;
 let savingSettingsGeminiKey = false;
 let speechInputChangeVersion = 0;
 let runtimeFeatures = null;
@@ -117,10 +119,10 @@ function endOfSpeechKey() {
 let responsePreferences = { responseStyle: 'natural', preferredAddress: '' };
 window.OlangaResponsePreferences = Object.freeze({ snapshot: () => ({ ...responsePreferences }) });
 
-function applyPrefsToRuntime(prefs) {
+function applyPrefsToRuntime(prefs, { microphone = true } = {}) {
   const clean = OlangaPrefs.applyMigrations(prefs);
   window.OlangaAppearance?.apply(clean);
-  if (typeof microphonePreferredDeviceId !== 'undefined') microphonePreferredDeviceId = clean.microphoneDeviceId;
+  if (microphone && typeof microphonePreferredDeviceId !== 'undefined') microphonePreferredDeviceId = clean.microphoneDeviceId;
   responsePreferences = { responseStyle: clean.responseStyle, preferredAddress: clean.preferredAddress };
   bargeInEnabled = clean.bargeIn;
   streamRepliesEnabled = clean.streamReplies;
@@ -229,7 +231,8 @@ function scheduleSaveAppSettings() {
   }, 150);
 }
 
-async function persistAppPreferences(prefs) {
+async function persistAppPreferences(prefs, microphoneDeviceId = persistedMicrophoneDeviceId ?? prefs.microphoneDeviceId) {
+  prefs = { ...prefs, microphoneDeviceId };
   try {
     if (window.electronAPI?.secureStoreSet) {
       await window.electronAPI.secureStoreSet(APP_PREFS_STORE, JSON.stringify(prefs));
@@ -264,6 +267,7 @@ async function loadAppPreferences() {
     console.warn('[Olanga] Secure prefs load failed:', error.message);
   }
   applyPrefsToRuntime(prefs);
+  persistedMicrophoneDeviceId = prefs.microphoneDeviceId;
   writePrefsToLocalStorage(prefs); // keep local mirrors in sync with secure store
   return prefs;
 }
@@ -276,7 +280,7 @@ function saveAppSettings() {
     prefs = collectPrefsFromUI();
     // Preview immediately. Serialize durable writes so a slower old save cannot
     // replace a newer choice, and keep feedback attached to the latest edit.
-    applyPrefsToRuntime(prefs);
+    applyPrefsToRuntime(prefs, { microphone: false });
     if (typeof applyFeatureToggles === 'function') applyFeatureToggles();
     if (typeof updateMagpieSettingsVisibility === 'function') updateMagpieSettingsVisibility();
     setPreferencesSaveStatus('pending');
@@ -403,7 +407,7 @@ function restartSetupIntro({ replay = false } = {}) {
   }, SETUP_INTRO_MS);
 }
 
-function cancelSetupIntroReplay() {
+function cancelSetupIntroReplay({ restoreNavigation = false } = {}) {
   ++introReplayRevision;
   ++setupIntroRevision;
   clearTimeout(introReplayTimer); introReplayTimer = null;
@@ -411,6 +415,7 @@ function cancelSetupIntroReplay() {
   if (setupScreen?.classList.contains('setup-intro-replay')) {
     setupScreen.classList.add('hidden');
     setupScreen.classList.remove('setup-first-launch', 'setup-intro-done', 'setup-intro-replay');
+    if (restoreNavigation) document.querySelector('.floating-icons')?.classList.add('visible');
   }
 }
 
@@ -1243,7 +1248,7 @@ const screens = {
 floatingIcons.forEach(icon => {
   icon.addEventListener('click', () => {
     const targetScreen = icon.getAttribute('data-screen');
-    if (setupScreen?.classList.contains('setup-intro-replay')) cancelSetupIntroReplay();
+    if (setupScreen?.classList.contains('setup-intro-replay')) cancelSetupIntroReplay({ restoreNavigation: true });
 
     // Reselecting Settings must not reload stale runtime values over unsaved edits.
     if (targetScreen === 'settingsScreen' && !settingsScreen.classList.contains('hidden')) return;
@@ -1257,9 +1262,11 @@ floatingIcons.forEach(icon => {
       window.saveLocationSettings();
     }
 
-    if (typeof isWakeWordCapturing !== 'undefined' && isWakeWordCapturing
+    if (((typeof wakeCaptureOpen !== 'undefined' && wakeCaptureOpen)
+        || (typeof isWakeWordCapturing !== 'undefined' && isWakeWordCapturing))
         && typeof cancelWakeWordCapture === 'function') {
       cancelWakeWordCapture({ returnToSettings: false });
+      document.querySelector('.floating-icons')?.classList.add('visible');
     }
 
     // Show target screen
@@ -1348,8 +1355,8 @@ window.OlangaPortablePreferences = Object.freeze({
     const revision=++settingsSaveRevision;
     const operation=settingsSaveQueue.then(async()=>{
       const before=collectPrefsFromUI(),next={...before,...values};
-      try { await persistAppPreferences(next); applyPrefsToRuntime(next); applyPrefsToSettingsUI(next); if(revision===settingsSaveRevision)setPreferencesSaveStatus('saved'); }
-      catch(error){try{await persistAppPreferences(before);applyPrefsToRuntime(before);applyPrefsToSettingsUI(before);}catch(rollbackError){throw new Error('Preferences could not be restored or rolled back. Keep the recovery copy. '+rollbackError.message);}throw error;}
+      try { await persistAppPreferences(next); applyPrefsToRuntime(next, { microphone: false }); applyPrefsToSettingsUI(next); if(revision===settingsSaveRevision)setPreferencesSaveStatus('saved'); }
+      catch(error){try{await persistAppPreferences(before);applyPrefsToRuntime(before, { microphone: false });applyPrefsToSettingsUI(before);}catch(rollbackError){throw new Error('Preferences could not be restored or rolled back. Keep the recovery copy. '+rollbackError.message);}throw error;}
     });
     settingsSaveQueue=operation.catch(()=>{});return operation;
   }
@@ -1357,12 +1364,27 @@ window.OlangaPortablePreferences = Object.freeze({
 
 window.OlangaMicrophonePreference = Object.freeze({
   save(deviceId) {
+    // Apply pending text/toggle edits before this device transaction owns the queue.
+    if (settingsSaveTimer) saveAppSettings();
     clearTimeout(settingsSaveTimer); settingsSaveTimer = null;
     const revision = ++settingsSaveRevision;
     const operation = settingsSaveQueue.then(async () => {
-      const before = collectPrefsFromUI(), next = { ...before, microphoneDeviceId: deviceId };
-      try { await persistAppPreferences(next); if (revision === settingsSaveRevision) setPreferencesSaveStatus('saved'); }
-      catch (error) { try { await persistAppPreferences(before); } catch (_) {} throw error; }
+      const before = collectPrefsFromUI();
+      const previousDeviceId = persistedMicrophoneDeviceId ?? before.microphoneDeviceId;
+      try {
+        await persistAppPreferences(before, deviceId);
+        persistedMicrophoneDeviceId = deviceId;
+        if (revision === settingsSaveRevision) setPreferencesSaveStatus('saved');
+      } catch (error) {
+        if (revision === settingsSaveRevision) setPreferencesSaveStatus('error');
+        try {
+          // Keep text/toggle edits made while the failed device write was pending.
+          await persistAppPreferences(collectPrefsFromUI(), previousDeviceId);
+        } catch (rollbackError) {
+          throw new Error(error.message + ' The saved microphone selection could not be restored: ' + rollbackError.message);
+        }
+        throw error;
+      }
     });
     settingsSaveQueue = operation.catch(() => {}); return operation;
   }

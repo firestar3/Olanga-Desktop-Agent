@@ -531,11 +531,16 @@ async function initializeMicrophoneResources({ deviceId = microphonePreferredDev
           finally { processor.port.postMessage('ack'); }
         };
         resources.processor.onprocessorerror = () => {
-          if (microphoneResources !== resources) return;
+          if (microphoneResources !== resources || resources.processor !== processor) return;
+          // A failed processor loses the same speech boundary as a capture gap.
+          // Never carry its recognition, Live stream or setup check into recovery.
+          cancelAudioPhraseTest('Audio capture was interrupted. Try the microphone check again.');
           cancelRecording();
+          window.OlangaLiveConversation?.stop?.('Audio capture was interrupted. Start again when ready.');
           if (currentState === State.LISTENING) setState(State.IDLE);
           try {
             replaceCaptureWithLegacy(resources);
+            resetMicrophoneRecognition();
             showError('Audio capture recovered. Please repeat the interrupted request.');
           } catch (_) { microphoneRecoveryNeeded = true; releaseMicrophoneResources(resources); showError('Audio capture stopped. Select your speech input again.'); }
         };
@@ -1247,7 +1252,6 @@ window.OlangaAudioInput = Object.freeze({
       if (id === previous && (!microphoneRequested || isMicMuted || audioInputSnapshot().active)) return audioInputSnapshot();
       if (!window.OlangaMicrophonePreference) throw new Error('Microphone preferences are still loading.');
       await window.OlangaMicrophonePreference.save(id);
-      microphonePreferredDeviceId = id;
       let interrupted = !!audioSetupBusy(true), opened = true;
       // A mute while preferences were being saved cancels the need to open a
       // new graph. Selection never starts voice input the user left off.
@@ -1260,6 +1264,7 @@ window.OlangaAudioInput = Object.freeze({
         catch (_) { throw new Error('The microphone change did not finish. Its saved selection could not be restored. Re-select your microphone when settings can be saved.'); }
         throw new Error(interrupted ? 'The microphone change was interrupted by another request or mute. The previous selection was retained.' : 'That microphone could not open. The previous microphone is still selected.');
       }
+      microphonePreferredDeviceId = id;
       if (microphoneResources) discardLocalSpeechCapture();
       return audioInputSnapshot();
     } finally { audioInputSwitching = false; }

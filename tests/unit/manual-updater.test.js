@@ -6,7 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { Readable } = require('node:stream');
-const { createReleaseService, RELEASES_URL, LATEST_API_URL } = require('../../desktop/release-service');
+const { createReleaseService, validateRelease, RELEASES_URL, LATEST_API_URL } = require('../../desktop/release-service');
 const { createManualUpdater, createElectronUpdateFetch, parseChecksum, isTrustedDownloadUrl } = require('../../desktop/manual-updater');
 
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -128,6 +128,152 @@ test('the next explicit download removes abandoned updater files but preserves u
   assert.equal(fs.existsSync(abandoned), false);
   assert.equal(fs.readFileSync(path.join(unrelated, 'keep.txt'), 'utf8'), 'unrelated data');
   assert.equal(h.updater.getState().phase, 'ready');
+});
+
+function completedCache(directory, version, suffix = 'aB3dE5') {
+  const data = fixture(version), cache = path.join(directory, `update-${version}-${suffix}`);
+  fs.mkdirSync(cache);
+  const installer = path.join(cache, `Olanga-Setup-${version}.exe`), metadata = path.join(cache, 'cache.json');
+  fs.writeFileSync(installer, data.installer);
+  fs.writeFileSync(metadata, JSON.stringify({ schema: 1, complete: true, release: validateRelease(data.payload).downloadCandidate, hash: sha(data.installer) }));
+  return { directory: cache, installer, metadata };
+}
+
+test('explicit Check reclaims completed installers already installed without startup cleanup or deleting future caches', async t => {
+  const h = harness(t);
+  const old = completedCache(h.directory, '1.3.9'), installed = completedCache(h.directory, '1.4.0'), future = completedCache(h.directory, '1.4.2');
+  h.updater.getState(); await h.updater.download(); await h.updater.install(); await flush();
+  for (const cache of [old, installed, future]) assert.equal(fs.existsSync(cache.installer), true, 'No cleanup before an explicit operation');
+  assert.equal((await h.updater.check()).canDownload, true);
+  assert.equal(fs.existsSync(old.directory), false, 'Previously installed update cache should be reclaimed');
+  assert.equal(fs.existsSync(installed.directory), false, 'Current installed update cache should be reclaimed');
+  assert.equal(fs.existsSync(future.installer), true, 'Newer cached installers remain available');
+});
+
+test('explicit Check publishes feedback and starts metadata immediately while cache cleanup is pending', async t => {
+  const h = harness(t), old = completedCache(h.directory, '1.3.9');
+  const readdir = fs.promises.readdir;
+  let releaseCleanup, cleanupPending = false;
+  const cleanupGate = new Promise(resolve => { releaseCleanup = resolve; });
+  const mock = t.mock.method(fs.promises, 'readdir', async (directory, options) => {
+    if (directory === h.directory && options?.withFileTypes) {
+      cleanupPending = true;
+      await cleanupGate;
+    }
+    return readdir.call(fs.promises, directory, options);
+  });
+  const checking = h.updater.check();
+  try {
+    await until(() => cleanupPending);
+    assert.equal(h.updater.getState().phase, 'checking', 'Slow disk cleanup must not postpone visible checking feedback');
+    assert.equal(h.calls.some(call => call.url === LATEST_API_URL), true, 'Metadata check should begin before disk cleanup finishes');
+    assert.equal(fs.existsSync(old.installer), true, 'Filesystem cleanup remains deliberately held');
+  } finally { releaseCleanup(); await checking; mock.mock.restore(); }
+  assert.equal(h.updater.getState().canDownload, true);
+  assert.equal(fs.existsSync(old.directory), false);
+});
+
+test('explicit Download reclaims obsolete completed caches and preserves the ready installer through later checks', async t => {
+  const h = harness(t); await h.updater.check();
+  const old = completedCache(h.directory, '1.3.9'), future = completedCache(h.directory, '1.4.2');
+  assert.equal((await h.updater.download()).phase, 'ready');
+  assert.equal(fs.existsSync(old.directory), false);
+  const ready = path.join(h.directory, fs.readdirSync(h.directory).find(name => name.startsWith('update-1.4.1-')), 'Olanga-Setup-1.4.1.exe');
+  assert.equal((await h.updater.check()).canInstall, true);
+  assert.deepEqual(fs.readFileSync(ready), h.data.installer);
+  assert.equal(fs.existsSync(future.installer), true);
+});
+
+test('completed cache cleanup preserves malformed ownership, unknown contents, directories and links', async t => {
+  const h = harness(t), preserved = [];
+  const make = (version, suffix, change) => {
+    const cache = completedCache(h.directory, version, suffix); change?.(cache); preserved.push(cache.directory); return cache;
+  };
+  make('1.3.0', 'aaaaaa', c => fs.writeFileSync(path.join(c.directory, 'keep.txt'), 'unrelated'));
+  make('1.3.0', 'bbbbbb', c => fs.mkdirSync(path.join(c.directory, 'other')));
+  make('1.3.0', 'cccccc', c => fs.writeFileSync(c.metadata, 'broken metadata'));
+  make('1.3.0', 'dddddd', c => { const record = JSON.parse(fs.readFileSync(c.metadata)); record.release.version = '1.2.0'; fs.writeFileSync(c.metadata, JSON.stringify(record)); });
+  make('1.3.0', 'eeeeee', c => { fs.unlinkSync(c.installer); fs.mkdirSync(c.installer); });
+  make('1.3.0', 'ffffff', c => { fs.unlinkSync(c.metadata); fs.mkdirSync(c.metadata); });
+  make('1.3.0', 'gggggg', c => fs.writeFileSync(c.metadata, 'x'.repeat(8193)));
+  for (const [index, update] of [
+    record => { record.complete = false; }, record => { record.schema = 2; },
+    record => { record.hash = 'not-a-hash'; }, record => { record.release.installer.size++; },
+    record => { record.release.installer.url = 'https://example.com/unrelated'; },
+    record => { record.release.installer.name = 'keep.exe'; },
+  ].entries()) make('1.3.0', 'bad' + String(index).padStart(3, '0'), c => {
+    const record = JSON.parse(fs.readFileSync(c.metadata)); update(record); fs.writeFileSync(c.metadata, JSON.stringify(record));
+  });
+  for (const [index, name] of ['update-01.3.0-hhhhhh', 'update-v1.3.0-hhhhhh', 'update-1.3.0-beta-hhhhhh', 'update-1.3.0+build-hhhhhh', 'update-1.3.0-hhhhh', 'update-1.3.0-hhhhhhh'].entries()) {
+    const cache = make('1.3.0', 'malf' + String(index).padStart(2, '0'));
+    const renamed = path.join(h.directory, name); fs.renameSync(cache.directory, renamed); preserved.pop(); preserved.push(renamed);
+  }
+  const linkedTarget = make('1.2.0', 'target');
+  // The target has unknown user data and must survive even if the matching link is skipped.
+  fs.writeFileSync(path.join(linkedTarget.directory, 'keep.txt'), 'linked target');
+  const linkedDirectory = path.join(h.directory, 'update-1.3.0-jjjjjj');
+  fs.symlinkSync(linkedTarget.directory, linkedDirectory, process.platform === 'win32' ? 'junction' : 'dir'); preserved.push(linkedDirectory);
+  const fileLinkCache = make('1.3.0', 'kkkkkk');
+  fs.unlinkSync(fileLinkCache.installer);
+  let fileSymlinkAvailable = true;
+  try { fs.symlinkSync(linkedTarget.installer, fileLinkCache.installer, 'file'); }
+  catch (error) {
+    if (error.code !== 'EPERM') throw error;
+    fileSymlinkAvailable = false;
+    fs.writeFileSync(path.join(fileLinkCache.directory, 'keep.txt'), 'preserve incomplete fixture');
+  }
+  const marker = completedCache(h.directory, '1.3.0', 'remove');
+  assert.equal((await h.updater.check()).ok, true);
+  assert.equal(fs.existsSync(marker.directory), false, 'The cleanup must run while preserving unsafe entries');
+  for (const directory of preserved) assert.equal(fs.existsSync(directory), true, directory);
+  assert.equal(fs.readFileSync(path.join(linkedTarget.directory, 'keep.txt'), 'utf8'), 'linked target');
+  await t.test('native file symlinks cannot be cleaned as regular installer files', { skip: !fileSymlinkAvailable && 'Windows EPERM: this account cannot create file symlinks.' }, () => {
+    assert.equal(fs.lstatSync(fileLinkCache.installer).isSymbolicLink(), true);
+  });
+  fs.unlinkSync(linkedDirectory);
+});
+
+test('obsolete cache cleanup never follows an updates-root directory junction', async t => {
+  const h = harness(t), target = path.join(h.directory, 'protected-data'), linked = path.join(h.directory, 'linked-updates');
+  fs.mkdirSync(target);
+  const old = completedCache(target, '1.3.9');
+  fs.symlinkSync(target, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  const restarted = restartHarness(t, h, { updatesDir: linked });
+  try {
+    assert.equal((await restarted.updater.check()).canDownload, true);
+    assert.equal(fs.existsSync(old.installer), true);
+    assert.equal(JSON.parse(fs.readFileSync(old.metadata)).complete, true);
+  } finally { fs.unlinkSync(linked); }
+});
+
+test('obsolete cache cleanup errors cannot invalidate an otherwise ready update', async t => {
+  const h = harness(t); await h.updater.check(); await h.updater.download();
+  const readyFile = downloadedFile(h.directory), old = completedCache(h.directory, '1.3.9');
+  const unlink = fs.promises.unlink;
+  const mock = t.mock.method(fs.promises, 'unlink', async filename => {
+    if (filename === old.installer) throw Object.assign(new Error('fixture file is busy'), { code: 'EPERM' });
+    return unlink.call(fs.promises, filename);
+  });
+  try {
+    const result = await h.updater.check();
+    assert.equal(result.canInstall, true); assert.equal(result.phase, 'ready');
+    assert.deepEqual(fs.readFileSync(readyFile), h.data.installer);
+    assert.equal(fs.existsSync(old.installer), true);
+  } finally { mock.mock.restore(); }
+  assert.equal((await h.updater.check()).canInstall, true);
+  assert.equal(fs.existsSync(old.directory), false, 'A later explicit check can retry skipped cleanup');
+});
+
+test('a metadata Check cannot run cleanup while a download owns the updater operation', async t => {
+  let release;
+  const h = harness(t, { fetchOverride: url => url.endsWith('.exe') ? new Promise(resolve => { release = resolve; }) : undefined });
+  await h.updater.check(); const download = h.updater.download(); await until(() => !!release);
+  const old = completedCache(h.directory, '1.3.9');
+  await h.updater.check(); assert.equal(fs.existsSync(old.installer), true);
+  release(response(h.data.installer)); assert.equal((await download).canInstall, true);
+  assert.equal(fs.existsSync(old.installer), true, 'Cleanup cannot start after a download has taken ownership of its files');
+  assert.equal((await h.updater.check()).canInstall, true);
+  assert.equal(fs.existsSync(old.directory), false);
 });
 
 test('ready installer survives an unchanged explicit recheck without being downloaded twice', async t => {

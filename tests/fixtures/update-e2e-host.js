@@ -141,8 +141,17 @@ app.whenReady().then(async () => {
     await click('[data-screen="mainScreen"]'); await openUpdates();
     check('Apps shows a completed usable restart', await evaluate(() => /installed and ready/.test(document.getElementById('releaseStatus').textContent)));
     check('Update remains manual after restart', report.requests.filter(url => url.includes('/releases/latest')).length === 1 && report.calls.filter(channel => channel === 'update-install').length === 1);
-    check('No provider, microphone or unrelated external action occurred', report.forbidden.length === 0 && report.rendererErrors.length === 0);
+    main.webContents.invalidate(); await pause(150); await main.webContents.capturePage(); await pause(80);
     fs.writeFileSync(path.join(root, 'reopened.png'), (await main.webContents.capturePage()).toPNG());
+    const updatesDirectory = path.join(profile, 'updates'), cachePrefix = 'update-' + targetVersion + '-';
+    const installedCaches = () => fs.readdirSync(updatesDirectory).filter(name => name.startsWith(cachePrefix) && /^[a-z0-9]{6}$/i.test(name.slice(cachePrefix.length)));
+    const beforeCleanup = installedCaches();
+    assert.equal(beforeCleanup.length, 1, 'The completed real installer must still be cached before an explicit check');
+    report.reclaimedInstallerBytes = fs.statSync(path.join(updatesDirectory, beforeCleanup[0], filename)).size;
+    await click('#checkRelease');
+    await waitFor(async () => { const state = await evaluate(() => window.electronAPI.getUpdateState()); return state.status === 'up-to-date' && state.phase !== 'checking'; }, 'Post-update explicit check did not complete.');
+    check('Explicit check reclaims the installed version cache and preserves the usable installation', installedCaches().length === 0 && fs.existsSync(app.getPath('exe')) && main.isVisible());
+    check('No provider, microphone or unrelated external action occurred', report.forbidden.length === 0 && report.rendererErrors.length === 0);
     report.passed = true; report.finishedAt = new Date().toISOString(); finished = true; clearTimeout(timeout); writeReport(); app.quit();
   }
 }).catch(fail);

@@ -9,7 +9,7 @@ function fixture({reduced=false}={}){
  clearTimeout:id=>timers.delete(id),window:{matchMedia:()=>({matches:reduced}),setTimeout:(fn,ms)=>{const timer={id:++seq,fn,ms};all.push(timer);timers.set(timer.id,timer);return timer.id;}}});
  const source=fs.readFileSync(path.join(__dirname,'../../js/settings.js'),'utf8');
  vm.runInContext(source.slice(source.indexOf('const SETUP_INTRO_MS ='),source.indexOf('// Loads keys from the secure store')),context);
- return {context,setup,main,settings,all,timers,play:()=>context.playSetupIntroReplay()};
+ return {context,setup,main,settings,nav,all,timers,play:()=>context.playSetupIntroReplay()};
 }
 test('intro replay keeps its replay presentation mode until completion',()=>{
  const f=fixture();f.play();assert.equal(f.setup.classList.contains('setup-intro-replay'),true);assert.equal(f.settings.classList.contains('hidden'),true);
@@ -22,6 +22,7 @@ test('an intro completion after another screen opens cannot force Home',()=>{
 });
 test('queued callbacks from an earlier replay cannot finish or advance a replacement replay',()=>{
  const f=fixture();f.play();const previous=[...f.all];f.play();
+ assert.equal(f.nav.classList.contains('visible'),false,'replacement replay keeps navigation hidden');
  for(const timer of previous)timer.fn();
  assert.equal(f.setup.classList.contains('hidden'),false);assert.equal(f.main.classList.contains('hidden'),true);
  assert.equal(f.setup.classList.contains('setup-intro-done'),false);
@@ -31,4 +32,20 @@ test('reduced-motion replay completes without retaining a return timer',()=>{
  const f=fixture({reduced:true});f.play();f.all.find(t=>t.ms===700).fn();
  assert.equal(f.setup.classList.contains('hidden'),true);assert.equal(f.main.classList.contains('hidden'),false);
  assert.equal([...f.timers.values()].filter(t=>t.ms===700).length,0);
+});
+
+test('leaving an owned intro replay restores the global navigation',()=>{
+ const f=fixture();f.play();const previous=[...f.all];
+ f.context.cancelSetupIntroReplay({restoreNavigation:true});
+ f.settings.classList.remove('hidden');for(const timer of previous)timer.fn();
+ assert.equal(f.nav.classList.contains('visible'),true);
+ assert.equal(f.settings.classList.contains('hidden'),false);
+ assert.equal(f.main.classList.contains('hidden'),true);
+ assert.equal(f.setup.classList.contains('hidden'),true);
+});
+test('cancelling a replay cannot expose navigation during first-run setup',()=>{
+ const f=fixture();f.nav.classList.remove('visible');f.setup.classList.remove('hidden');
+ f.context.restartSetupIntro();f.context.cancelSetupIntroReplay({restoreNavigation:true});
+ assert.equal(f.nav.classList.contains('visible'),false);
+ assert.equal(f.setup.classList.contains('hidden'),false);
 });

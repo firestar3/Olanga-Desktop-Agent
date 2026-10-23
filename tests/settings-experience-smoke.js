@@ -148,10 +148,37 @@ app.whenReady().then(async () => {
           callbacks.forEach(callback => callback());
           return { replayMode, settings: !settingsScreen.classList.contains('hidden'), home: !mainScreen.classList.contains('hidden'),
             setup: !setupScreen.classList.contains('hidden'), core: document.getElementById('settingsTabCore').getAttribute('aria-selected'),
-            setupRestricted: settingsScreen.classList.contains('settings-before-setup') };
+            setupRestricted: settingsScreen.classList.contains('settings-before-setup'), navigation: document.querySelector('.floating-icons').classList.contains('visible') };
         } finally { window.setTimeout = nativeTimeout; cancelSetupIntroReplay(); }
       });
-      assert.deepEqual(state, { replayMode: true, settings: true, home: false, setup: false, core: 'true', setupRestricted: false });
+      assert.deepEqual(state, { replayMode: true, settings: true, home: false, setup: false, core: 'true', setupRestricted: false, navigation: true });
+      await waitFor(() => evaluate(() => getComputedStyle(document.querySelector('.floating-icons')).opacity === '1'), 'Global navigation remained invisible after leaving intro replay');
+    });
+    await check('Normal navigation exits typed and recording wake enrollment without leaving speech blocked', async () => {
+      const states = [];
+      for (const phase of ['type', 'record']) {
+        const state = await evaluate(phase => {
+          openWakeWordCaptureScreen();
+          // Exercise recording ownership without opening or requesting a microphone.
+          if (phase === 'record') { wakeCapturePhase = 'record'; isWakeWordCapturing = true; }
+          const before = { open: wakeCaptureOpen, capturing: isWakeWordCapturing, navigation: document.querySelector('.floating-icons').classList.contains('visible') };
+          document.querySelector('.floating-icon[data-screen="' + (phase === 'type' ? 'mainScreen' : 'settingsScreen') + '"]').click();
+          return { before, open: wakeCaptureOpen, capturing: isWakeWordCapturing,
+            enrollmentHidden: document.getElementById('wakeWordCaptureScreen').classList.contains('hidden'),
+            destinationVisible: !(phase === 'type' ? mainScreen : settingsScreen).classList.contains('hidden'),
+            navigation: document.querySelector('.floating-icons').classList.contains('visible') };
+        }, phase);
+        states.push({ phase, ...state });
+      }
+      assert.deepEqual(states, ['type', 'record'].map(phase => ({ phase, before: { open: true, capturing: phase === 'record', navigation: false }, open: false, capturing: false,
+        enrollmentHidden: true, destinationVisible: true, navigation: true })));
+      const returned = await evaluate(() => {
+        openWakeWordCaptureScreen(); cancelWakeWordCapture();
+        return { open: wakeCaptureOpen, capturing: isWakeWordCapturing, settings: !settingsScreen.classList.contains('hidden'),
+          enrollmentHidden: document.getElementById('wakeWordCaptureScreen').classList.contains('hidden'),
+          navigation: document.querySelector('.floating-icons').classList.contains('visible') };
+      });
+      assert.deepEqual(returned, { open: false, capturing: false, settings: true, enrollmentHidden: true, navigation: true });
     });
     await check('User, Core and Privacy tabs expose exactly one labelled panel with keyboard navigation', async () => {
       await click('#settingsTabUser');

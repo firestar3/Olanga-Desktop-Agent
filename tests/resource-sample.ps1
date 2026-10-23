@@ -38,6 +38,7 @@ try{
   # Avoid accidentally loading incompatible PowerShell 7 CIM modules.
   $env:PSModulePath=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules'
   $snapshotWatch=[Diagnostics.Stopwatch]::StartNew()
+  $identityChanges=@()
   for($attempt=0;$attempt -lt 2;$attempt++){
     $snapshotProcs=@(Get-Process Olanga -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $expected })
     if($snapshotProcs.Count -eq 0){throw 'Benchmark app exited before the private working-set snapshot'}
@@ -52,7 +53,11 @@ try{
     }
     # A process may start/exit during the provider query. Retry the whole
     # snapshot once rather than silently publishing a partial application sum.
-    if(!$stable){if($attempt -eq 0){continue};throw 'App process set changed during both private working-set snapshots'}
+    if(!$stable){
+      $identityChanges+=@{before=@($snapshotProcs | ForEach-Object { @{pid=$_.Id;start=$identities[$_.Id]} });after=@($currentProcs | ForEach-Object { @{pid=$_.Id;start=$_.StartTime.ToUniversalTime().Ticks} })}
+      if($attempt -eq 0){continue}
+      throw ('App process set changed during both private working-set snapshots: '+($identityChanges | ConvertTo-Json -Depth 5 -Compress))
+    }
     $byPid=@{}
     foreach($counter in $counters){$byPid[[int]$counter.IDProcess]=$counter.WorkingSetPrivate}
     $snapshotRows=@()

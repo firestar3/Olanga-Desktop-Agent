@@ -282,6 +282,55 @@ function createManualUpdater({
     }
     return null;
   }
+  async function cleanInstalledDownloads() {
+    // Completed installers stay on disk through handoff. Reclaim only known
+    // obsolete caches during an explicit operation; newer downloads can still
+    // be restored after a restart and unrelated user data is never ours.
+    const installed = String(getInstalledVersion()), parsed = parseVersion(installed);
+    if (!parsed || parsed.version !== installed || parsed.prerelease.length || !/^\d+\.\d+\.\d+$/.test(installed)) return;
+    let entries, realRoot;
+    try { realRoot = await checkedDirectory(root); entries = await fs.promises.readdir(root, { withFileTypes: true }); }
+    catch { return; }
+    for (const entry of entries) {
+      if (disposed) return;
+      const match = /^update-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))-[a-z\d]{6}$/i.exec(entry.name);
+      if (!entry.isDirectory() || !match || !parseVersion(match[1]) || compareVersions(match[1], installed) > 0) continue;
+      const directory = path.join(root, entry.name);
+      if (ready?.directory === directory) continue;
+      try {
+        if (path.dirname(await checkedDirectory(directory)) !== realRoot) continue;
+        const installerName = `Olanga-Setup-${match[1]}.exe`, names = await fs.promises.readdir(directory);
+        if (names.length !== 2 || !names.includes('cache.json') || !names.includes(installerName)) continue;
+        const files = [path.join(directory, installerName), path.join(directory, 'cache.json')];
+        const stats = await Promise.all(files.map(file => fs.promises.lstat(file)));
+        if (stats.some(stat => !stat.isFile() || stat.isSymbolicLink()) || stats[1].size < 2 || stats[1].size > 8192) continue;
+        if ((await Promise.all(files.map(file => fs.promises.realpath(file)))).some(file => path.dirname(file) !== path.join(realRoot, entry.name))) continue;
+        const handle = await fs.promises.open(files[1], 'r');
+        let record;
+        try {
+          const current = await handle.stat(), buffer = Buffer.alloc(8193);
+          if (!current.isFile() || current.ino !== stats[1].ino || current.size !== stats[1].size) continue;
+          const read = await handle.read(buffer, 0, buffer.length, 0);
+          if (read.bytesRead !== stats[1].size) continue;
+          record = JSON.parse(buffer.subarray(0, read.bytesRead).toString('utf8'));
+        } finally { await handle.close(); }
+        if (record.schema !== 1 || record.complete !== true || record.release?.version !== match[1] || !validCandidate(record.release, false)
+          || !/^[a-f\d]{64}$/.test(record.hash) || stats[0].size !== record.release.installer.size
+          || (record.release.installer.sha256 && record.release.installer.sha256 !== record.hash)) continue;
+        // Never recursively delete: a newly added unknown child must survive.
+        // Recheck identity immediately before unlinking each expected file.
+        for (let index = 0; index < files.length; index++) {
+          if (disposed || ready?.directory === directory || await checkedDirectory(root) !== realRoot
+            || await checkedDirectory(directory) !== path.join(realRoot, entry.name)) throw new Error('cache-changed');
+          const current = await fs.promises.lstat(files[index]);
+          if (!current.isFile() || current.isSymbolicLink() || current.ino !== stats[index].ino
+            || current.dev !== stats[index].dev || current.size !== stats[index].size || current.mtimeMs !== stats[index].mtimeMs) throw new Error('cache-changed');
+          await fs.promises.unlink(files[index]);
+        }
+        await fs.promises.rmdir(directory);
+      } catch { /* Busy, changed or unrecognized caches cannot disrupt updating. */ }
+    }
+  }
   async function cleanAbandonedDownloads() {
     // Explicit Download removes abandoned partials. Complete indexed downloads
     // are preserved for explicit Check to verify after a restart.
@@ -307,8 +356,8 @@ function createManualUpdater({
     return operation.promise;
   }
   function sameCandidate(left, right) { return !!left && !!right && JSON.stringify(left) === JSON.stringify(right); }
-  function validCandidate(value) {
-    if (!value || compareVersions(value.version, String(getInstalledVersion())) <= 0) return false;
+  function validCandidate(value, requireNewer = true) {
+    if (!value || !parseVersion(value.version) || (requireNewer && compareVersions(value.version, String(getInstalledVersion())) <= 0)) return false;
     for (const [asset, expectedName, maximum] of [[value.installer, `Olanga-Setup-${value.version}.exe`, MAX_INSTALLER_BYTES], [value.checksums, 'SHA256SUMS', MAX_CHECKSUM_BYTES]]) {
       if (!asset || asset.name !== expectedName || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > maximum) return false;
       // The release service already validated the tag. Defend this boundary too.
@@ -328,7 +377,11 @@ function createManualUpdater({
       const oldCandidate = candidate;
       publish({ phase: 'checking', message: 'Checking GitHub for the latest stable release…' });
       try {
-        const result = await releaseService.check({ force });
+        // Start network work immediately; slow cache storage must not delay
+        // feedback or add its duration to the metadata request.
+        const [checked] = await Promise.allSettled([releaseService.check({ force }), cleanInstalledDownloads()]);
+        if (checked.status === 'rejected') throw checked.reason;
+        const result = checked.value;
         if (disposed) return getState();
         // A failed metadata recheck must not discard an already verified file.
         // Installation will still rehash it, and the failed check stays visible.
@@ -379,6 +432,7 @@ function createManualUpdater({
         if (signal.aborted) throw new Error('cancelled');
         await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
         await checkedDirectory(root);
+        await cleanInstalledDownloads();
         await cleanAbandonedDownloads();
         if (signal.aborted) throw new Error('cancelled');
         directory = await fs.promises.mkdtemp(path.join(root, `update-${release.version}-`));

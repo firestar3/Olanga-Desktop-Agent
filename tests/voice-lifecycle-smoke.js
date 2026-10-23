@@ -115,6 +115,71 @@ app.whenReady().then(async () => {
         assert.equal(report.coldResumes.at(-1).nativeRecognizers, 1, 'Recognition cannot accumulate across resumes');
       });
     }
+    await check('An actual offline worklet exception identifies the native processor error event', async () => {
+      const state = await evaluate(async () => {
+        // Offline rendering exercises a real processor exception without opening
+        // a microphone or producing speaker output. Load under production CSP.
+        const context = new OfflineAudioContext(1, 1024, 16000);
+        await context.audioWorklet.addModule('tests/fixtures/failed-audio-worklet.js');
+        const processor = new AudioWorkletNode(context, 'olanga-fixture-failure');
+        let timer;
+        const failure = new Promise((resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('The offline processor error did not arrive')), 5000);
+          processor.onprocessorerror = event => resolve({ type: event.type, constructor: event.constructor.name,
+            message: event.message, trusted: event.isTrusted });
+        });
+        processor.connect(context.destination);
+        try {
+          const [, observed] = await Promise.all([context.startRendering(), failure]);
+          voiceFixture.processorErrorEventType = observed.type;
+          return observed;
+        } finally { clearTimeout(timer); processor.onprocessorerror = null; processor.disconnect(); }
+      });
+      assert.equal(state.constructor, 'ErrorEvent'); assert.equal(state.trusted, true);
+      assert.equal(typeof state.type, 'string'); assert(state.type.length > 0);
+      assert.match(state.message, /Expected offline voice fixture failure/);
+      report.nativeProcessorError = state;
+    });
+    await check('Injected native worklet failure stops Live, replaces recognition and keeps capture usable', async () => {
+      const state = await evaluate(() => {
+        const resources = microphoneResources, failedProcessor = resources.processor, old = voskRecognizer;
+        const graph = audioContext, track = micStream.getAudioTracks()[0], originalLive = window.OlangaLiveConversation;
+        if (!(failedProcessor instanceof AudioWorkletNode)) throw new Error('The native preferred worklet must be active before fault injection');
+        const originalHandler = handleVoskResult, heard = [], stopped = [];
+        let active = true;
+        try {
+          handleVoskResult = text => heard.push(text);
+          window.OlangaLiveConversation = { isActive: () => active, stop: message => { active = false; stopped.push(message); } };
+          setState(State.LISTENING);
+          const queuedFailure = failedProcessor.onprocessorerror;
+          // Chromium 152 delivers the property callback with an ErrorEvent
+          // named 'error'. Use the event type observed from a real exception;
+          // a synthetic Event('processorerror') never invokes this property.
+          failedProcessor.dispatchEvent(new ErrorEvent(voiceFixture.processorErrorEventType, { message: 'Injected processor failure' }));
+          const recovered = resources.processor, recognition = voskRecognizer;
+          old.dispatchEvent(new CustomEvent('partialresult', { detail: { result: { partial: 'stale interrupted speech' } } }));
+          const stale = heard.slice();
+          recognition.dispatchEvent(new CustomEvent('partialresult', { detail: { result: { partial: 'fresh speech' } } }));
+          queuedFailure();
+          voiceFixture.processorRecovery = { processor: recovered, frame: resources.frame };
+          return { liveActive: active, stopped, replaced: recognition !== old,
+            oldRegistered: voskModel.recognizers.has(old.id), recognizers: voskModel.recognizers.size,
+            stale, heard, legacy: recovered instanceof ScriptProcessorNode, sameProcessor: resources.processor === recovered,
+            sameRecognizer: voskRecognizer === recognition, sameGraph: graph === audioContext,
+            sameTrack: micStream.getAudioTracks()[0] === track, track: track.readyState, context: audioContext.state, state: currentState };
+        } finally {
+          handleVoskResult = originalHandler; window.OlangaLiveConversation = originalLive; setState(State.IDLE);
+        }
+      });
+      assert.deepEqual(state, { liveActive: false, stopped: ['Audio capture was interrupted. Start again when ready.'],
+        replaced: true, oldRegistered: false, recognizers: 1, stale: [], heard: ['fresh speech'], legacy: true,
+        sameProcessor: true, sameRecognizer: true, sameGraph: true, sameTrack: true, track: 'live', context: 'running', state: 'idle' });
+      report.injectedProcessorFailure = state;
+      await waitFor(ready, 'Recovered native capture is not usable');
+      await waitFor(() => microphoneResources?.processor === voiceFixture.processorRecovery.processor &&
+        microphoneResources.frame > voiceFixture.processorRecovery.frame, 'Recovered native processor did not deliver samples');
+      report.recoveredNativeSamples = await evaluate(() => microphoneResources.frame - voiceFixture.processorRecovery.frame);
+    });
     await check('Fixture made no provider or desktop action calls and recorded no renderer failures', async () => {
       assert.deepEqual(report.forbiddenCalls, []); assert.deepEqual(report.errors, []);
     });

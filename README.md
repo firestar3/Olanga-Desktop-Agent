@@ -26,7 +26,7 @@ Olanga is an open-source Windows assistant for the things you do throughout the 
 
 Common commands run directly through local controls, with no API key required for typed requests. Choose cloud transcription or optional on-device English recognition. Gemini handles questions and requests that need interpretation. A small corner orb keeps Olanga within reach while you work in other apps.
 
-**Olanga 1.6.1** adds conversational learning, faster local memory answers, guided audio checks and named workspaces. Voice capture now releases unused resources during sustained mute, recordings reject stale wake results, and intro replay respects your current screen. The familiar interface and manual in-app update flow stay in place. [What’s new in 1.6.1](docs/releases/1.6.1.md).
+**Olanga 1.6.1** adds conversational learning, faster local memory answers, guided audio checks and named workspaces. Voice capture now releases unused resources during sustained mute, recordings reject stale wake results, and interrupted audio recovers without carrying over old speech. Setup navigation keeps the main controls available. The familiar interface and manual in-app update flow stay in place. [What’s new in 1.6.1](docs/releases/1.6.1.md).
 
 Use **Workspace** to save app layouts, review file changes, search a project, schedule reminders and connect optional browser, editor and phone companions. Request progress and spoken action results keep you informed as Olanga works.
 
@@ -276,7 +276,7 @@ Use **Workspace → Apps & updates → Check for updates** to compare your versi
 
 A separate progress window stays open during installation. The updater reports success only after the expected installed version confirms that its renderer has initialized and its main window is visible with usable controls. A process merely starting is not enough. Failed attempts return a recovery result. The update into 1.6.1 is handled by the updater already installed on your computer.
 
-Olanga verifies the downloaded installer's SHA-256 against the release checksum and checks the file again before installation. An explicit update check can recover a complete cached installer after a restart, using fresh release metadata and a new hash check. Interrupted partial downloads restart when you choose Download again.
+Olanga verifies the downloaded installer's SHA-256 against the release checksum and checks the file again before installation. An explicit update check can recover a complete cached installer after a restart, using fresh release metadata and a new hash check. Interrupted partial downloads restart when you choose Download again. Explicit update checks and downloads also reclaim completed installer caches for versions already installed, while preserving newer downloads and unrecognized files.
 
 The installer is **unsigned**. A checksum confirms file bytes, not publisher identity. Signing support is prepared for a future publisher certificate. Automatic updates and automatic rollback remain disabled.
 
