@@ -1,3 +1,13 @@
+# Unreleased routine draft fix — October 27, 2026
+
+Asking to show or open routines now opens the collection without resetting an unfinished routine draft. Previously those navigation phrases entered the create-editor path, clearing the name, commands and edited routine identity. Explicit requests to create a routine or open its editor retain their existing behavior.
+
+The full unit suite passed **1,072 of 1,074 tests, with zero failures and two explicit Windows file-symlink permission skips**. The source/assets check passed for **86 JavaScript files**, version and installer assets. Production renderer acceptance passed **14/14 on Electron 44.7.0**, including preservation of an unsaved new draft and the identity of an edited routine when saving. Fixture provider/native calls and renderer errors were zero. Shared dependencies and the normal installed app were not modified.
+
+Evidence is retained under ignored `build/qa/routine-draft-fix/`: `unit-full.log`, `source-assets.log`, `report-electron44.json` and `renderer-electron44.log`. This change is local and **not included in the published 1.6.1 installer**. No new resource comparison, live-device acceptance or installer build is claimed.
+
+---
+
 # Published 1.6.1 verification and resource retries — October 23, 2026
 
 **Olanga 1.6.1 is published.** Both the [final Check workflow](https://github.com/firestar3/Olanga-Desktop-Agent/actions/runs/39915092269) and the [Windows release workflow](https://github.com/firestar3/Olanga-Desktop-Agent/actions/runs/39915758398) succeeded at source commit **d15dd57cb73a056d532161b6d835002734b25ffa**. The [public release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.6.1) contains the installer, release notes, metadata and SHA256SUMS.

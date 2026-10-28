@@ -38,6 +38,28 @@ app.whenReady().then(async () => { try {
     await evaluate(() => { document.getElementById('routineLines').value = 'Add Alpha fixture task to my checklist\nAdd Beta fixture task to my checklist\nAdd Gamma fixture task to my checklist'; document.getElementById('routineForm').requestSubmit(); document.getElementById('workspaceDialog').close(); });
     assert.equal(await evaluate(() => OlangaWorkspace.snapshot().routines.length), 1);
   });
+  await check('Spoken routine navigation preserves an unsaved new routine draft without dispatch', async () => {
+    await say('Create a routine called Draft to keep');
+    const lines = 'Add Draft fixture task to my checklist';
+    await evaluate(lines => { document.getElementById('routineLines').value = lines; }, lines);
+    for (const phrase of ['Show my routines', 'Open routines', 'Take me to the routines tab']) {
+      const state = await say(phrase);
+      assert.match(state.response, /Your routines are Fixture focus/); assert.deepEqual(state.tasks, []);
+      assert.deepEqual(await evaluate(() => ({ name: document.getElementById('routineName').value, lines: document.getElementById('routineLines').value, open: document.getElementById('workspaceDialog').open })), { name: 'Draft to keep', lines, open: true });
+    }
+    assert.equal(await evaluate(() => OlangaWorkspace.snapshot().routines.length), 1);
+    await evaluate(() => document.getElementById('workspaceDialog').close());
+  });
+  await check('Spoken routine navigation preserves the edited routine identity when saving', async () => {
+    const originalId = await evaluate(() => OlangaWorkspace.snapshot().routines[0].id);
+    await say('Edit my Fixture focus routine');
+    const lines = 'Add Edited fixture task to my checklist';
+    await evaluate(lines => { document.getElementById('routineLines').value = lines; }, lines);
+    const state = await say('Show my routines'); assert.deepEqual(state.tasks, []);
+    await evaluate(() => { document.getElementById('routineForm').requestSubmit(); document.getElementById('workspaceDialog').close(); });
+    const routines = await evaluate(() => OlangaWorkspace.snapshot().routines);
+    assert.equal(routines.length, 1); assert.equal(routines[0].id, originalId); assert.equal(routines[0].name, 'Fixture focus'); assert.deepEqual(routines[0].lines, [lines]);
+  });
   await check('Exact-name spoken run opens review; skip step two changes selection before approved dispatch', async () => {
     await reset(); let state = await say('Run routine Fixture focus.'); assert.equal(state.review, true); assert.deepEqual(state.tasks, []);
     state = await say('Skip step two'); assert.match(state.response, /Step 2 excluded/); assert.equal(state.review, true);

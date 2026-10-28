@@ -14,7 +14,10 @@
     if(/^(?:create|make|set up|add)(?: me)? (?:a |my )?(?:new )?routine(?: (?:called|named) (.+))?$/i.test(text)){
       m=/(?:called|named) (.+)$/i.exec(text);return m?named('routine-create',m[1]):{kind:'routine-create',name:''};
     }
-    if(/^(?:open|show|take me to|go to)(?: the| my)? (?:routine(?:s| creator| editor| creation tab)|create routine(?: tab)?|routines? tab)$/i.test(text))return{kind:'routine-create',name:''};
+    // Opening a collection must preserve an unfinished create/edit draft.
+    // Only an explicit creation/editor request enters the resettable editor.
+    if(/^(?:open|show|take me to|go to)(?: the| my)? (?:routine(?: creator| editor| creation tab)|create routine(?: tab)?)$/i.test(text))return{kind:'routine-create',name:''};
+    if(/^(?:open|show|take me to|go to)(?: the| my)? (?:routines|routines? tab)$/i.test(text))return{kind:'routine-list'};
     if((m=/^(?:run|start|execute) (?:the |my )?routine (.+)$/i.exec(text))||(m=/^(?:run|start|execute) (?:the |my )?(.+?) routine$/i.exec(text)))return named('routine-run',m[1]);
     if((m=/^(?:edit|change) (?:the |my )?routine (.+)$/i.exec(text))||(m=/^(?:edit|change) (?:the |my )?(.+?) routine$/i.exec(text)))return named('routine-edit',m[1]);
     if(/^(?:what (?:routines (?:do I have|have I saved)|are my routines)|(?:list|show|open) (?:my |the )?(?:saved )?routines)$/i.test(text))return{kind:'routine-list'};

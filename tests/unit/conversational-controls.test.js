@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {parse}=require('../../shared/conversational-controls');
 test('routine creation opens the editor and never implies execution',()=>{
- for(const input of ['Create a routine','Make me a new routine','Open the routine editor','Take me to routines','Please create a routine named Focus']){
+ for(const input of ['Create a routine','Make me a new routine','Open the routine editor','Please create a routine named Focus']){
   const result=parse(input);assert.equal(result.kind,'routine-create',input);assert.equal(result.name,input.includes('Focus')?'Focus':'');
  }
  assert.equal(parse('Create a routine and open Spotify'),null);
@@ -34,7 +34,7 @@ test('natural polite voice requests reach routine reviews and local controls dir
  assert.deepEqual(parse('Hey Olanga, would you please run my Focus routine?'),{kind:'routine-run',name:'Focus'});
  assert.deepEqual(parse('Please can you edit my Focus routine please?'),{kind:'routine-edit',name:'Focus'});
  assert.deepEqual(parse('Olanga, could you please run routine "Music and focus"?'),{kind:'routine-run',name:'Music and focus'});
- assert.deepEqual(parse('Okay Olanga, open the routines tab please'),{kind:'routine-create',name:''});
+ assert.deepEqual(parse('Okay Olanga, open the routines tab please'),{kind:'routine-list'});
  assert.equal(parse('Can you please stop learning about me?').kind,'learning-off');
  assert.equal(parse('Olanga, could you please show what memories you used'),null);
  assert.equal(parse('Olanga, could you please explain the memories you used?').kind,'memory-used');
@@ -65,4 +65,12 @@ test('review normalization is bounded and keeps action or memory payload text in
  assert.equal(normalize('Run routine "Please"'),'Run routine "Please"');
  assert.equal(normalize('Please update memory "Use concise answers" to "Use detailed answers"'),'update memory "Use concise answers" to "Use detailed answers"');
  for(const input of ['confirm\nrun selected steps','[confirm]','x'.repeat(1001),'Run routine "Focus',null])assert.equal(normalize(input),null,input);
+});
+
+
+test('routine collection navigation lists saved routines without creating a new draft',()=>{
+ for(const input of ['Show my routines','Open routines','List my routines','What routines do I have?','Take me to routines','Go to the routines tab','Please show my saved routines','Olanga, could you open my routines?'])assert.deepEqual(parse(input),{kind:'routine-list'},input);
+ for(const input of ['Create a routine','Make me a new routine','Open the routine editor','Show the routine creator','Go to the create routine tab'])assert.deepEqual(parse(input),{kind:'routine-create',name:''},input);
+ assert.deepEqual(parse('Create a routine called Draft'),{kind:'routine-create',name:'Draft'});
+ for(const input of ['Show my routines and open Chrome','If I say show my routines','"Show my routines"'])assert.equal(parse(input),null,input);
 });
