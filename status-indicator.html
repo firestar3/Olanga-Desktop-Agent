@@ -6,9 +6,29 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self' file:; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>Olanga Side Light</title>
   <link rel="stylesheet" href="status-indicator.css" />
+  <script src="shared/timer-overlay.js" defer></script>
   <script src="status-indicator.js" defer></script>
 </head>
 <body data-state="off">
+  <section id="sportsCard" aria-label="NBA scores" hidden>
+    <button id="sportsHandle" type="button" aria-label="Tuck scores away" aria-controls="sportsContent" aria-expanded="true" title="Drag down to tuck away. Drag up to show. Click to toggle." hidden><span aria-hidden="true"></span></button>
+    <div id="sportsContent">
+    <header class="sports-heading"><span>NBA <span id="sportsState"></span></span><div class="sports-controls"><button id="sportsSettings" type="button" aria-label="Live scores settings" title="Live scores settings"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg></button><button id="refreshSports" type="button" aria-label="Refresh scores" title="Refresh scores">↻</button></div></header>
+    <div id="sportsMatch" aria-live="polite" aria-atomic="true">
+      <div class="sports-team"><span id="sportsAway"></span><strong id="sportsAwayScore"></strong></div>
+      <div class="sports-team"><span id="sportsHome"></span><strong id="sportsHomeScore"></strong></div>
+    </div>
+    <p id="sportsEmpty" hidden></p>
+    <div class="sports-footer"><p id="sportsUpdated"></p><button id="showTimerCard" class="card-switch" type="button" aria-label="Show timers instead of scores" title="Show timers" hidden><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6M12 2v3"/></svg></button></div>
+    </div>
+  </section>
+  <section id="timerCard" aria-label="Timers beside Olanga" hidden>
+    <button id="timerHandle" type="button" aria-label="Tuck timers away" aria-controls="timerContent" aria-expanded="true" title="Click to change the view. Drag up to expand or down to tuck away." hidden><span aria-hidden="true"></span></button>
+    <div id="timerContent">
+      <header class="timer-heading"><button id="timerHeading" type="button">Next timer</button><div class="timer-controls"><button id="showSportsCard" class="card-switch" type="button" aria-label="Show scores instead of timers" title="Show scores" hidden><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18M5.7 5.7c7 1 11.6 5.6 12.6 12.6M5.7 18.3c7-1 11.6-5.6 12.6-12.6"/></svg></button><button id="timerSettings" type="button" aria-label="Timer card settings" title="Timer card settings"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg></button></div></header>
+      <ol id="overlayTimers" aria-label="Active timers"></ol>
+    </div>
+  </section>
   <section id="quickMenu" role="dialog" aria-labelledby="menuTitle" aria-describedby="menuHint" hidden>
     <header class="menu-heading">
       <h1 id="menuTitle">Olanga</h1><p id="statusText" role="status">Ready</p>

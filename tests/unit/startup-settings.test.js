@@ -161,9 +161,40 @@ test('quitting disposes media, desktop automation and the overlay without refere
   const main = source('main.js');
   const start = main.indexOf("app.on('before-quit', () => {\n") >= 0 ? main.indexOf("app.on('before-quit', () => {\n") : main.indexOf("app.on('before-quit', () => {\r\n");
   const end = main.indexOf("trustedMainIpc.on('window-minimize'", start);
-  vm.runInNewContext(main.slice(start, end), { app, mediaController: { dispose: () => calls.push('media') }, desktopAutomation: { dispose: () => calls.push('desktop') }, destroyStatusIndicatorWindow: () => calls.push('overlay') });
+  vm.runInNewContext(main.slice(start, end), { app, mediaController: { dispose: () => calls.push('media') }, stopMediaObservation: () => calls.push('media-observation'), sportsService: { dispose: () => calls.push('sports') }, desktopAutomation: { dispose: () => calls.push('desktop') }, destroyStatusIndicatorWindow: () => calls.push('overlay') });
   handlers[0]();
-  assert.equal(app.isQuiting, true); assert.deepEqual(calls, ['media', 'desktop', 'overlay']);
+  assert.equal(app.isQuiting, true); assert.deepEqual(calls, ['media', 'media-observation', 'sports', 'desktop', 'overlay']);
+});
+
+test('sports polling resumes only when both the system and pinned overlay are active', () => {
+  const main = source('main.js');
+  const start = main.indexOf('let sportsService;');
+  const end = main.indexOf('function createStatusIndicatorWindow()', start);
+  assert.ok(start >= 0 && end > start);
+  const events = new Map(), active = [], observations = [];
+  let overlayOptions;
+  const service = { setActive: value => active.push(value), refresh() {} };
+  vm.runInNewContext(main.slice(start, end), {
+    BrowserWindow: null, ipcMain: null, screen: null, __dirname,
+    createStatusOverlay: options => { overlayOptions = options; return { setSports() {} }; },
+    createSportsService: () => service,
+    stopMediaObservation: () => observations.push('stopped'),
+    app: { whenReady: () => ({ then: callback => callback() }) },
+    powerMonitor: { on: (event, handler) => events.set(event, handler) }
+  });
+  assert.deepEqual(active, [], 'Construction does not start background polling');
+  overlayOptions.onSportsActive(true);
+  assert.equal(active.at(-1), true);
+  events.get('suspend')();
+  assert.equal(observations.length, 1, 'Sleep stops music observation too');
+  assert.equal(active.at(-1), false);
+  overlayOptions.onSportsActive(true);
+  assert.equal(active.at(-1), false, 'Window events cannot restart polling while asleep');
+  events.get('resume')();
+  assert.equal(active.at(-1), true, 'Visible pinned scores resume when Windows wakes');
+  overlayOptions.onSportsActive(false);
+  events.get('suspend')(); events.get('resume')();
+  assert.equal(active.at(-1), false, 'Waking does not restart hidden score cards');
 });
 
 test('adding the first key after local setup activates cloud input only after a successful secure save', async () => {

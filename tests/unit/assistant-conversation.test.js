@@ -206,5 +206,11 @@ test('personal result prefetch receives memory sensitivity and the follow-up spe
 test('contradictory compound manual memory blocks local guessing and automatic overwrites',async()=>{
  const {context,store,calls,say}=fixture();const original=store.rememberFact('I live in Boston. I live in Chicago');
  await say('I live in Seattle');assert.deepEqual(store.memorySnapshot().facts.map(f=>f.text),[original.text]);assert.match(calls.spoken.at(-1),/also contains other details.*kept it intact/);assert.equal(context.hasAssistantReview(),false);
- store.rememberFact('I live in Portland');assert.equal(store.recallFact('Where do I live?'),null);
+ assert.throws(() => store.rememberFact('I live in Portland'), /includes other details/);
+ assert.deepEqual(store.memorySnapshot().facts.map(fact => fact.text), [original.text]);
+ // Existing profiles may already contain a standalone city alongside the note.
+ const { store: existing } = fixture();
+ existing.rememberFact('I live in Portland');
+ existing.rememberFact(original.text);
+ assert.equal(existing.recallFact('Where do I live?'), null);
 });

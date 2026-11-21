@@ -82,9 +82,84 @@ h1 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -.1px; }
 @keyframes breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.15); } }
 @keyframes menu-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 body.reduced-motion *, body.reduced-motion *::before, body.reduced-motion *::after { animation: none !important; transition: none !important; }
+#sportsCard {
+  position: absolute; left: var(--sports-left); top: var(--sports-top); width: var(--sports-width); height: var(--sports-height);
+  padding: 6px clamp(0px, calc((var(--sports-width) - 96px) / 2), 10px); overflow: hidden; border: 0; border-radius: 12px;
+  container-type: inline-size;
+  background: var(--bg-secondary); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 2px 6px #0004; font-variant-numeric: tabular-nums;
+  clip-path: inset(0 0 var(--sports-offset, 0px) 0 round 12px);
+}
+#sportsHandle { position: absolute; z-index: 1; left: calc(var(--sports-handle-left) - var(--sports-left)); top: calc(var(--sports-handle-top) - var(--sports-top)); width: var(--sports-handle-width); height: var(--sports-handle-height); display: flex; justify-content: center; align-items: flex-start; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: ns-resize; touch-action: none; }
+#sportsHandle span { width: 24px; max-width: 60%; height: 3px; margin-top: 5px; border-radius: 2px; background: #8888a0; }
+#sportsHandle:hover span, #sportsHandle:focus-visible span { background: var(--text-primary); }
+#sportsCard.sports-tucked #sportsHandle span { margin-top: calc((var(--sports-handle-height) - 3px) / 2); }
+body.sports-dragging, body.sports-dragging #sportsHandle { cursor: ns-resize; }
+.sports-controls { display: flex; flex-shrink: 0; align-items: center; gap: 2px; }
+#sportsSettings { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; color: #bcbccc; background: transparent; }
+#sportsSettings:hover, #sportsSettings:focus-visible { background: var(--bg-card); color: var(--text-primary); }
+.sports-heading { display: flex; height: 22px; align-items: center; justify-content: space-between; gap: 6px; color: #bcbccc; font-size: 10px; }
+.sports-heading > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sportsState { color: var(--text-primary); margin-left: 6px; }
+#refreshSports { flex: 0 0 24px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: #bcbccc; font-size: 18px; }
+#refreshSports:hover, #refreshSports:focus-visible { background: var(--bg-card); color: var(--text-primary); }
+#refreshSports[aria-disabled="true"] { opacity: .5; cursor: default; }
+.sports-team { display: flex; height: 20px; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.sports-team > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sports-team strong { flex-shrink: 0; font-weight: 600; font-size: 16px; }
+#sportsUpdated { margin: 3px 0 0; color: #bcbccc; font-size: 10px; line-height: 14px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#sportsEmpty { height: 40px; margin: 0; display: flex; align-items: center; font-size: 12px; line-height: 1.4; }
+#sportsCard[data-stale="true"] #sportsUpdated { color: #f0c27a; }
+.sports-footer { display: flex; align-items: center; gap: 4px; }
+.sports-footer #sportsUpdated { flex: 1; min-width: 0; }
+.card-switch, #timerSettings { display: grid; place-items: center; flex: 0 0 22px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #bcbccc; }
+.card-switch:hover, .card-switch:focus-visible, #timerSettings:hover, #timerSettings:focus-visible { background: var(--bg-card); color: var(--text-primary); }
+.sports-footer .card-switch { height: 18px; }
+#timerCard {
+  position: absolute; left: var(--timers-left); top: var(--timers-top); width: var(--timers-width); height: var(--timers-height);
+  padding: 0; overflow: hidden; border: 0; border-radius: 12px;
+  background: var(--bg-secondary); box-shadow: inset 0 0 0 1px var(--border-subtle), 0 2px 6px #0004; font-variant-numeric: tabular-nums;
+  container-type: inline-size;
+}
+#timerHandle { position: absolute; z-index: 1; left: calc(var(--timer-handle-left) - var(--timers-left)); top: calc(var(--timer-handle-top) - var(--timers-top)); width: var(--timer-handle-width); height: var(--timer-handle-height); display: flex; justify-content: center; align-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: ns-resize; touch-action: none; }
+#timerHandle span { width: 24px; max-width: 60%; height: 3px; border-radius: 2px; background: #8888a0; }
+#timerHandle:hover span, #timerHandle:focus-visible span { background: var(--text-primary); }
+body.timer-dragging, body.timer-dragging #timerHandle { cursor: ns-resize; }
+#timerContent { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 22px 10px 4px; }
+.timer-heading { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 4px; height: 18px; color: #bcbccc; font-size: 10px; }
+#timerHeading { min-width: 0; padding: 2px 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 0; background: transparent; color: inherit; text-align: left; }
+#timerHeading:hover, #timerHeading:focus-visible { color: var(--text-primary); }
+.timer-controls { display: flex; flex-shrink: 0; gap: 2px; }
+#overlayTimers { list-style: none; padding: 0; margin: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #555570 transparent; }
+.overlay-timer { display: flex; flex-direction: column; height: 48px; padding: 3px 0; }
+.overlay-timer + .overlay-timer { border-top: 1px solid var(--border-subtle); }
+.overlay-timer-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; line-height: 14px; }
+.overlay-timer-reading { display: flex; align-items: baseline; justify-content: space-between; gap: 5px; }
+.overlay-timer-time { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 22px; font-weight: 500; line-height: 27px; letter-spacing: -.5px; }
+.overlay-timer-time.long-duration { font-size: 14px; letter-spacing: 0; }
+.overlay-timer-status { flex-shrink: 0; color: var(--text-secondary); font-size: 10px; white-space: nowrap; }
+.overlay-timer[data-ringing="true"] .overlay-timer-time, .overlay-timer[data-ringing="true"] .overlay-timer-status { color: #f0c27a; }
+.overlay-timer[data-paused="true"] .overlay-timer-time { color: #bcbccc; }
+@container (max-width: 150px) {
+  #timerHeading { font-size: 9px; }
+  .overlay-timer-time { font-size: 18px; }
+  .overlay-timer-status { font-size: 9px; }
+}
+@container (max-width: 150px) {
+  #sportsContent { padding-top: 12px; }
+  .sports-team { height: 16px; font-size: 12px; }
+  .sports-team strong { font-size: 15px; line-height: 16px; }
+  #sportsUpdated { margin-top: 2px; line-height: 12px; }
+  #sportsEmpty { height: 32px; }
+}
+@container (max-width: 100px) {
+  .sports-heading > span { display: none; }
+  .sports-heading { justify-content: flex-end; gap: 0; }
+  .sports-controls { gap: 0; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 @media (forced-colors: active) {
-  #quickMenu, .light-surface { background: Canvas; border: 1px solid ButtonText; }
+  #quickMenu, #sportsCard, #timerCard, .light-surface { background: Canvas; border: 1px solid ButtonText; }
+  #sportsHandle span, #timerHandle span { background: ButtonText; }
   .light-surface { forced-color-adjust: none; background: Highlight; }
   .quick-actions button, .utility-actions button { color: ButtonText; }
 }

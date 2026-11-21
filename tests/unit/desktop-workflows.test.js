@@ -193,6 +193,63 @@ test('desktop question has an answer control, keeps the answer, recaptures and r
   assert.equal(calls.prepared[0].scope.handle, '1');
 });
 
+
+test('switching desktop examples drops task answers and invalidates the old capture and approval', async () => {
+  for (const caption of ['Polish selected text', 'Create a folder', 'Change a setting']) {
+    for (const prepareOldTask of [false, true]) {
+      const { api, calls, ids, nodes, context } = workflowHarness();
+      let cancellations = 0, runs = 0;
+      context.window.electronAPI.desktopCancel = async () => { cancellations++; };
+      context.window.electronAPI.desktopRun = async () => { runs++; };
+      const capture = nodes.find(node => node.textContent === 'Capture screen');
+      const plan = nodes.find(node => node.textContent === 'Plan within this scope');
+      await capture.listeners.click();
+      ids.get('desktopTaskWindow').value = '1'; ids.get('desktopTaskScope').value = 'window';
+      await plan.listeners.click();
+      await api.answerQuestion('Receipts');
+      if (prepareOldTask) {
+        await plan.listeners.click();
+        assert.equal(api.hasPendingQuestion(), true, 'the old task has an approval prompt');
+        assert.deepEqual(calls.plans.at(-1).clarifications, [{ question: 'What should the folder be named?', answer: 'Receipts' }]);
+      }
+      const oldPlans = calls.plans.length, oldPrepared = calls.prepared.length, oldCancellations = cancellations;
+      nodes.find(node => node.textContent === caption).listeners.click();
+      assert.equal(cancellations, oldCancellations + 1, caption + ' invalidates the old native task');
+      assert.equal(api.hasPendingQuestion(), false);
+      assert.equal(api.isBusy(), false);
+      assert.equal(plan.disabled, true);
+      assert.equal(await api.answerQuestion('yes'), false, 'old approval cannot run the new task');
+      await plan.listeners.click();
+      assert.equal(calls.plans.length, oldPlans, 'planning needs a fresh capture');
+      assert.equal(calls.prepared.length, oldPrepared);
+      assert.equal(runs, 0);
+      await capture.listeners.click();
+      ids.get('desktopTaskWindow').value = '1'; ids.get('desktopTaskScope').value = 'window';
+      await plan.listeners.click();
+      const next = calls.plans.at(-1);
+      assert.equal(next.goal, ids.get('desktopTaskGoal').value);
+      assert.deepEqual(next.clarifications, [], caption + ' must not inherit answers from the old goal');
+      assert.deepEqual(next.previousPhases, []);
+      assert.equal(calls.prepared.at(-1).captureId, 'capture-3');
+      assert.equal(calls.prepared.length, oldPrepared + 1);
+      assert.equal(runs, 0, 'the new task still needs explicit approval');
+    }
+  }
+});
+
+test('switching desktop examples dismisses an unanswered question and rejects late answers', async () => {
+  const { api, calls, ids, nodes } = workflowHarness();
+  await nodes.find(node => node.textContent === 'Capture screen').listeners.click();
+  ids.get('desktopTaskWindow').value = '1'; ids.get('desktopTaskScope').value = 'window';
+  await nodes.find(node => node.textContent === 'Plan within this scope').listeners.click();
+  assert.equal(api.hasPendingQuestion(), true);
+  nodes.find(node => node.textContent === 'Polish selected text').listeners.click();
+  assert.equal(api.hasPendingQuestion(), false);
+  assert.equal(await api.answerQuestion('Receipts'), false);
+  assert.equal(calls.captures.length, 1);
+  assert.equal(calls.prepared.length, 0);
+});
+
 test('cancelled desktop question does not accept a late answer or preserve its capture', async () => {
   const { api, calls, ids, nodes } = workflowHarness();
   await nodes.find(node => node.textContent === 'Capture screen').listeners.click();
@@ -254,6 +311,42 @@ test('completed edit shows local before/after and undo without sending the check
   await button.listeners.click();
   assert.deepEqual(undos, ['local-only']); assert.equal(button.hidden, true);
   assert.ok(h.nodes.some(node => node.textContent === 'The original text was restored and verified.'));
+});
+
+
+test('undo dismisses a newer task question or approval and stops its follow-up listening', async () => {
+  for (const pending of ['question', 'approval']) {
+    const h = editHarness();
+    const originalRun = h.context.window.electronAPI.desktopRun;
+    h.context.window.electronAPI.desktopRun = async id => ({ ...await originalRun(id), undo: { available: true, undoId: 'checkpoint', before: 'Original', after: 'Replacement', expiresAt: Date.now() + 300000 } });
+    const undos = [];
+    h.context.window.electronAPI.undoDesktopEdit = async id => { undos.push(id); return { ok: true, verified: true, message: 'The original text was restored and verified.' }; };
+    await h.api.start('Fix the editor'); await h.api.answerQuestion('yes');
+    h.context.callGeminiSpecialist = async () => JSON.stringify(proposal(pending === 'question'
+      ? { status: 'needs_input', followUp: 'What should the folder be named?', steps: [] }
+      : {}));
+    await h.api.start('Create a folder');
+    assert.equal(h.api.hasPendingQuestion(), true);
+    const captures = h.calls.captures.length, prepared = h.calls.prepared.length, runs = h.calls.runs.length;
+    let stoppedFollowUp = 0, stoppedRecording = 0, cancelledNative = 0;
+    h.context.cancelFollowUpWindow = () => { stoppedFollowUp++; };
+    h.context.isRecording = true;
+    h.context.cancelRecording = () => { stoppedRecording++; h.context.isRecording = false; };
+    h.context.window.electronAPI.desktopCancel = async () => { cancelledNative++; };
+    await h.nodes.find(node => node.textContent === 'Undo text edit').listeners.click();
+    assert.deepEqual(undos, ['checkpoint']);
+    assert.equal(h.api.hasPendingQuestion(), false, pending + ' belongs to the task replaced by Undo');
+    assert.equal(h.api.isBusy(), false);
+    assert.equal(stoppedFollowUp, 1);
+    assert.equal(stoppedRecording, 1);
+    assert.equal(cancelledNative, 1);
+    const question = h.nodes.find(node => node.htmlFor === 'desktopTaskAnswer');
+    assert.equal(h.nodes.find(node => node.children.includes(question)).hidden, true);
+    assert.equal(await h.api.answerQuestion(pending === 'question' ? 'Receipts' : 'yes'), false);
+    assert.equal(h.calls.captures.length, captures, 'late answers cannot recapture the discarded task');
+    assert.equal(h.calls.prepared.length, prepared);
+    assert.equal(h.calls.runs.length, runs, 'old approval cannot run after Undo');
+  }
 });
 
 function withActivity(h, persist = true) {
@@ -439,6 +532,27 @@ test('verified undo has its own activity receipt without copied editor text', as
   assert.equal(h.activity()[1].steps[0].operation, 'DESKTOP_UNDO');
   assert.ok(!JSON.stringify(h.activity()).includes('PRIVATE'));
   assert.ok(!JSON.stringify(h.persisted().activity).includes('Original text'));
+});
+
+
+test('native undo cancellation is retained as cancelled while conflicts and expiry remain failures', async () => {
+  for (const reason of ['cancelled', 'conflict', 'expired']) {
+    const h = withActivity(editHarness());
+    const originalRun = h.context.window.electronAPI.desktopRun;
+    h.context.window.electronAPI.desktopRun = async id => ({ ...await originalRun(id), undo: { available: true, undoId: 'checkpoint', before: 'Original', after: 'Replacement', expiresAt: Date.now() + 300000 } });
+    const message = reason === 'cancelled' ? 'Undo cancelled. Check the editor to see whether restoration completed.' : 'No text was restored.';
+    h.context.window.electronAPI.undoDesktopEdit = async () => ({ ok: false, verified: false, reason, message });
+    await h.api.start('Fix the editor'); await h.api.answerQuestion('yes');
+    await h.nodes.find(node => node.textContent === 'Undo text edit').listeners.click();
+    const undo = h.activity().at(-1), expected = reason === 'cancelled' ? 'cancelled' : 'failed';
+    assert.equal(h.activity()[0].state, 'completed', 'the previously verified edit keeps its receipt');
+    assert.equal(undo.steps[0].operation, 'DESKTOP_UNDO');
+    assert.equal(undo.state, expected, 'native reason=' + reason);
+    assert.equal(undo.steps[0].state, reason === 'cancelled' ? 'uncertain' : 'failed', 'stopping input cannot prove whether restoration occurred');
+    assert.equal(h.persisted().activity.at(-1).state, expected);
+    assert.equal(h.nodes.find(node => node.className === 'desktop-task-status').textContent, message);
+    assert.equal(h.nodes.find(node => node.textContent === 'Undo text edit').hidden, true, 'a stopped undo remains single-use');
+  }
 });
 
 test('a failed spoken summary cannot erase a verified desktop result', async () => {

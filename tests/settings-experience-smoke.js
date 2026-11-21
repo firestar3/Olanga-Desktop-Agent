@@ -9,12 +9,14 @@ fs.mkdirSync(output, { recursive: true });
 app.disableHardwareAcceleration();
 app.setPath('userData', fs.mkdtempSync(path.join(output, 'settings-experience-profile-')));
 if (!process.argv.includes('--hidden')) process.argv.push('--hidden');
-const report = { passed: false, checks: [], screenshots: [], externalLinks: [], forbiddenCalls: [], errors: [], preferenceWrites: [], coverage: { realRenderer: true, realPreload: true, isolatedProfile: true, liveProviders: false, microphone: false } };
+const report = { passed: false, checks: [], screenshots: [], externalLinks: [], forbiddenCalls: [], errors: [], preferenceWrites: [], sportsPreferences: [], coverage: { realRenderer: true, realPreload: true, isolatedProfile: true, liveProviders: false, microphone: false, sportsService: false } };
 const forbidden = new Set(['provider-generate', 'provider-generate-stream', 'nvidia-tts-config', 'nvidia-tts-synthesize', 'open-app', 'arrange-app', 'close-app', 'play-spotify', 'reload-spotify', 'media-control', 'desktop-capture', 'desktop-run', 'desktop-undo', 'execute-command', 'terminal-session-create', 'terminal-session-execute', 'fetch-news-bundle', 'check-release', 'update-download', 'update-install', 'set-open-at-login']);
 let fixtureConnection = false, pendingConnection = null;
+report.timerOverlaySnapshots = [];
 let failNextPrefs = false, holdNextPrefs = false, pendingPrefs = null, main, finished = false;
 const handle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, callback) => handle(channel, async (event, ...args) => {
+  if (channel === 'media-get-snapshot') { report.mediaFixtureReads = (report.mediaFixtureReads || 0) + 1; return { ok: false, verified: true, status: 'Closed', reason: 'no-session', message: 'No active music player.' }; }
   if (channel === 'provider-generate' && fixtureConnection) { report.fixtureConnectionRequests = (report.fixtureConnectionRequests || 0) + 1; return new Promise(resolve => { pendingConnection = resolve; }); }
   if (forbidden.has(channel)) { report.forbiddenCalls.push(channel); throw new Error('External action disabled in Settings smoke: ' + channel); }
   if (channel === 'open-external') { report.externalLinks.push(args[0]); return true; }
@@ -27,6 +29,10 @@ ipcMain.handle = (channel, callback) => handle(channel, async (event, ...args) =
 });
 const on = ipcMain.on.bind(ipcMain);
 ipcMain.on = (channel, callback) => on(channel, (event, ...args) => {
+  // Exercise the real Settings -> preload bridge without pinning a native
+  // card or permitting the score service to make a public network request.
+  if (channel === 'sports-set-preferences') { report.sportsPreferences.push(args[0]); return; }
+  if (channel === 'timer-overlay-set-snapshot') { report.timerOverlaySnapshots.push(args[0]); return; }
   if (channel === 'open-external') { report.externalLinks.push(args[0]); return; }
   if (forbidden.has(channel)) { report.forbiddenCalls.push(channel); return; }
   return callback(event, ...args);
@@ -96,8 +102,8 @@ async function saved() {
   await waitFor(() => evaluate(() => document.getElementById('preferencesSaveStatus')?.dataset.state === 'saved'), 'Settings did not report a saved preference');
 }
 async function check(name, action) { await action(); report.checks.push({ name, passed: true }); }
-async function screenshot(name) {
-  await evaluate(() => { document.querySelector('.settings-scroll').scrollTop = 0; });
+async function screenshot(name, resetScroll = true) {
+  if (resetScroll) await evaluate(() => { document.querySelector('.settings-scroll').scrollTop = 0; });
   await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   main.webContents.invalidate(); await pause(150);
   await main.webContents.capturePage(); await pause(80);
@@ -630,6 +636,81 @@ app.whenReady().then(async () => {
       const durable = report.preferenceWrites.at(-1);
       assert.equal(durable.city, 'Fixture city'); assert.equal(durable.ttsRate, 0.9); assert.deepEqual(durable.features, ['notepadScreen']);
       await screenshot('appearance-reset');
+    });
+    await check('timer card opt-in restores real timers through preload and its settings shortcut focuses the option', async () => {
+      await resizeSettings(1100, 800);
+      await click('#settingsTabUser');
+      assert.equal(await evaluate(() => document.getElementById('timerOverlayEnabledToggle').checked), false);
+      await evaluate(() => createTimer(1800, 'Timer card check'));
+      assert.equal(report.timerOverlaySnapshots.at(-1)?.enabled, false);
+      await click('#timerOverlayEnabledToggle'); await saved();
+      await waitFor(() => report.timerOverlaySnapshots.at(-1)?.timers.some(timer => timer.label === 'Timer card check'), 'Enabling did not publish the existing timer');
+      assert.equal(report.timerOverlaySnapshots.at(-1).enabled, true);
+      const deadline = report.timerOverlaySnapshots.at(-1).timers.find(timer => timer.label === 'Timer card check').endTime;
+      main.webContents.reload();
+      await waitFor(() => !main.webContents.isLoading(), 'Timer preference reload did not finish');
+      await waitFor(() => evaluate(() => !!window.OlangaSettingsNavigation && typeof window.loadSettingsValues === 'function'), 'Settings did not initialize after reload');
+      main.webContents.send('timer-overlay-open-settings');
+      await waitFor(() => evaluate(() => document.activeElement.id === 'timerOverlayEnabledToggle' && document.getElementById('settingsTabUser').getAttribute('aria-selected') === 'true'), 'Timer settings shortcut did not focus the option');
+      assert.equal(await evaluate(() => document.getElementById('timerOverlayEnabledToggle').checked), true);
+      await waitFor(() => report.timerOverlaySnapshots.at(-1)?.timers.some(timer => timer.label === 'Timer card check' && timer.endTime === deadline), 'Reload did not preserve the original countdown deadline');
+      await screenshot('timer-card-setting', false);
+      main.webContents.send('timers-open');
+      await waitFor(() => evaluate(() => !document.getElementById('mainScreen').classList.contains('hidden') && document.activeElement.id === 'timerInput'), 'View timers did not open Home');
+      await evaluate(() => clearAllTimers());
+      await waitFor(() => report.timerOverlaySnapshots.at(-1)?.total === 0, 'Clearing timers did not clear the overlay snapshot');
+      await click('[data-screen="settingsScreen"]'); await click('#settingsTabUser');
+      await click('#timerOverlayEnabledToggle'); await saved();
+      assert.equal(report.timerOverlaySnapshots.at(-1).enabled, false);
+    });
+    await check('NBA scores remain opt-in, save the chosen team, restore after reload and unpin through the real Settings bridge', async () => {
+      await resizeSettings(1100, 800);
+      await click('#settingsTabUser');
+      assert.deepEqual(await evaluate(() => ({ enabled: document.getElementById('sportsEnabledToggle').checked, team: document.getElementById('sportsTeamSelect').value, liveOnly: document.getElementById('sportsLiveOnlyToggle').checked })), { enabled: false, team: 'gs', liveOnly: true });
+      assert.ok(report.sportsPreferences.length > 0 && report.sportsPreferences.every(value => value.enabled === false && value.team === 'gs' && value.liveOnly === true), 'Ordinary startup and settings edits must not enable scores');
+      assert.equal(await evaluate(() => document.getElementById('sportsTeamSelect').options.length), 30);
+
+      await select('#sportsTeamSelect', 'sac'); await saved();
+      await waitFor(() => report.sportsPreferences.at(-1)?.team === 'sac', 'Team selection did not cross the real preload bridge');
+      assert.deepEqual(report.sportsPreferences.at(-1), { enabled: false, team: 'sac', liveOnly: true });
+      await click('#sportsLiveOnlyToggle'); await saved();
+      assert.deepEqual(report.sportsPreferences.at(-1), { enabled: false, team: 'sac', liveOnly: false });
+      await click('#sportsEnabledToggle'); await saved();
+      await waitFor(() => report.sportsPreferences.at(-1)?.enabled === true, 'Pinning scores did not cross the real preload bridge');
+      assert.deepEqual(report.sportsPreferences.at(-1), { enabled: true, team: 'sac', liveOnly: false });
+      const stored = await evaluate(async () => {
+        const value = JSON.parse(await window.electronAPI.secureStoreGet('app_preferences'));
+        return { secure: { enabled: value.sportsEnabled, team: value.sportsTeam, liveOnly: value.sportsLiveOnly }, local: { enabled: localStorage.getItem('olanga_sports_enabled'), team: localStorage.getItem('olanga_sports_team'), liveOnly: localStorage.getItem('olanga_sports_live_only') } };
+      });
+      assert.deepEqual(stored, { secure: { enabled: true, team: 'sac', liveOnly: false }, local: { enabled: 'true', team: 'sac', liveOnly: 'false' } });
+      report.sportsDurablePinned = stored;
+
+      main.webContents.reload();
+      await waitFor(() => !main.webContents.isLoading(), 'Sports preference reload did not finish');
+      await waitFor(() => evaluate(() => !!window.OlangaSettingsNavigation && typeof window.loadSettingsValues === 'function'), 'Settings did not reinitialize for saved scores');
+      await click('[data-screen="settingsScreen"]'); await click('#settingsTabUser');
+      assert.deepEqual(await evaluate(() => ({ enabled: document.getElementById('sportsEnabledToggle').checked, team: document.getElementById('sportsTeamSelect').value, liveOnly: document.getElementById('sportsLiveOnlyToggle').checked })), { enabled: true, team: 'sac', liveOnly: false });
+      assert.deepEqual(report.sportsPreferences.at(-1), { enabled: true, team: 'sac', liveOnly: false });
+      await click('[data-screen="mainScreen"]');
+      main.webContents.send('sports-open-settings');
+      await waitFor(() => evaluate(() => !document.getElementById('settingsScreen').classList.contains('hidden') && document.getElementById('settingsTabUser').getAttribute('aria-selected') === 'true' && document.activeElement.id === 'sportsTeamSelect'), 'The score-card settings shortcut did not open and focus Live scores');
+      const destination = await evaluate(() => {
+        const box = document.getElementById('sportsTeamSelect').getBoundingClientRect(), scroll = document.querySelector('.settings-scroll').getBoundingClientRect();
+        return { top: box.top, bottom: box.bottom, left: box.left, right: box.right, scrollTop: scroll.top, scrollBottom: scroll.bottom, scrollLeft: scroll.left, scrollRight: scroll.right };
+      });
+      assert.ok(destination.top >= destination.scrollTop && destination.bottom <= destination.scrollBottom && destination.left >= destination.scrollLeft && destination.right <= destination.scrollRight, 'The focused team selector must be visible after direct settings navigation');
+      report.sportsSettingsDestination = destination;
+      await click('#sportsLiveOnlyToggle'); await saved();
+      assert.deepEqual(report.sportsPreferences.at(-1), { enabled: true, team: 'sac', liveOnly: true });
+      await screenshot('sports-controls', false);
+
+      await click('#sportsEnabledToggle'); await saved();
+      await waitFor(() => report.sportsPreferences.at(-1)?.enabled === false, 'Unpinning scores did not cross the real preload bridge');
+      assert.deepEqual(report.sportsPreferences.at(-1), { enabled: false, team: 'sac', liveOnly: true });
+      assert.equal(report.preferenceWrites.at(-1).sportsEnabled, false);
+      assert.equal(report.preferenceWrites.at(-1).sportsTeam, 'sac');
+      assert.equal(report.preferenceWrites.at(-1).sportsLiveOnly, true);
+      assert.deepEqual(await evaluate(() => ({ enabled: localStorage.getItem('olanga_sports_enabled'), team: localStorage.getItem('olanga_sports_team'), liveOnly: localStorage.getItem('olanga_sports_live_only') })), { enabled: 'false', team: 'sac', liveOnly: 'true' });
     });
     await check('No provider, microphone, updater or native application action was triggered', async () => {
       report.errors.push(...await evaluate(() => window.settingsSmokeErrors || []));

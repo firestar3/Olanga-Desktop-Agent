@@ -7,15 +7,20 @@ const source = fs.readFileSync(path.join(__dirname, '../../js/timers-tasks.js'),
 
 function harness(store = new Map(), start = 100000) {
   let now = start, nextInterval = 0, alarms = 0;
+  const overlaySnapshots = [];
   const intervals = new Map(), timeouts = new Map(), listeners = new Map();
   class Clock extends Date {
     constructor(...args) { super(...(args.length ? args : [now])); }
     static now() { return now; }
   }
   const context = vm.createContext({
-    Date: Clock, console: { log() {}, error() {} }, window: {
+    Date: Clock, console: { log() {}, error() {}, warn() {} },
+    OlangaTimerOverlay: require('../../shared/timer-overlay'), timerOverlayEnabled: false, window: {
       addEventListener(name, fn) { listeners.set(name, fn); },
-      electronAPI: { onAppClockChanged(fn) { listeners.set('native-clock', fn); return () => listeners.delete('native-clock'); } }
+      electronAPI: {
+        setTimerOverlaySnapshot(snapshot) { overlaySnapshots.push(JSON.parse(JSON.stringify(snapshot))); },
+        onAppClockChanged(fn) { listeners.set('native-clock', fn); return () => listeners.delete('native-clock'); }
+      }
     },
     activeTimers: [], activeTasks: [], alarmIntervalId: null, timersContainer: null,
     document: { hidden: false, getElementById() { return null; }, addEventListener(name, fn) { listeners.set(name, fn); } },
@@ -27,7 +32,7 @@ function harness(store = new Map(), start = 100000) {
   });
   vm.runInContext(source, context);
   context.playAlarmSound = () => { alarms++; };
-  return { context, store, intervals, timeouts, listeners, get alarms() { return alarms; }, jumpClock(ms) { now += ms; },
+  return { context, store, intervals, timeouts, listeners, overlaySnapshots, get alarms() { return alarms; }, jumpClock(ms) { now += ms; },
     advance(ms) {
       now += ms;
       const repeating = [...intervals];
@@ -36,6 +41,51 @@ function harness(store = new Map(), start = 100000) {
     }
   };
 }
+
+test('timer overlay receives mutations without publishing ordinary countdown ticks', () => {
+  const app = harness();
+  app.context.createTimer(60, 'Tea');
+  assert.deepEqual(app.overlaySnapshots.at(-1), { enabled: false, timers: [], total: 0 });
+  app.context.timerOverlayEnabled = true;
+  app.context.publishTimerOverlay();
+  assert.equal(app.overlaySnapshots.at(-1).timers[0].label, 'Tea');
+  assert.equal(app.overlaySnapshots.at(-1).timers[0].endTime, 160000);
+  const published = app.overlaySnapshots.length;
+  app.advance(1000);
+  app.context.renderTimers();
+  assert.equal(app.overlaySnapshots.length, published, 'unchanged records are deduplicated even when the view renders');
+  app.context.document.hidden = true;
+  app.listeners.get('visibilitychange')();
+  app.advance(59000);
+  assert.equal(app.overlaySnapshots.at(-1).timers[0].ringing, true, 'hidden deadline still publishes its ringing transition');
+  app.context.cancelTimerByLabel('Tea');
+  assert.deepEqual(app.overlaySnapshots.at(-1), { enabled: true, timers: [], total: 0 });
+  app.context.createTimer(30, 'One');
+  app.context.createTimer(40, 'Two');
+  app.context.clearAllTimers();
+  assert.deepEqual(app.overlaySnapshots.at(-1), { enabled: true, timers: [], total: 0 });
+});
+
+test('timer overlay restore reports overdue records and failed resume stays paused', () => {
+  const paused = { id: 'paused', label: 'Imported', endTime: 80000, paused: true, remainingMs: 60000 };
+  const store = new Map([['olanga_timers', JSON.stringify([{ id: 'overdue', label: 'Tea', endTime: 90000 }, paused])]]);
+  const app = harness(store);
+  app.context.timerOverlayEnabled = true;
+  app.context.loadTimers();
+  const restored = app.overlaySnapshots.at(-1);
+  assert.equal(restored.timers[0].id, 'overdue');
+  assert.equal(restored.timers[0].ringing, true);
+  assert.equal(restored.timers[1].paused, true);
+  app.context.cancelTimer('overdue');
+  const published = app.overlaySnapshots.length;
+  app.context.localStorage.setItem = () => { throw new Error('disk full'); };
+  assert.equal(app.context.resumeImportedTimer('paused').ok, false);
+  assert.equal(app.overlaySnapshots.length, published);
+  assert.equal(app.overlaySnapshots.at(-1).timers[0].paused, true);
+  app.context.timerOverlayEnabled = false;
+  app.context.publishTimerOverlay();
+  assert.deepEqual(app.overlaySnapshots.at(-1), { enabled: false, timers: [], total: 0 });
+});
 
 test('timer deadlines survive restart, ring when due, and stay dismissed after another restart', () => {
   const first = harness();

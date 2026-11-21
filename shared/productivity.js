@@ -15,6 +15,17 @@
   // answers, never instructions or permission to act.
   const factText = value => typeof value === 'string' && value.trim().length >= 2 && value.trim().length <= 300 && !/[\[\]\x00-\x1f]/.test(value) ? value.trim().replace(/\s+/g, ' ') : '';
   const FACT_STOP_WORDS = new Set(['the', 'that', 'this', 'my', 'is', 'are', 'was', 'and', 'about', 'your', 'for', 'our']);
+  // Only whole, first-person references identify a category for deletion.
+  // A phrase such as "my city council" still identifies a note by its words.
+  const REMOVAL_TOPICS = [
+    ['city', /^(?:my (?:home )?city|where i live|where i(?: am|'m) based)$/],
+    ['name', /^my name$/],
+    ['units', /^my (?:preferred )?temperature (?:units?|scale)$/],
+    ['measurement-units', /^my (?:preferred )?measurement (?:units?|system)$/],
+    ['answer-style', /^my (?:preferred )?(?:answer|response) style$/],
+    ['favorite-color', /^my favou?rite colou?r$/],
+    ['music-genre', /^my favou?rite (?:music genre|kind of music)$/]
+  ];
   const LEARNING_UNDO_TTL_MS = 10 * 60 * 1000;
   function factMetadata(item, text) {
     const allowed = ['id', 'text', 'at', 'source', 'slot', 'updatedAt'];
@@ -358,7 +369,9 @@
           }
           const classified = learning?.classifyFact(clean);
           if (classified) {
-            const related = data.facts.filter(item => item.slot === classified.slot || !item.slot && learning.extract(item.text).some(found => found.slot === classified.slot));
+            const related = data.facts.filter(item => item.slot
+              ? item.slot === classified.slot
+              : learning.mentionsSlot(item.text, classified.slot));
             if (related.length > 1) throw new Error('More than one saved memory matches that kind of detail. Edit the specific memory in Workspace, or identify its exact text when asking to update it.');
             if (related.length === 1) {
               const previous = related[0];
@@ -463,13 +476,25 @@
         }, 'edited');
         return clone(updated);
       },
-      // Exact wording first, then a unique phrase, then all meaningful words.
-      findFacts(query) {
+      findFacts(query, { forRemoval = false } = {}) {
         const target = String(query || '').trim().toLowerCase().replace(/\s+/g, ' ');
         if (!target) return [];
         const exact = state.facts.filter(item => item.text.toLowerCase() === target);
         if (exact.length) return clone(exact);
         if (target.length > 300) return [];
+        const topic = forRemoval && REMOVAL_TOPICS.find(([, pattern]) => pattern.test(target.replace(/’/g, "'").replace(/[.!?]+$/, '')));
+        if (topic) {
+          const [slot] = topic;
+          const matches = [];
+          for (const fact of state.facts) {
+            const classified = learning?.classifyFact(fact.text);
+            if (classified?.slot === slot) matches.push(fact);
+            else if (!classified && learning?.mentionsSlot(fact.text, slot)) {
+              throw new Error('A saved memory includes this and other details. Edit it in Workspace → Memories, or give its exact text to forget the whole note.');
+            }
+          }
+          return clone(matches);
+        }
         const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const phrasePattern = new RegExp('(?<![\\p{L}\\p{N}_])' + escaped + '(?![\\p{L}\\p{N}_])', 'u');
         const phrase = state.facts.filter(item => phrasePattern.test(item.text.toLowerCase()));

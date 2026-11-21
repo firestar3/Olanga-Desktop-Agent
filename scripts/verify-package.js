@@ -9,6 +9,7 @@ const archive = path.join(resources, 'app.asar');
 const hash = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
 const files = ['icon.png', 'assets/icons/icon.ico', 'assets/icons/tray.ico', 'main.js', 'preload.js', 'index.html', 'styles.css', 'settings.css', 'backup-center.css', 'news.css', 'PRIVACY.md', 'assets/fonts/Outfit.ttf', 'assets/fonts/OFL.txt', 'node_modules/vosk-browser/dist/vosk.js', 'desktop-workflows.css', 'status-indicator.html', 'status-indicator.js', 'status-indicator.css', 'status-indicator-preload.js'];
 function addDirectory(folder) { for (const entry of fs.readdirSync(path.join(root, folder), { withFileTypes: true })) { const file = folder + '/' + entry.name; if (entry.isDirectory()) addDirectory(file); else if (entry.isFile()) files.push(file); } }
+files.push('companion-cards.css');
 for (const folder of ['js', 'shared', 'desktop', 'extensions']) addDirectory(folder);
 files.push('docs/PHONE_REMOTE.md');
 for (const file of files.filter(file => file.startsWith('extensions/'))) assert.equal(hash(fs.readFileSync(path.join(resources, file))), hash(fs.readFileSync(path.join(root, file))), 'Missing or stale installable companion file: ' + file);

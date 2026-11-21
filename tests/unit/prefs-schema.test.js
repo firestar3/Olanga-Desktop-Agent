@@ -28,6 +28,59 @@ test('empty storage yields the declared defaults', () => {
   assert.equal(loaded.keyRotation, false);
   assert.equal(loaded.statusLightMode, 'active');
   assert.equal(loaded.statusLightSize, 'small');
+  assert.equal(loaded.sportsEnabled, false);
+  assert.equal(loaded.sportsTeam, 'gs');
+  assert.equal(loaded.sportsLiveOnly, true);
+  assert.equal(loaded.timerOverlayEnabled, false);
+});
+
+test('sports preferences round-trip every supported NBA team without enabling by default', () => {
+  const teams = require('../../desktop/sports-service').NBA_TEAMS;
+  assert.equal(teams.length, 30);
+  assert.deepEqual([...prefs.allowedValues('sportsTeam')].sort(), teams.map(team => team.id).sort());
+  for (const { id } of teams) {
+    const storage = fakeStorage();
+    prefs.writeToStorage(storage, { ...prefs.defaults(), sportsEnabled: true, sportsTeam: id, sportsLiveOnly: false });
+    const result = prefs.load(storage);
+    assert.equal(result.sportsEnabled, true);
+    assert.equal(result.sportsTeam, id);
+    assert.equal(result.sportsLiveOnly, false);
+    const disabled = prefs.merge(result, { sportsEnabled: false });
+    assert.equal(disabled.sportsEnabled, false);
+    assert.equal(disabled.sportsTeam, id);
+    assert.equal(disabled.sportsLiveOnly, false);
+  }
+});
+
+test('invalid sports preferences cannot enable network requests or inject a feed path', () => {
+  for (const value of ['https://example.com', '../teams', '__proto__', 'GSW', '', 3, {}, []]) {
+    const result = prefs.sanitize({ sportsEnabled: 'yes', sportsTeam: value });
+    assert.equal(result.sportsEnabled, false);
+    assert.equal(result.sportsTeam, 'gs');
+  }
+  const base = { ...prefs.defaults(), sportsEnabled: true, sportsTeam: 'lal' };
+  const result = prefs.merge(base, { sportsTeam: '../teams', city: 'Oakland' });
+  assert.equal(result.sportsTeam, 'lal');
+  assert.equal(result.sportsEnabled, true);
+});
+
+test('live-only preference defaults on for existing profiles and survives unrelated settings updates', () => {
+  const existing = prefs.load(fakeStorage({ olanga_sports_enabled: 'true', olanga_sports_team: 'gs' }));
+  assert.equal(existing.sportsLiveOnly, true);
+  const disabled = prefs.merge({ ...existing, sportsLiveOnly: false }, { city: 'Oakland' });
+  assert.equal(disabled.sportsLiveOnly, false);
+  const invalid = prefs.merge(disabled, { sportsLiveOnly: 'sometimes' });
+  assert.equal(invalid.sportsLiveOnly, false);
+  assert.equal(prefs.sanitize({ sportsLiveOnly: 'sometimes' }).sportsLiveOnly, true);
+});
+
+test('the settings selector exposes each supported NBA team exactly once', () => {
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '../../index.html'), 'utf8');
+  const select = html.match(/<select\b[^>]*id="sportsTeamSelect"[^>]*>([\s\S]*?)<\/select>/)?.[1];
+  assert.ok(select, 'The user can choose their NBA team in Settings');
+  const choices = [...select.matchAll(/<option\b[^>]*value="([^"]+)"[^>]*>([^<]+)<\/option>/g)].map(match => ({ id: match[1], name: match[2] }));
+  assert.equal(new Set(choices.map(team => team.id)).size, choices.length);
+  assert.deepEqual(choices, require('../../desktop/sports-service').NBA_TEAMS);
 });
 
 test('stored strings are parsed back into their real types', () => {

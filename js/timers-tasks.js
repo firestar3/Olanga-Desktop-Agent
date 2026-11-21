@@ -14,6 +14,24 @@ const TIMER_NOT_SAVED = ' It could not be saved and will be lost if Olanga close
 let stopAlarmPlayback = null;
 let localRecordSequence = 0;
 let countdownTimeout = null;
+let lastTimerOverlaySnapshot = '';
+
+function publishTimerOverlay() {
+  const api = window.electronAPI;
+  if (!api?.setTimerOverlaySnapshot) return;
+  const snapshot = OlangaTimerOverlay.normalizeSnapshot({
+    enabled: typeof timerOverlayEnabled !== 'undefined' && timerOverlayEnabled,
+    timers: activeTimers
+  });
+  const key = JSON.stringify(snapshot);
+  if (key === lastTimerOverlaySnapshot) return;
+  try {
+    api.setTimerOverlaySnapshot(snapshot);
+    lastTimerOverlaySnapshot = key;
+  } catch (error) {
+    console.warn('[Olanga] Could not update the timer card:', error.message);
+  }
+}
 
 function timerDisplaysVisible() {
   return window.OlangaVisibility ? window.OlangaVisibility.isVisible() : !document.hidden;
@@ -215,6 +233,7 @@ function announceTimer(timerObj, text) {
 function ringTimer(timerObj, overdue = false) {
   if (timerObj.ringing || timerObj.paused) return;
   timerObj.ringing = true;
+  publishTimerOverlay();
   const ring = describeTimerRing(timerObj, overdue);
   try { window.electronAPI?.notify?.({ title: ring.title, body: ring.body }); } catch (_) {}
   if (!ring.speech || !announceTimer(timerObj, ring.speech)) playAlarmSoundLoop();
@@ -305,6 +324,7 @@ function clearAllTimers() {
 }
 
 function renderTimers() {
+  publishTimerOverlay();
   if (!timersContainer) return;
   timersContainer.innerHTML = '';
 

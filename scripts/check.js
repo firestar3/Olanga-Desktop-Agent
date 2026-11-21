@@ -7,6 +7,7 @@ const lock = require('../package-lock.json');
 if (lock.version !== pkg.version || lock.packages[''].version !== pkg.version) throw new Error('Package and lockfile versions differ');
 if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== 'v' + pkg.version) throw new Error('Release tag must match package.json version');
 const required = ['main.js', 'preload.js', 'index.html', 'styles.css', 'settings.css', 'backup-center.css', 'news.css', 'PRIVACY.md', 'assets/fonts/Outfit.ttf', 'assets/fonts/OFL.txt', 'desktop-workflows.css', 'status-indicator.html', 'status-indicator.js', 'status-indicator.css', 'status-indicator-preload.js', 'desktop/automation.js', 'desktop/input-helper.ps1', 'desktop/status-overlay.js', 'shared/quick-actions.js', 'shared/action-plan.js', 'js/desktop-workflows.js', 'icon.png', 'assets/icons/icon.ico', 'assets/icons/orb.svg', 'vosk-model-v2.tar.gz'];
+required.push('companion-cards.css', 'js/companion-cards.js', 'desktop/sports-service.js');
 for (const file of required) {
   if (!fs.existsSync(path.join(root, file))) throw new Error('Missing application asset: ' + file);
 }
@@ -14,6 +15,7 @@ require('./verify-icons').verifyIcons({ root });
 for (const file of ['assets/icons/icon.ico', 'icon.png', 'status-indicator.js', 'status-indicator.css', 'desktop-workflows.css', 'desktop/**/*', 'extensions/**/*', 'docs/PHONE_REMOTE.md', 'settings.css', 'backup-center.css', 'news.css', 'PRIVACY.md', 'assets/fonts/**/*']) {
   if (!pkg.build.files.includes(file)) throw new Error('Missing packaged asset: ' + file);
 }
+if (!pkg.build.files.includes('companion-cards.css')) throw new Error('Missing packaged companion styles');
 if (!pkg.build.asarUnpack.includes('desktop/*.ps1')) throw new Error('Native helper must be outside ASAR');
 if (!pkg.build.extraResources.some(item => item.from === 'extensions' && item.to === 'extensions')) throw new Error('Companions must be accessible outside ASAR for installation');
 const modelHeader = Buffer.alloc(2);

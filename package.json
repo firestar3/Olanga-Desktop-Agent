@@ -1,6 +1,6 @@
 {
   "name": "olanga-control",
-  "version": "1.6.1",
+  "version": "1.6.7",
   "description": "Olanga - Your AI Voice Assistant",
   "main": "main.js",
   "scripts": {
@@ -12,6 +12,7 @@
     "check": "node scripts/check.js",
     "smoke": "electron tests/electron-smoke.js --hidden",
     "smoke:overlay": "electron tests/status-overlay-smoke.js",
+    "smoke:companions": "electron tests/companion-cards-smoke.js --hidden",
     "smoke:overlay:native": "electron tests/status-overlay-lifecycle.js",
     "smoke:desktop": "electron tests/desktop-edit-smoke.js",
     "smoke:voice": "electron tests/voice-command-smoke.js",
@@ -89,7 +90,8 @@
       "PRIVACY.md",
       "assets/fonts/**/*",
       "news.css",
-      "backup-center.css"
+      "backup-center.css",
+      "companion-cards.css"
     ],
     "extraResources": [
       {

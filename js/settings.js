@@ -56,7 +56,11 @@ function readPrefsFromLocalStorage() {
     customWakeWordGroups: Array.isArray(customWakeWordGroups) ? customWakeWordGroups : [],
     statusLightMode: OlangaStatusLight.normalizeMode(statusLightMode),
     statusLightSize: OlangaStatusLight.normalizeSize(statusLightSize),
-    quickActions
+    quickActions,
+    timerOverlayEnabled,
+    sportsEnabled,
+    sportsTeam,
+    sportsLiveOnly
   };
 }
 
@@ -89,6 +93,10 @@ function collectPrefsFromUI() {
       statusLightMode,
       statusLightSize,
       quickActions,
+      timerOverlayEnabled: document.getElementById('timerOverlayEnabledToggle')?.checked ?? timerOverlayEnabled,
+      sportsEnabled: document.getElementById('sportsEnabledToggle')?.checked ?? sportsEnabled,
+      sportsTeam: document.getElementById('sportsTeamSelect')?.value || sportsTeam,
+      sportsLiveOnly: document.getElementById('sportsLiveOnlyToggle')?.checked ?? sportsLiveOnly,
       bargeIn: document.getElementById('bargeInToggle')?.checked ?? bargeInEnabled,
       streamReplies: document.getElementById('streamRepliesToggle')?.checked ?? streamRepliesEnabled,
       endOfSpeech: document.getElementById('endOfSpeechSelect')?.value || endOfSpeechKey(),
@@ -147,6 +155,12 @@ function applyPrefsToRuntime(prefs, { microphone = true } = {}) {
   window.electronAPI?.setStatusLightSize?.(statusLightSize);
   quickActions = clean.quickActions;
   window.electronAPI?.setQuickActions?.(quickActions);
+  timerOverlayEnabled = clean.timerOverlayEnabled;
+  if (typeof publishTimerOverlay === 'function') publishTimerOverlay();
+  sportsEnabled = clean.sportsEnabled;
+  sportsTeam = clean.sportsTeam;
+  sportsLiveOnly = clean.sportsLiveOnly;
+  window.electronAPI?.setSportsPreferences?.({ enabled: sportsEnabled, team: sportsTeam, liveOnly: sportsLiveOnly });
 
   if (Array.isArray(prefs.customWakeWordGroups)) {
     customWakeWordGroups = prefs.customWakeWordGroups
@@ -169,6 +183,14 @@ function applyPrefsToRuntime(prefs, { microphone = true } = {}) {
 }
 
 function applyPrefsToSettingsUI(prefs) {
+  const timerOverlayToggle = document.getElementById('timerOverlayEnabledToggle');
+  if (timerOverlayToggle) timerOverlayToggle.checked = prefs.timerOverlayEnabled ?? timerOverlayEnabled;
+  const sportsToggle = document.getElementById('sportsEnabledToggle');
+  const sportsSelect = document.getElementById('sportsTeamSelect');
+  if (sportsToggle) sportsToggle.checked = prefs.sportsEnabled ?? sportsEnabled;
+  if (sportsSelect) sportsSelect.value = prefs.sportsTeam || sportsTeam;
+  const sportsLiveToggle = document.getElementById('sportsLiveOnlyToggle');
+  if (sportsLiveToggle) sportsLiveToggle.checked = prefs.sportsLiveOnly ?? sportsLiveOnly;
   const appearance = { ...window.OlangaAppearance?.snapshot(), ...prefs };
   for (const key of ['appearanceAccent', 'appearanceMotion', 'appearanceContrast', 'appearanceGlow']) {
     const control = document.getElementById(key + 'Select');
@@ -756,6 +778,10 @@ async function init() {
         customWakeWordGroups,
         statusLightMode,
         statusLightSize,
+        timerOverlayEnabled,
+        sportsEnabled,
+        sportsTeam,
+        sportsLiveOnly,
         bargeIn: bargeInEnabled,
         streamReplies: streamRepliesEnabled,
         endOfSpeech: endOfSpeechKey(),
@@ -807,6 +833,28 @@ async function init() {
     quickActions = OlangaQuickActions.normalizeQuickActions();
     renderQuickActionsEditor();
     scheduleSaveAppSettings();
+  });
+  document.getElementById('sportsEnabledToggle')?.addEventListener('change', scheduleSaveAppSettings);
+  document.getElementById('timerOverlayEnabledToggle')?.addEventListener('change', scheduleSaveAppSettings);
+  window.electronAPI?.onOpenTimerOverlaySettings?.(() => {
+    if (!window.OlangaSettingsNavigation?.open('user', { focus: false })) return;
+    requestAnimationFrame(() => {
+      document.getElementById('timerOverlaySettingsHeading')?.closest('section')?.scrollIntoView({ block: 'center', behavior: 'auto' });
+      document.getElementById('timerOverlayEnabledToggle')?.focus({ preventScroll: true });
+    });
+  });
+  window.electronAPI?.onOpenTimers?.(() => {
+    document.querySelector('.floating-icon[data-screen="mainScreen"]')?.click();
+    document.getElementById('timerInput')?.focus({ preventScroll: true });
+  });
+  document.getElementById('sportsTeamSelect')?.addEventListener('change', scheduleSaveAppSettings);
+  document.getElementById('sportsLiveOnlyToggle')?.addEventListener('change', scheduleSaveAppSettings);
+  window.electronAPI?.onOpenSportsSettings?.(() => {
+    if (!window.OlangaSettingsNavigation?.open('user', { focus: false })) return;
+    requestAnimationFrame(() => {
+      document.getElementById('sportsSettingsHeading')?.closest('section')?.scrollIntoView({ block: 'center', behavior: 'auto' });
+      document.getElementById('sportsTeamSelect')?.focus({ preventScroll: true });
+    });
   });
   window.electronAPI?.onQuickAction?.((action) => {
     const slot = OlangaQuickActions.getQuickAction(quickActions, action?.id);

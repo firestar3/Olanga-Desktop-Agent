@@ -117,6 +117,10 @@ async function stop() {
       await send('Network.enable'); await send('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
       await waitForRenderer();
       check('Packaged renderer finishes loading settings, workbench and schedules', true);
+      report.electronVersion = await evaluate("navigator.userAgent.match(/Electron\\/([0-9.]+)/)?.[1] || null");
+      check('Packaged Electron runtime matches the pinned application dependency', report.electronVersion === require('../package.json').devDependencies.electron);
+      check('Packaged companion cards and score preferences are available with isolated preload APIs', await evaluate(`!!window.OlangaCompanionCards && !!document.getElementById('companionMusicCard') && !!document.getElementById('sportsLiveOnlyToggle') && typeof electronAPI.getSportsSnapshot === 'function' && typeof electronAPI.getMediaSnapshot === 'function' && [...document.styleSheets].some(sheet => sheet.href?.endsWith('/companion-cards.css'))`));
+      check('Packaged timer card includes its helper and preload bridge and starts opted out', await evaluate(`typeof window.OlangaTimerOverlay?.normalizeSnapshot === 'function' && typeof window.OlangaTimerOverlay?.remainingText === 'function' && typeof electronAPI.setTimerOverlaySnapshot === 'function' && typeof electronAPI.onOpenTimers === 'function' && !!document.getElementById('timerOverlayEnabledToggle') && !document.getElementById('timerOverlayEnabledToggle').checked && timerOverlayEnabled === false`));
       check('Packaged app exposes initialized readiness, organized memory and direct News controls', await evaluate("window.OlangaAppInitialized === true && typeof OlangaWorkspace.subscribeMemory === 'function' && !!document.getElementById('newsUnreadOnlyToggle') && !!document.getElementById('coreConnectionTestBtn') && ![...document.querySelectorAll('button')].some(node => /new conversation/i.test(node.textContent))"));
       const font = await evaluate("(async () => { await document.fonts.ready; return [...document.fonts].some(face => face.family === 'Outfit' && face.status === 'loaded'); })()");
       check('Packaged Outfit font loads offline from the app bundle', font);
@@ -222,14 +226,17 @@ async function stop() {
       const update = await evaluate('window.electronAPI.getUpdateState()');
       check('Packaged updater starts idle with no automatic download or install', update.phase === 'idle' && update.status === 'not-checked' && update.installedVersion === report.version && !update.canDownload && !update.canInstall && update.bytesReceived === 0 && update.automaticUpdatesEnabled === false);
       await evaluate("(() => { OlangaSettingsNavigation.open('user'); for (const [id, value] of Object.entries({ appearanceAccentSelect: 'rose', appearanceContrastSelect: 'strong', appearanceGlowSelect: 'subtle', appearanceMotionSelect: 'reduced', responseStyleSelect: 'concise', preferredAddressInput: 'Fixture' })) { const control = document.getElementById(id); control.value = value; control.dispatchEvent(new Event('change', { bubbles: true })); } })()");
+      await evaluate("document.getElementById('timerOverlayEnabledToggle').click(); void 0");
       for (let attempt = 0; attempt < 80; attempt++) {
         if (await evaluate("document.getElementById('preferencesSaveStatus').dataset.state === 'saved'")) break;
         await pause(50);
       }
       check('Packaged appearance preferences save without a provider', await evaluate("document.getElementById('preferencesSaveStatus').dataset.state === 'saved' && document.documentElement.dataset.accent === 'rose' && document.documentElement.dataset.contrast === 'strong' && document.documentElement.dataset.glow === 'subtle' && document.documentElement.dataset.reduceMotion === 'true'"));
+      check('Packaged timer card preference saves through the actual settings control', await evaluate("timerOverlayEnabled === true && document.getElementById('timerOverlayEnabledToggle').checked && localStorage.getItem('olanga_timer_overlay_enabled') === 'true'"));
       await evaluate("document.querySelector('[data-screen=mainScreen]').click(); void 0");
       const created = await evaluate(`(() => { const timer = createTimer(1800, 'Packaged fixture'); const task = addTask('Packaged fixture'); return timer.ok && task.ok; })()`);
       check('Packaged local timer and task save successfully', created);
+      const timerDeadline = await evaluate("activeTimers.find(item => item.label === 'Packaged fixture').endTime");
       await reloadRenderer();
       let restored;
       for (let attempt = 0; attempt < 80; attempt++) {
@@ -238,6 +245,7 @@ async function stop() {
         await pause(100);
       }
       check('Packaged reload restores local setup, timers and tasks', restored?.timer && restored?.task && restored?.visible && !restored?.mic);
+      check('Packaged timer card stays enabled after reload with the original timer deadline', await evaluate(`timerOverlayEnabled === true && document.getElementById('timerOverlayEnabledToggle').checked && activeTimers.find(item => item.label === 'Packaged fixture')?.endTime === ${timerDeadline}`));
       check('All four packaged appearance preferences survive a complete renderer reload', await evaluate("document.documentElement.dataset.accent === 'rose' && document.documentElement.dataset.contrast === 'strong' && document.documentElement.dataset.glow === 'subtle' && document.documentElement.dataset.motion === 'reduced' && Object.entries({ appearanceAccentSelect: 'rose', appearanceContrastSelect: 'strong', appearanceGlowSelect: 'subtle', appearanceMotionSelect: 'reduced' }).every(([id, value]) => document.getElementById(id).value === value)"));
       check('Packaged response preferences survive reload', await evaluate("OlangaResponsePreferences.snapshot().responseStyle === 'concise' && OlangaResponsePreferences.snapshot().preferredAddress === 'Fixture'"));
       const provider = await evaluate('window.electronAPI.providerStatus()');

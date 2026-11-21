@@ -995,6 +995,35 @@ function keylessLocal() {
   return { ...fixture, store };
 }
 
+test('forgetting a personal topic removes only that saved fact even with memory sharing off', async () => {
+  for (const phrase of ['Please forget where I live.', 'Forget my city']) {
+    const { context, calls, store } = keylessLocal();
+    store.learnFromUserText('I live in Fremont. I prefer concise answers.');
+    store.rememberFact('My city council meets on Mondays');
+    store.preference('factsEnabled', false);
+    store.setLearningEnabled(false);
+    await context.processTextCommandWithGemini(phrase);
+    assert.match(calls.spoken.at(-1), /Forgotten: I live in Fremont/);
+    assert.deepEqual(store.memorySnapshot().facts.map(fact => fact.text), ['I prefer concise answers', 'My city council meets on Mondays']);
+    await context.processTextCommandWithGemini('Forget my city');
+    assert.match(calls.spoken.at(-1), /couldn't find/i);
+    assert.equal(store.memorySnapshot().facts.length, 2);
+    assert.deepEqual(calls.errors, []);
+  }
+});
+
+test('a topic deletion leaves a compound note intact and offers an exact-text alternative', async () => {
+  const { context, calls, store } = keylessLocal();
+  const note = 'I live in Fremont. My sister is Priya';
+  store.rememberFact(note);
+  await context.processTextCommandWithGemini('Forget where I live');
+  assert.match(calls.spoken.at(-1), /other details.*Workspace/i);
+  assert.doesNotMatch(calls.spoken.at(-1), /Fremont|Priya/);
+  assert.deepEqual(store.memorySnapshot().facts.map(fact => fact.text), [note]);
+  await context.processTextCommandWithGemini('Forget that ' + note);
+  assert.deepEqual(store.memorySnapshot().facts, []);
+});
+
 test('time, date, help and dismissal answer locally without a key or model call', async () => {
   const { context, calls } = keylessLocal();
   for (const phrase of ['What time is it?', "What's today's date?", 'What can you do?', 'Never mind']) await context.processTextCommandWithGemini(phrase);
@@ -1034,6 +1063,141 @@ test('an unclear stop asks which timer, resolves a short answer locally, and nev
   assert.equal(calls.spoken.at(-1), 'Laundry cancelled.');
   assert.deepEqual(context.activeTimers.map(timer => timer.label).join(), 'Tea');
   assert.equal(binding(context, 'pendingActionClarification'), null);
+});
+
+
+test('a complete new local command supersedes an unanswered clarification without a provider', async () => {
+  for (const clarification of ['checklist', 'timer']) {
+    for (const goal of ['set volume to 75%', 'Play Spotify and raise the volume to 75%']) {
+      const { context, calls } = keylessLocal();
+      if (clarification === 'checklist') {
+        context.addTask('Annual report'); context.addTask('Monthly report');
+        await context.processTextCommandWithGemini('complete task report');
+      } else {
+        context.createTimer(300, 'Tea'); context.createTimer(600, 'Laundry');
+        await context.processTextCommandWithGemini('cancel the timer');
+      }
+      assert.ok(binding(context, 'pendingActionClarification'));
+      context.window.electronAPI.mediaControl = async (command, spotifyOnly, level) => {
+        calls.media.push({ command, spotifyOnly, level });
+        return { ok: true, verified: true, message: command === 'MEDIA_PLAY' ? 'Spotify is playing.' : 'System volume is 75%.' };
+      };
+      await context.processTextCommandWithGemini(goal);
+      assert.deepEqual(calls.media.map(call => call.command), goal.startsWith('Play') ? ['MEDIA_PLAY', 'VOLUME_SET'] : ['VOLUME_SET']);
+      assert.equal(calls.media.at(-1).level, 75);
+      if (goal.startsWith('Play')) assert.ok(calls.media.every(call => call.spotifyOnly === true));
+      assert.equal(binding(context, 'pendingActionClarification'), null);
+      assert.equal(context.activeTasks.some(task => task.completed), false);
+      if (clarification === 'timer') assert.deepEqual(context.activeTimers.map(timer => timer.label).join(), 'Tea,Laundry');
+      assert.deepEqual(calls.errors, []);
+      assert.match(calls.spoken.at(-1), /System volume is 75%/);
+      assert.equal(context.window.OlangaTurns.snapshot().outcome, 'completed');
+    }
+  }
+});
+
+test('an exact clarification answer that resembles a command resolves only the pending record', async () => {
+  const { context, calls } = keylessLocal();
+  context.addTask('Play Spotify'); context.addTask('Play piano');
+  await context.processTextCommandWithGemini('complete task play');
+  await context.processTextCommandWithGemini('Play Spotify');
+  assert.equal(context.activeTasks[0].completed, true);
+  assert.equal(context.activeTasks[1].completed, false);
+  assert.deepEqual(calls.media, []);
+  assert.equal(binding(context, 'pendingActionClarification'), null);
+  assert.equal(calls.spoken.at(-1), 'Marked "Play Spotify" complete.');
+});
+
+test('a complete command cannot resolve a pending task or timer through a partial name', async () => {
+  for (const kind of ['checklist', 'timer']) {
+    for (const goal of ['Play Spotify', 'Play Spotify and raise the volume to 75%']) {
+      const { context, calls } = keylessLocal();
+      const label = goal + ' after dinner';
+      if (kind === 'checklist') {
+        context.addTask(label); context.addTask('Play piano');
+        await context.processTextCommandWithGemini('complete task play');
+      } else {
+        context.createTimer(300, label); context.createTimer(600, 'Play piano');
+        await context.processTextCommandWithGemini('cancel the timer');
+      }
+      assert.ok(binding(context, 'pendingActionClarification'));
+      context.window.electronAPI.mediaControl = async (command, spotifyOnly, level) => {
+        calls.media.push({ command, spotifyOnly, level });
+        return { ok: true, verified: true, message: command === 'MEDIA_PLAY' ? 'Spotify is playing.' : 'System volume is 75%.' };
+      };
+      await context.processTextCommandWithGemini(goal);
+      assert.deepEqual(calls.media.map(call => call.command), goal.includes('volume') ? ['MEDIA_PLAY', 'VOLUME_SET'] : ['MEDIA_PLAY']);
+      assert.ok(calls.media.every(call => call.spotifyOnly === true));
+      if (goal.includes('volume')) assert.equal(calls.media.at(-1).level, 75);
+      assert.equal(context.activeTasks.some(task => task.completed), false);
+      if (kind === 'timer') assert.deepEqual(Array.from(context.activeTimers, timer => timer.label), [label, 'Play piano']);
+      assert.equal(binding(context, 'pendingActionClarification'), null);
+      assert.deepEqual(calls.errors, []);
+    }
+  }
+});
+
+test('exact timer names that resemble complete commands retain clarification priority', async () => {
+  for (const goal of ['Play Spotify', 'Play Spotify and raise the volume to 75%']) {
+    const { context, calls } = keylessLocal();
+    context.createTimer(300, goal); context.createTimer(600, 'Play piano');
+    await context.processTextCommandWithGemini('cancel the timer');
+    await context.processTextCommandWithGemini(goal);
+    assert.deepEqual(Array.from(context.activeTimers, timer => timer.label), ['Play piano']);
+    assert.deepEqual(calls.media, []);
+    assert.equal(calls.spoken.at(-1), goal + ' cancelled.');
+    assert.equal(binding(context, 'pendingActionClarification'), null);
+  }
+});
+
+test('short non-command answers still resolve unique partial task and timer names', async () => {
+  const { context, calls } = keylessLocal();
+  context.addTask('Annual report'); context.addTask('Monthly report');
+  await context.processTextCommandWithGemini('complete task report');
+  await context.processTextCommandWithGemini('Annual');
+  assert.equal(context.activeTasks[0].completed, true);
+  assert.equal(context.activeTasks[1].completed, false);
+  context.createTimer(300, 'Tea break'); context.createTimer(600, 'Laundry');
+  await context.processTextCommandWithGemini('cancel the timer');
+  await context.processTextCommandWithGemini('Tea');
+  assert.deepEqual(Array.from(context.activeTimers, timer => timer.label), ['Laundry']);
+  assert.equal(calls.spoken.at(-1), 'Tea break cancelled.');
+});
+
+test('a command-shaped memory clarification requires the full stored text', async () => {
+  for (const exact of [false, true]) {
+    const { context, calls, store } = keylessLocal();
+    store.rememberFact(exact ? 'Play Spotify' : 'Play Spotify after dinner');
+    store.rememberFact('Play piano');
+    await context.processTextCommandWithGemini('forget play');
+    assert.ok(binding(context, 'pendingActionClarification'));
+    context.window.electronAPI.mediaControl = async command => {
+      calls.media.push(command);
+      return { ok: true, verified: true, message: 'Spotify is playing.' };
+    };
+    await context.processTextCommandWithGemini('Play Spotify');
+    assert.deepEqual(calls.media, exact ? [] : ['MEDIA_PLAY']);
+    assert.deepEqual(store.snapshot().facts.map(fact => fact.text), exact ? ['Play piano'] : ['Play Spotify after dinner', 'Play piano']);
+    assert.equal(binding(context, 'pendingActionClarification'), null);
+    assert.deepEqual(calls.errors, []);
+  }
+});
+
+test('a failed clarified local action cannot become a completed turn', async () => {
+  const { context, calls, store } = keylessLocal();
+  context.addTask('Annual report'); context.addTask('Monthly report');
+  await context.processTextCommandWithGemini('complete task report');
+  const save = context.localStorage.setItem;
+  context.localStorage.setItem = (key, value) => { if (key === 'olanga_tasks') throw new Error('Storage full'); save(key, value); };
+  await context.processTextCommandWithGemini('Annual report');
+  assert.equal(context.activeTasks.some(task => task.completed), false);
+  assert.equal(calls.spoken.at(-1), 'The checklist change could not be saved. Nothing was changed.');
+  assert.equal(context.window.OlangaTurns.snapshot().outcome, 'failed');
+  assert.equal(context.window.OlangaTurns.snapshot().steps.length, 1);
+  assert.equal(context.window.OlangaTurns.snapshot().steps[0].operation, 'COMPLETE_TASK');
+  assert.equal(context.window.OlangaTurns.snapshot().steps[0].state, 'failed');
+  assert.equal(store.snapshot().activity.at(-1).state, 'failed');
+  assert.equal(binding(context, 'pendingActionClarification'), null, 'the attempted command is consumed and cannot replay');
 });
 
 test('never mind cancels a pending clarification without running the unresolved step', async () => {
@@ -1077,6 +1241,32 @@ test('an ambiguous forget asks first and a clarified answer removes exactly one 
   await context.processTextCommandWithGemini('office code');
   assert.equal(calls.spoken.at(-1), 'Forgotten: my office code is 2222.');
   assert.deepEqual(store.snapshot().facts.map(item => item.text), ['my gym code is 1111']);
+});
+
+test('a forget follow-up can select only a memory offered in the clarification', async () => {
+  const { context, calls, store } = keylessLocal();
+  const records = ['gym code 1111', 'office code 2222', 'locker code 3333', 'gate code 4444', 'My bicycle is green'];
+  for (const text of records) store.rememberFact(text);
+  context.apiKey = 'fixture-key';
+  let providerCalls = 0;
+  context.sendTextToGemini = async () => {
+    providerCalls++;
+    return '[CONTINUE_ACTION]';
+  };
+  await context.processTextCommandWithGemini('forget my code');
+  assert.match(calls.spoken.at(-1), /gym code.*office code.*locker code/);
+  assert.doesNotMatch(calls.spoken.at(-1), /gate code|bicycle/);
+
+  for (const reply of ['gate code', 'My bicycle is green', 'the other one']) {
+    await context.processTextCommandWithGemini(reply);
+    assert.deepEqual(store.memorySnapshot().facts.map(item => item.text), records, reply);
+    assert.ok(binding(context, 'pendingActionClarification'), reply);
+  }
+  assert.equal(providerCalls, 0);
+  await context.processTextCommandWithGemini('office code');
+  assert.deepEqual(store.memorySnapshot().facts.map(item => item.text), records.filter(text => text !== 'office code 2222'));
+  assert.equal(binding(context, 'pendingActionClarification'), null);
+  assert.deepEqual(calls.errors, []);
 });
 
 test('a keyless briefing combines local records with headlines and never calls a model', async () => {

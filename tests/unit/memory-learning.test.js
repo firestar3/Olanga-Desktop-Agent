@@ -10,6 +10,24 @@ function fixture(raw) {
   return { store: createStore(storage), data, storage };
 }
 
+test('deletion topics resolve whole facts in legacy profiles without changing literal search', () => {
+  const examples = [
+    ['where I’m based', 'I live in St. Louis'],
+    ['my name', 'I go by María José'],
+    ['my temperature units', 'I use Celsius'],
+    ['my measurement system', 'I prefer metric units'],
+    ['my answer style', 'I prefer short replies'],
+    ['my favourite colour', 'My favorite color is teal'],
+    ['my favorite kind of music', 'I like jazz music']
+  ];
+  const facts = examples.map(([, text], index) => ({ id: String(index + 1), text, at: index + 1 }));
+  const { store } = fixture({ version: 1, facts });
+  for (const [query, text] of examples) {
+    assert.deepEqual(store.findFacts(query, { forRemoval: true }).map(fact => fact.text), [text]);
+  }
+  assert.deepEqual(store.findFacts('where I’m based'), []);
+});
+
 test('direct stable first-person facts normalize into a deliberately limited vocabulary', () => {
   for (const [input, expected] of [
     ['My name is Aarav.', { slot: 'name', text: 'My name is Aarav' }],
@@ -142,6 +160,23 @@ test('explicit slot updates never discard a compound memory or choose between co
   const legacy = fixture({ version: 1, facts: [{ id: 'one', text: 'I live in Seattle', at: 1 }, { id: 'two', text: 'I live in Boston', at: 2 }] });
   assert.throws(() => legacy.store.rememberFact('I live in Chicago'), /More than one saved memory/);
   assert.equal(legacy.store.snapshot().facts.length, 2);
+});
+
+test('explicit city corrections preserve conflicting or private compound memories across reload', () => {
+  for (const text of ['I live in Boston. I live in Chicago', 'I live in Boston. My password is private']) {
+    const compound = { id: 'note', text, at: 1 };
+    const city = { id: 'city', text: 'I live in Seattle', at: 2 };
+    for (const facts of [[compound], [compound, city]]) {
+      const { store, storage } = fixture({ version: 1, facts });
+      const before = storage.getItem(KEY);
+      const expectedError = facts.length === 1 ? /includes other details/ : /More than one saved memory/;
+      assert.throws(() => store.rememberFact('I live in Denver'), expectedError);
+      assert.equal(storage.getItem(KEY), before);
+      assert.deepEqual(createStore(storage).memorySnapshot().facts, facts);
+      assert.equal(store.rememberFact(text).id, compound.id);
+      assert.equal(store.rememberFact('My favorite color is blue').text, 'My favorite color is blue');
+    }
+  }
 });
 
 test('temperature and measurement preferences remain separate and full lists still permit own-slot updates', () => {

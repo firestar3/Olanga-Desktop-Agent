@@ -9,6 +9,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setStatusLightSize: (size) => ipcRenderer.send('status-indicator-set-size', size),
   setReducedMotion: (enabled) => { if (typeof enabled === 'boolean') ipcRenderer.send('status-overlay-set-reduced-motion', enabled); },
   setQuickActions: (actions) => ipcRenderer.send('status-overlay-set-quick-actions', actions),
+  setSportsPreferences: (preferences) => ipcRenderer.send('sports-set-preferences', preferences),
+  setTimerOverlaySnapshot: (snapshot) => ipcRenderer.send('timer-overlay-set-snapshot', snapshot),
+  onOpenTimers: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const handler = () => callback();
+    ipcRenderer.on('timers-open', handler);
+    return () => ipcRenderer.removeListener('timers-open', handler);
+  },
+  onOpenTimerOverlaySettings: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const handler = () => callback();
+    ipcRenderer.on('timer-overlay-open-settings', handler);
+    return () => ipcRenderer.removeListener('timer-overlay-open-settings', handler);
+  },
+  getSportsSnapshot: () => ipcRenderer.invoke('sports-get-snapshot'),
+  onSportsSnapshot: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const handler = (_event, snapshot) => callback(snapshot);
+    ipcRenderer.on('sports-snapshot', handler);
+    return () => ipcRenderer.removeListener('sports-snapshot', handler);
+  },
+  getMediaSnapshot: () => ipcRenderer.invoke('media-get-snapshot'),
+  onOpenSportsSettings: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const handler = () => callback();
+    ipcRenderer.on('sports-open-settings', handler);
+    return () => ipcRenderer.removeListener('sports-open-settings', handler);
+  },
   onQuickAction: (callback) => {
     const handler = (_event, action) => callback(action);
     ipcRenderer.on('quick-action-run', handler);

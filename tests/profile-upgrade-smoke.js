@@ -286,7 +286,7 @@ async function upgrade(seed) {
   const next = await launch(newExe, newVersion, 'new');
   // These are the only additions permitted during this upgrade. Do not derive
   // expected values from the actual snapshot or rewrite encrypted preferences.
-  const addedDefaults = { appearanceAccent: 'violet', appearanceMotion: 'system', appearanceContrast: 'standard', appearanceGlow: 'standard', responseStyle: 'natural', preferredAddress: '', microphoneDeviceId: '' };
+  const addedDefaults = { appearanceAccent: 'violet', appearanceMotion: 'system', appearanceContrast: 'standard', appearanceGlow: 'standard', responseStyle: 'natural', preferredAddress: '', microphoneDeviceId: '', sportsEnabled: false, sportsTeam: 'gs', sportsLiveOnly: true };
   const supportedDefaults = await next.evaluate('OlangaPrefs.PREF_DEFS.map(def => def.key)');
   report.addedPreferenceDefaults = {};
   for (const [key, value] of Object.entries(addedDefaults)) {

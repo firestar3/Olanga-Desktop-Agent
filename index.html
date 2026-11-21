@@ -28,6 +28,7 @@
   <link rel="stylesheet" href="settings.css">
   <link rel="stylesheet" href="backup-center.css">
   <link rel="stylesheet" href="news.css">
+  <link rel="stylesheet" href="companion-cards.css">
   <script src="./js/appearance.js"></script>
 </head>
 <body>
@@ -253,6 +254,7 @@
           <button id="addTaskBtn" title="Add Task">+</button>
         </div>
       </div>
+      <aside id="companionRail" aria-label="Live scores and music" hidden></aside>
     </div>
   </div>
 
@@ -495,6 +497,24 @@
             <details class="quick-actions-settings"><summary>Customize your five shortcuts</summary><p class="settings-hint">Give each shortcut a name and a request. Try “Desktop task: rewrite the selected paragraph” or “Set a timer for 25 minutes”. Screen edits still require both confirmations.</p><div id="quickActionsEditor" class="quick-actions-editor"></div><button type="button" class="status-light-mode-btn" id="resetQuickActionsBtn">Restore default shortcuts</button><span id="quickActionsSaveStatus" class="settings-hint" role="status"></span></details>
           </section>
 
+          <section class="settings-section" aria-labelledby="timerOverlaySettingsHeading">
+            <h3 id="timerOverlaySettingsHeading">Timer card</h3>
+            <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="timerOverlayEnabledToggle" aria-labelledby="timerOverlayEnabledLabel" aria-describedby="timerOverlayHint"><span class="slider" aria-hidden="true"></span></label><label for="timerOverlayEnabledToggle" id="timerOverlayEnabledLabel">Pin timers beside Olanga</label></div>
+            <p class="settings-hint settings-hint-after" id="timerOverlayHint">See the next timer to ring, expand up to five timers, or tuck the card away using its handle. The card appears while timers, alarms or reminders are active. If scores are also available, switch between them in the card.</p>
+          </section>
+
+          <section class="settings-section" aria-labelledby="sportsSettingsHeading">
+            <h3 id="sportsSettingsHeading">Live scores</h3>
+            <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="sportsEnabledToggle" aria-labelledby="sportsEnabledLabel" aria-describedby="sportsHint"><span class="slider" aria-hidden="true"></span></label><label for="sportsEnabledToggle" id="sportsEnabledLabel">Pin scores beside Olanga</label></div>
+            <p class="settings-hint settings-hint-after" id="sportsHint">Follow your team while you work. Scores appear on the right of Olanga’s Home page, or beside the corner light when you leave the app. Live games refresh every 15 seconds; ESPN scores may lag the broadcast.</p>
+            <div class="rotation-toggle-row"><label class="toggle-switch"><input type="checkbox" id="sportsLiveOnlyToggle" checked aria-labelledby="sportsLiveOnlyLabel" aria-describedby="sportsLiveOnlyHint"><span class="slider" aria-hidden="true"></span></label><label for="sportsLiveOnlyToggle" id="sportsLiveOnlyLabel">Only show during live games</label></div>
+            <p class="settings-hint settings-hint-after" id="sportsLiveOnlyHint">The card appears automatically when your team plays and disappears after the final score. Turn this off to see upcoming games and recent results too.</p>
+            <div class="voice-settings-row"><label for="sportsTeamSelect">NBA team</label><select id="sportsTeamSelect">
+              <option value="atl">Atlanta Hawks</option><option value="bos">Boston Celtics</option><option value="bkn">Brooklyn Nets</option><option value="cha">Charlotte Hornets</option><option value="chi">Chicago Bulls</option><option value="cle">Cleveland Cavaliers</option><option value="dal">Dallas Mavericks</option><option value="den">Denver Nuggets</option><option value="det">Detroit Pistons</option><option value="gs" selected>Golden State Warriors</option><option value="hou">Houston Rockets</option><option value="ind">Indiana Pacers</option><option value="lac">LA Clippers</option><option value="lal">Los Angeles Lakers</option><option value="mem">Memphis Grizzlies</option><option value="mia">Miami Heat</option><option value="mil">Milwaukee Bucks</option><option value="min">Minnesota Timberwolves</option><option value="no">New Orleans Pelicans</option><option value="ny">New York Knicks</option><option value="okc">Oklahoma City Thunder</option><option value="orl">Orlando Magic</option><option value="phi">Philadelphia 76ers</option><option value="phx">Phoenix Suns</option><option value="por">Portland Trail Blazers</option><option value="sac">Sacramento Kings</option><option value="sa">San Antonio Spurs</option><option value="tor">Toronto Raptors</option><option value="utah">Utah Jazz</option><option value="wsh">Washington Wizards</option>
+            </select></div>
+            <p class="settings-hint">Drag the small grip inside the floating card’s top edge down to tuck it away, or up to bring it back. Clicking the grip works too. Tucked cards keep updating. Unpin to stop checks; the corner light’s timed hide and computer sleep pause checks. No AI key needed.</p>
+          </section>
+
           <section class="settings-section" aria-labelledby="wakeSettingsHeading">
             <h3 id="wakeSettingsHeading">Wake words</h3>
             <p class="settings-hint">The built-in phrases stay available. Add your own phrase, then say it five times to teach Olanga its spoken variations.</p>
@@ -610,6 +630,7 @@
   </div>
 
   <script src="./shared/status-light.js"></script>
+  <script src="./shared/timer-overlay.js"></script>
   <script src="./shared/quick-actions.js"></script>
   <script src="./shared/gemini-request.js"></script>
   <script src="./shared/fast-intents.js"></script>
@@ -656,5 +677,6 @@
   <script src="./js/workspaces.js"></script>
   <script src="./js/backup-center.js"></script>
   <script src="./js/phone-controller.js"></script>
+  <script src="./js/companion-cards.js"></script>
 </body>
 </html>

@@ -248,7 +248,9 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
   async function undoEdit() {
     if (busy || !undoReceipt) return;
     if (Date.now() > undoReceipt.expiresAt) { showUndo({ available: false, message: 'This undo checkpoint expired. No text was restored.' }); return; }
-    const undoId = undoReceipt.undoId, token = ++generation;
+    const undoId = undoReceipt.undoId;
+    cancel(); // Undo supersedes any pending question, approval and follow-up listening.
+    const token = ++generation;
     activityStop('cancelled', 'The pending desktop proposal was replaced by an undo request.');
     activityStep('DESKTOP_UNDO');
     clearPlan(); undoing = true; setBusy(true);
@@ -258,8 +260,9 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
       if (token !== generation) return;
       showUndo({ available: false, message: result.message });
       status(result.message, result.ok && result.verified ? 'success' : 'notice');
-      activityReceipt(result.ok && result.verified ? 'completed' : result.cancelled ? 'cancelled' : result.ok ? 'unverified' : 'failed', result.message);
-      activityFinish(result.ok && result.verified ? 'completed' : result.cancelled ? 'cancelled' : result.ok ? 'unverified' : 'failed');
+      const outcome = result.ok && result.verified ? 'completed' : (result.cancelled || result.reason === 'cancelled') ? 'cancelled' : result.ok ? 'unverified' : 'failed';
+      activityReceipt(outcome, result.message);
+      activityFinish(outcome);
     } catch (error) {
       if (token !== generation) return;
       showUndo({ available: false, message: error.message || 'Undo could not be verified. Inspect the editor.' });
@@ -708,7 +711,7 @@ Keep followUp empty unless a question is needed. Do not invent tools or add expl
       ['Change a setting', 'Help me change the text size in Windows Settings. Ask me what size I want.']
     ]) {
       const button = element('button', '', caption); button.type = 'button';
-      button.addEventListener('click', () => { if (!busy) { cancel(); previous = []; goal.value = text; clearPlan(); goal.focus(); } });
+      button.addEventListener('click', () => { if (!busy) open(text); });
       examples.append(button);
     }
     const privacy = element('p', 'desktop-task-privacy', 'With your permission, Google Gemini diagnoses the screen and plans an edit. Approved edits include a post-edit screenshot for verification. Each phase has up to 12 steps within the reviewed scope.');

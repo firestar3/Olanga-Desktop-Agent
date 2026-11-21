@@ -10,9 +10,29 @@ const { pathToFileURL } = require('url');
 app.setName('olanga-control');
 
 const { createStatusOverlay } = require('./desktop/status-overlay');
+const { createSportsService } = require('./desktop/sports-service');
+const timerOverlay = require('./shared/timer-overlay');
 const { registerDesktopAutomation } = require('./desktop/automation');
 const { createMediaController } = require('./desktop/media-controller');
 const mediaController = createMediaController();
+let mediaStatusController = null;
+let mediaStatusRequest = null;
+function stopMediaObservation() {
+  mediaStatusController?.dispose();
+  mediaStatusController = null;
+  mediaStatusRequest = null;
+}
+function readMediaSnapshot() {
+  if (!getAppVisibility().visible || !sportsSystemAwake) return Promise.resolve({ ok: false, status: 'Closed', reason: 'inactive', message: 'Olanga is hidden.' });
+  if (mediaStatusRequest) return mediaStatusRequest;
+  // Observation has its own read-only worker so a slow Windows status read
+  // cannot occupy the action controller used by voice and playback buttons.
+  if (!mediaStatusController) mediaStatusController = createMediaController({ timeoutMs: 5000 });
+  const request = mediaStatusController.execute({ action: 'STATUS', spotifyOnly: true });
+  mediaStatusRequest = request;
+  request.finally(() => { if (mediaStatusRequest === request) mediaStatusRequest = null; }).catch(() => {});
+  return request;
+}
 const { isTrustedMainFrame, validateStoreKey } = require('./shared/ipc-policy');
 const { normalizeNvidiaKey } = require('./shared/nvidia-key');
 const { normalizeSavedKeys: normalizeGeminiKeys, validateCandidateKeys: validateGeminiKeys } = require('./shared/gemini-keys');
@@ -27,6 +47,12 @@ function publishAppVisibility() {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   appVisibilityRevision++;
   mainWindow.webContents.send("app-visibility-changed", getAppVisibility());
+  syncCompanionPresentation();
+}
+function syncCompanionPresentation() {
+  const visible = getAppVisibility().visible;
+  statusOverlay.setMainWindowActive(visible && mainWindow.isFocused());
+  if (!visible) stopMediaObservation();
 }
 function watchAppClock(window) {
   const publish = reason => {
@@ -42,13 +68,45 @@ function watchAppClock(window) {
 }
 let tray = null;
 let desktopAutomation;
+let sportsService;
+let sportsOverlayActive = false;
+let sportsSystemAwake = true;
+function syncSportsActivity() { sportsService?.setActive(sportsOverlayActive && sportsSystemAwake); }
+function openSportsSettings() {
+  showMainWindow();
+  mainWindow?.webContents.send('sports-open-settings');
+}
 const statusOverlay = createStatusOverlay({
   BrowserWindow, ipcMain, screen, basePath: __dirname,
+  onSportsActive: (active) => { sportsOverlayActive = active; syncSportsActivity(); },
+  onSportsRefresh: () => sportsService?.refresh(),
+  onSportsSettings: openSportsSettings,
+  onTimersSettings: () => {
+    showMainWindow();
+    mainWindow?.webContents.send('timer-overlay-open-settings');
+  },
+  onOpenTimers: () => {
+    showMainWindow();
+    mainWindow?.webContents.send('timers-open');
+  },
   onOpenApp: () => showMainWindow(),
   onQuickAction: (action) => {
     showMainWindow();
     mainWindow?.webContents.send('quick-action-run', action);
   }
+});
+// Only public, bounded score requests leave the main process. The overlay
+// retains connect-src 'none' and never receives credentials or remote markup.
+sportsService = createSportsService({
+  fetchImpl: (url, options) => net.fetch(url, { ...options, credentials: 'omit', redirect: 'error' }),
+  onUpdate: (snapshot) => {
+    statusOverlay.setSports(snapshot);
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send('sports-snapshot', snapshot);
+  }
+});
+app.whenReady().then(() => {
+  powerMonitor.on('suspend', () => { sportsSystemAwake = false; stopMediaObservation(); syncSportsActivity(); });
+  powerMonitor.on('resume', () => { sportsSystemAwake = true; syncSportsActivity(); });
 });
 function createStatusIndicatorWindow() { return statusOverlay.create(); }
 function destroyStatusIndicatorWindow() { statusOverlay.destroy(); }
@@ -240,6 +298,7 @@ function createWindow() {
   });
 
   for (const event of ['show', 'hide', 'minimize', 'restore']) mainWindow.on(event, publishAppVisibility);
+  for (const event of ['focus', 'blur']) mainWindow.on(event, syncCompanionPresentation);
   watchAppClock(mainWindow);
   mainWindow.once('ready-to-show', () => {
     // A login-item launch stays in the tray; the renderer still boots so the
@@ -260,6 +319,11 @@ function createWindow() {
     // launches and hidden reloads in the tray; the show path expands them.
     if (mainWindow.isVisible() && !mainWindow.isMinimized()) ensureWindowExpanded();
   });
+  // The renderer owns the running timers. Discard its last view while it
+  // reloads or exits so an old countdown cannot outlive its alarm handler.
+  mainWindow.webContents.on('did-start-loading', () => statusOverlay.setTimers({ enabled: false }));
+  mainWindow.webContents.on('render-process-gone', () => statusOverlay.setTimers({ enabled: false }));
+  mainWindow.once('closed', () => statusOverlay.setTimers({ enabled: false }));
 
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -316,6 +380,7 @@ function createTray() {
   
   const contextMenu = Menu.buildFromTemplate([
     { label: 'Show Olanga', click: () => showMainWindow() },
+    { label: 'Live scores settings', click: openSportsSettings },
     { type: 'separator' },
     { label: 'Quit', click: () => {
         app.isQuiting = true;
@@ -984,6 +1049,8 @@ if (!gotTheLock) {
 app.on('before-quit', () => {
   app.isQuiting = true;
   mediaController.dispose();
+  stopMediaObservation();
+  sportsService.dispose();
   desktopAutomation?.dispose();
   destroyStatusIndicatorWindow();
 });
@@ -1013,6 +1080,10 @@ trustedMainIpc.on('status-indicator-set-size', (_event, size) => {
 });
 
 trustedMainIpc.on('status-overlay-set-quick-actions', (_event, actions) => statusOverlay.setQuickActions(actions));
+trustedMainIpc.on('sports-set-preferences', (_event, preferences) => sportsService.configure(preferences));
+trustedMainIpc.on('timer-overlay-set-snapshot', (_event, snapshot) => statusOverlay.setTimers(timerOverlay.normalizeSnapshot(snapshot)));
+trustedMainIpc.handle('sports-get-snapshot', () => sportsService.getSnapshot());
+trustedMainIpc.handle('media-get-snapshot', readMediaSnapshot);
 trustedMainIpc.on('status-overlay-set-reduced-motion', (_event, enabled) => {
   if (typeof enabled === 'boolean') statusOverlay.setReducedMotion(enabled);
 });

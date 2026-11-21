@@ -904,10 +904,16 @@ function rememberUserFact(text) {
 function forgetUserFact(query) {
   const store = memoryStore();
   if (!store) return { ok: false, message: 'Memories are unavailable in this version of Olanga.' };
-  const matches = store.findFacts(query);
-  if (matches.length > 1) return { ok: false, clarification: true, message: `More than one memory matches "${query}": ${matches.slice(0, 3).map(item => item.text).join('; ')}. Which one should I forget?` };
-  if (!matches.length) return { ok: false, message: `I couldn't find a memory matching "${query}".` };
-  try { store.deleteFact(matches[0].id); return { ok: true, message: `Forgotten: ${matches[0].text}.` }; }
+  try {
+    const matches = store.findFacts(query, { forRemoval: true });
+    if (matches.length > 1) {
+      const offered = matches.slice(0, 3);
+      return { ok: false, clarification: true, candidateIds: offered.map(item => item.id), message: `More than one memory matches "${query}": ${offered.map(item => item.text).join('; ')}. Which one should I forget?` };
+    }
+    if (!matches.length) return { ok: false, message: `I couldn't find a memory matching "${query}".` };
+    store.deleteFact(matches[0].id);
+    return { ok: true, message: `Forgotten: ${matches[0].text}.` };
+  }
   catch (error) { return { ok: false, message: error.message }; }
 }
 
@@ -1306,7 +1312,7 @@ const PARAMETER_ACTION_NAMES = new Set(['OPEN_APP', 'CLOSE_APP', 'SPOTIFY_SONG',
 PARAMETER_ACTION_NAMES.add('ARRANGE_APP');
 for (const name of ['SET_REMINDER', 'SET_ALARM', 'REMEMBER', 'FORGET']) PARAMETER_ACTION_NAMES.add(name);
 
-function rememberActionClarification(command, question, userGoal) {
+function rememberActionClarification(command, question, userGoal, candidateIds = []) {
   const due = /^\[SET_TASK_DUE: [^,]+,\s*([^\]]+)\]$/.exec(command);
   const timer = /^\[(?:STOP_TIMER|CANCEL_TIMER)\b/.test(command), memory = /^\[FORGET\b/.test(command);
   pendingActionClarification = {
@@ -1314,25 +1320,30 @@ function rememberActionClarification(command, question, userGoal) {
     // STOP_TIMER has no target of its own; a clarified answer names one timer.
     allowedNames: /^\[STOP_TIMER\]$/.test(command) ? ['CANCEL_TIMER'] : routedActionNames(command),
     userGoal: typeof userGoal === 'string' && userGoal.length <= 6000 ? userGoal : '',
-    question, command, dueDate: due?.[1] || null
+    question, command, dueDate: due?.[1] || null,
+    ...(memory ? { candidateIds } : {})
   };
 }
 
 // Resolves a short clarification answer locally when it names exactly one
 // record. Anything else is left to the Gemini specialist or a new request.
-function resolveClarifiedCommand(previous, goal) {
+function resolveClarifiedCommand(previous, goal, exactOnly = false) {
   const name = /^\[([A-Z_]+)/.exec(previous?.command || '')?.[1];
   if (!name || typeof goal !== 'string' || /[\[\]\r\n]/.test(goal)) return null;
+  const target = goal.trim().toLowerCase();
   if (name === 'STOP_TIMER' || name === 'CANCEL_TIMER') {
     const match = typeof findTimerForChange === 'function' ? findTimerForChange(goal) : null;
-    return match?.timer ? `[CANCEL_TIMER: ${match.timer.id}]` : null;
+    return match?.timer && (!exactOnly || match.timer.id === goal.trim() || match.timer.label.trim().toLowerCase() === target)
+      ? `[CANCEL_TIMER: ${match.timer.id}]` : null;
   }
   if (name === 'FORGET') {
-    const matches = memoryStore()?.findFacts(goal) || [];
-    return matches.length === 1 ? `[FORGET: ${matches[0].text}]` : null;
+    const matches = (memoryStore()?.findFacts(goal) || []).filter(fact => previous.candidateIds?.includes(fact.id));
+    return matches.length === 1 && (!exactOnly || matches[0].text.trim().toLowerCase() === target.replace(/\s+/g, ' '))
+      ? `[FORGET: ${matches[0].text}]` : null;
   }
   if (!['REMOVE_TASK', 'COMPLETE_TASK', 'UNCOMPLETE_TASK', 'SET_TASK_DUE'].includes(name) || typeof findTaskForChange !== 'function') return null;
   const match = findTaskForChange(goal);
+  if (exactOnly && match.task && match.task.id !== goal.trim() && match.task.text.trim().toLowerCase() !== target) return null;
   return match.task ? previous.command.replace(/^\[([A-Z_]+):[^\]]+\]$/, (_, command) => `[${command}: ${match.task.id}${previous.dueDate ? ', ' + previous.dueDate : ''}]`) : null;
 }
 
@@ -1536,7 +1547,7 @@ async function dispatchActionPlan(plan, goal, request) {
         if (clarification) {
           // Continue only the unresolved operation. Earlier successes and the
           // undispatched remainder of a compound request must not replay.
-          rememberActionClarification(command, clarification.message, goal);
+          rememberActionClarification(command, clarification.message, goal, clarification.candidateIds);
         } else {
           request.failed = true;
           if (canContinueWithIndependentVolume(command, plan.commands.slice(index + 1), request)) continue;
@@ -1652,14 +1663,22 @@ async function tryFastAssistantAction(goal, request) {
       await finishAssistantTurn('Okay, I cancelled that request.', false, request);
       return true;
     }
-    const command = resolveClarifiedCommand(pendingActionClarification, goal);
+    const newActions = assistantLocalIntents(goal);
+    const command = resolveClarifiedCommand(pendingActionClarification, goal, !!newActions);
     if (command) {
-      pendingActionClarification = null;
-      const result = await applyAssistantCommands(command, request);
-      await finishAssistantTurn(result.spokenResponse, false, request);
+      const result = await dispatchActionPlan({ commands: [command] }, goal, request);
+      await finishAssistantTurn(result.spokenResponse, result.wantsFollowUp, request);
       return true;
     }
-    return false;
+    // A complete new command supersedes an unresolved question. Exact record
+    // answers above retain priority, even when their names resemble commands.
+    if (!newActions && pendingActionClarification.candidateIds) {
+      request.forgettingMemory = true;
+      await finishAssistantTurn('Say the wording of one of the listed memories, or say never mind to cancel.', true, request);
+      return true;
+    }
+    if (!newActions) return false;
+    pendingActionClarification = null;
   }
   const routineMatch = /^(?:run|start) (?:the |my )?routine ["“]?([^"”\r\n]+?)["”]?[.!?]*$/i.exec(goal.trim());
   if (routineMatch && typeof window.reviewOlangaRoutine === 'function') {
@@ -1701,7 +1720,7 @@ async function tryFastAssistantAction(goal, request) {
       responses.push(outcome.spokenResponse || 'The action request was sent.');
       if (outcome.results.some(result => !result.ok)) {
         const clarification = outcome.results.find(result => result.clarification);
-        if (clarification) rememberActionClarification(action.command, clarification.message, goal);
+        if (clarification) rememberActionClarification(action.command, clarification.message, goal, clarification.candidateIds);
         else {
           request.failed = true;
           if (canContinueWithIndependentVolume(action.command, actions.slice(index + 1).map(item => item.command), request)) continue;

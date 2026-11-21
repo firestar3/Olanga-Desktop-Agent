@@ -1,0 +1,67 @@
+/* Companion cards share the app's surfaces, typography and accent tokens. */
+#companionRail {
+  position: fixed; right: 24px; top: 50%; transform: translateY(-50%);
+  width: 256px; max-width: calc(100vw - 100px); max-height: calc(100% - 100px);
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px; z-index: 30;
+}
+#companionRail[hidden], #companionRail [hidden] { display: none !important; }
+.companion-cards-content { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow-y: auto; }
+.companion-card {
+  flex: 0 0 auto; min-width: 0; padding: 14px 16px; border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary);
+}
+.companion-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 26px; margin-bottom: 10px; font-size: 12px; color: var(--text-secondary); }
+.companion-heading > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#companionSportsState { margin-left: 8px; color: var(--text-primary); font-size: 11px; }
+.companion-icon-button, .companion-playback button {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  padding: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-primary); font: inherit; cursor: pointer;
+}
+.companion-icon-button { width: 28px; height: 28px; border-color: transparent; }
+.companion-icon-button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.companion-icon-button:hover, .companion-playback button:not(:disabled):hover { background: var(--bg-card); color: var(--accent-light); }
+.companion-card button:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+.companion-scoreboard > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 28px; font-size: 14px; }
+.companion-scoreboard strong { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.companion-meta { margin-top: 10px; font-size: 11px; line-height: 1.4; color: var(--text-secondary); overflow-wrap: anywhere; }
+.companion-sports[data-stale="true"] .companion-meta { color: var(--warning); }
+#companionSportsEmpty { font-size: 13px; line-height: 1.5; min-height: 46px; display: flex; align-items: center; }
+.companion-track-title { font-size: 15px; font-weight: 500; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.companion-track-artist { margin-top: 3px; color: var(--text-secondary); font-size: 12px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.companion-playback { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; }
+.companion-playback button { width: 36px; height: 34px; }
+.companion-playback button:disabled { color: var(--text-dim); cursor: default; }
+.companion-playback svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#companionMediaToggle { background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary)); }
+.companion-message { color: var(--warning); }
+/* Only the cards respond to window size. Existing pages and controls retain
+   their original dimensions and positions underneath this fixed overlay. */
+@media (max-width: 1200px) {
+  #companionRail { right: 16px; width: 224px; }
+  .companion-cards-content { gap: 12px; }
+  #companionRail .companion-card { padding: 10px 12px; }
+  .companion-heading { min-height: 24px; margin-bottom: 5px; }
+  .companion-playback { margin-top: 8px; }
+  .companion-meta { margin-top: 6px; }
+  .companion-track-title { font-size: 14px; }
+  .companion-scoreboard > div { min-height: 25px; }
+}
+@media (max-width: 760px) {
+  #companionRail { right: 12px; width: 196px; }
+  .companion-cards-content { gap: 10px; }
+}
+@media (max-width: 1000px) {
+  /* Home already scrolls at this width. Anchor after Tasks without consuming
+     flex space, so every existing control keeps its position and dimensions.
+     The cards extend that scroll region instead of covering the command input. */
+  #companionRail {
+    position: relative; top: auto; right: auto; transform: none;
+    flex: 0 0 0; height: 0; max-height: none;
+    width: min(400px, 100%); max-width: 100%;
+  }
+  #companionRail .companion-cards-content { flex: none; overflow: visible; padding: 16px 0 18px; }
+}
+@media (forced-colors: active) {
+  .companion-card, .companion-playback button, .companion-icon-button { background: Canvas; color: CanvasText; border-color: ButtonText; }
+}

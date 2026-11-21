@@ -65,7 +65,14 @@ async function evaluate(fn, ...args) {
   if (result?.fixtureError) throw Error(result.fixtureError);
   return result?.value;
 }
-async function until(fn, label) { for (let i = 0; i < 240; i++) { if (await fn()) return; await pause(25); } throw Error(label); }
+async function until(fn, label, timeoutMs = 6000) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await fn()) return;
+    await pause(25);
+  } while (Date.now() < deadline);
+  throw Error(label);
+}
 async function check(name, fn) { await fn(); report.checks.push(name); }
 async function reset(next = {}) {
   await evaluate(() => { cancelAssistantRequest(); conversationHistory = []; conversationLastActivity = 0; spotifyContextUntil = 0; document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()); fixture.utterances = []; fixture.played = 0; fixture.holdAck = false; fixture.releaseAck = null; fixture.pending = null; aiText.textContent = ''; userText.textContent = ''; magpieAudioCache.clear(); magpieUnavailableUntil = 0; ttsEngine = 'magpie'; setState(State.IDLE); });
@@ -92,8 +99,11 @@ process.on('uncaughtException', error => { report.error = error.stack; finish(1)
 process.on('unhandledRejection', error => { report.error = error.stack; finish(1); });
 require('../main');
 app.whenReady().then(async () => { try {
-  await until(() => { main = BrowserWindow.getAllWindows().find(win => /index\.html$/.test(win.webContents.getURL())); return main && !main.webContents.isLoading(); }, 'Production renderer missing');
-  await until(() => evaluate(() => window.OlangaAppInitialized === true && !!window.OlangaWorkspace && !!window.OlangaConversationalControls && !!window.OlangaTurns), 'Assistant controls missing');
+  await until(() => {
+    main = BrowserWindow.getAllWindows().find(win => /index\.html$/.test(win.webContents.getURL()));
+    return main && !main.webContents.isLoadingMainFrame();
+  }, 'Production renderer missing', 30000);
+  await until(() => evaluate(() => window.OlangaAppInitialized === true && !!window.OlangaWorkspace && !!window.OlangaConversationalControls && !!window.OlangaTurns), 'Assistant controls missing', 30000);
   await evaluate(() => {
     window.fixture = { utterances: [], played: 0, holdAck: false, releaseAck: null, errors: [] };
     window.addEventListener('error', event => fixture.errors.push(event.message));
@@ -148,6 +158,25 @@ app.whenReady().then(async () => { try {
     const spoken = await say("What's my name?", true); assert.equal(spoken.text, 'Your name is Aarav.');
     assert.equal(calls.providers.length, 1); assert.equal(calls.providers[0].channel, 'provider-generate'); assert.match(calls.providers[0].body.system_instruction.parts[0].text, /^Transcribe/);
     assert.equal(calls.native.length, 0); assert.equal(calls.tts.length, 0);
+  });
+  await check('A final transcript can forget a city without deleting other memories', async () => {
+    const command = 'Forget where I live.';
+    await reset({ transcript: command });
+    await evaluate(() => { ttsEngine = 'windows'; });
+    await say('I live in Fremont. I prefer concise answers.');
+    await say('Remember that my city council meets on Mondays.');
+    const readFacts = () => evaluate(() => OlangaWorkspace.memorySnapshot().facts);
+    const before = await readFacts();
+    const city = before.find(fact => fact.text === 'I live in Fremont');
+    assert.ok(city);
+    assert.ok(before.some(fact => fact.text === 'I prefer concise answers'));
+    assert.ok(before.some(fact => /city council/.test(fact.text)));
+    const result = await say(command, true, 'Forget everything');
+    assert.equal(result.text, 'Forgotten: I live in Fremont.');
+    assert.deepEqual(await readFacts(), before.filter(fact => fact.id !== city.id));
+    assert.equal(calls.providers.length, 1);
+    assert.match(calls.providers[0].body.system_instruction.parts[0].text, /^Transcribe/);
+    assert.equal(calls.native.length, 0);
   });
   await check('A fact followed by weather learns locally and uses exactly one grounded search', async () => {
     await reset({ search: true }); await evaluate(() => { ttsEngine = 'windows'; });

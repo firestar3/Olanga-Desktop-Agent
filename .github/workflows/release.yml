@@ -80,6 +80,11 @@ jobs:
           npm run smoke:news
       - name: Check assistant latency paths, local memory and verified compound results
         run: npm run smoke:assistant
+      - name: Check the floating orb, timers and on-screen score and Spotify cards
+        run: |
+          npm run smoke:overlay
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run smoke:companions
       - name: Check conversational routine creation, review and cancellation
         run: npm run smoke:routines
       - name: Check native speech capture lifecycle with synthetic audio

@@ -7,8 +7,10 @@ const vm = require('node:vm');
 const prefs = require('../../shared/prefs-schema');
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const settle = () => new Promise(resolve => setImmediate(resolve));
-function fixture() {
-  const initial = { ...prefs.defaults(), microphoneDeviceId: 'mic-one' };
+function fixture({ initialPrefs = {}, elements = {} } = {}) {
+  const initial = { ...prefs.defaults(), microphoneDeviceId: 'mic-one', ...initialPrefs };
+  const sportsUpdates = [];
+  const timerUpdates = [];
   const values = new Map(), writes = [], errors = [], timers = new Map(), controls = { write: null, capture: null };
   let timerSequence = 0;
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) };
@@ -17,11 +19,13 @@ function fixture() {
   const context = vm.createContext({
     OlangaPrefs: prefs, OlangaStatusLight: require('../../shared/status-light'), OlangaShortcuts: require('../../shared/shortcuts'),
     OlangaNvidiaKey: require('../../shared/nvidia-key'), OlangaGeminiKeys: require('../../shared/gemini-keys'),
-    document: { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
-    window: { electronAPI: { async secureStoreSet(_key, value) { const candidate = JSON.parse(value); writes.push(candidate); await controls.write?.(candidate, writes.length); saved = value; } } },
+    document: { getElementById: id => elements[id] ?? null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
+    window: { electronAPI: { setSportsPreferences(value) { sportsUpdates.push(JSON.parse(JSON.stringify(value))); }, async secureStoreSet(_key, value) { const candidate = JSON.parse(value); writes.push(candidate); await controls.write?.(candidate, writes.length); saved = value; } } },
     localStorage: storage, navigator: { mediaDevices: { async enumerateDevices() { return ['mic-one','mic-two'].map(deviceId => ({ kind:'audioinput',deviceId })); } } },
     mainScreen: null, setupScreen: null, customWakeWordGroups: [], CUSTOM_WAKE_WORDS_KEY: 'olanga_custom_wake_words', persistCustomWakeWordGroups() {},
     statusLightMode: initial.statusLightMode, statusLightSize: initial.statusLightSize, quickActions: initial.quickActions,
+    sportsEnabled: initial.sportsEnabled, sportsTeam: initial.sportsTeam, sportsLiveOnly: initial.sportsLiveOnly,
+    timerOverlayEnabled: initial.timerOverlayEnabled,
     cityInput: { value: 'Original city' }, stateInput: { value: '' }, countryInput: { value: '' }, rotationToggle: { checked: false },
     ttsEngineSelect: null, ttsRateInput: null, nvidiaVoiceSelect: null, nvidiaVoiceName: prefs.DEFAULT_NVIDIA_VOICE,
     ttsEngine: 'windows', ttsRate: 1.05, apiKeyRotation: false, userCity: '', userState: '', userCountry: '',
@@ -34,13 +38,86 @@ function fixture() {
     showError: message => errors.push(message)
   });
   for (const file of ['js/voice.js', 'js/settings.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../..', file), 'utf8'), context);
+  context.publishTimerOverlay = () => timerUpdates.push(context.timerOverlayEnabled);
   context.initializeMicrophoneResources = options => controls.capture?.(options) ?? Promise.resolve(true);
   context.discardLocalSpeechCapture = () => {};
-  return { context, controls, writes, errors, timers, saved: () => JSON.parse(saved), mirror: () => prefs.load(storage),
+  return { context, controls, writes, errors, timers, sportsUpdates, timerUpdates, saved: () => JSON.parse(saved), mirror: () => prefs.load(storage),
     api: context.window.OlangaAudioInput,
     active() { vm.runInContext('microphoneRequested = true; microphoneResources = {context:{state:"running"},recognizer:{}}; micStream = {active:true,getAudioTracks:()=>[{label:"Original microphone"}]};', context); }
   };
 }
+
+test('timer card stays opt-in and applies settings immediately while preserving the saved choice', async () => {
+  const toggle = { checked: true };
+  const app = fixture({ elements: { timerOverlayEnabledToggle: toggle } });
+  assert.equal(app.context.timerOverlayEnabled, false);
+  assert.equal(await app.context.saveAppSettings(), true);
+  assert.equal(app.timerUpdates.at(-1), true);
+  assert.equal(app.saved().timerOverlayEnabled, true);
+  assert.equal(app.mirror().timerOverlayEnabled, true);
+  app.context.cityInput.value = 'New city';
+  assert.equal(await app.context.saveAppSettings(), true);
+  assert.equal(app.saved().timerOverlayEnabled, true);
+  toggle.checked = false;
+  assert.equal(await app.context.saveAppSettings(), true);
+  assert.equal(app.timerUpdates.at(-1), false);
+  assert.equal(app.saved().timerOverlayEnabled, false);
+});
+
+test('sports stays opt-in and an unrelated preference save retains the selected team', async () => {
+  const off = fixture();
+  assert.equal(await off.context.saveAppSettings(), true);
+  assert.deepEqual(off.sportsUpdates.at(-1), { enabled: false, team: 'gs', liveOnly: true });
+  const on = fixture({ initialPrefs: { sportsEnabled: true, sportsTeam: 'sac', sportsLiveOnly: false } });
+  on.context.cityInput.value = 'New city';
+  assert.equal(await on.context.saveAppSettings(), true);
+  for (const value of [on.saved(), on.mirror()]) {
+    assert.equal(value.sportsEnabled, true);
+    assert.equal(value.sportsTeam, 'sac');
+    assert.equal(value.sportsLiveOnly, false);
+  }
+  assert.deepEqual(on.sportsUpdates.at(-1), { enabled: true, team: 'sac', liveOnly: false });
+});
+
+test('sports controls persist their exact choice and disabling keeps the chosen team', async () => {
+  const elements = { sportsEnabledToggle: { checked: true }, sportsTeamSelect: { value: 'bos' }, sportsLiveOnlyToggle: { checked: false } };
+  const f = fixture({ elements });
+  assert.equal(await f.context.saveAppSettings(), true);
+  assert.equal(f.saved().sportsEnabled, true);
+  assert.equal(f.saved().sportsTeam, 'bos');
+  assert.equal(f.saved().sportsLiveOnly, false);
+  assert.deepEqual(f.sportsUpdates.at(-1), { enabled: true, team: 'bos', liveOnly: false });
+  elements.sportsEnabledToggle.checked = false;
+  assert.equal(await f.context.saveAppSettings(), true);
+  assert.deepEqual(f.sportsUpdates.at(-1), { enabled: false, team: 'bos', liveOnly: false });
+  assert.equal(f.mirror().sportsTeam, 'bos');
+  assert.equal(f.mirror().sportsLiveOnly, false);
+  elements.sportsLiveOnlyToggle.checked = true;
+  assert.equal(await f.context.saveAppSettings(), true);
+  assert.deepEqual(f.sportsUpdates.at(-1), { enabled: false, team: 'bos', liveOnly: true });
+  assert.equal(f.mirror().sportsLiveOnly, true);
+});
+
+test('a late settings write cannot replace the current sports team or visibility in runtime', async () => {
+  const first = deferred();
+  const elements = { sportsEnabledToggle: { checked: true }, sportsTeamSelect: { value: 'gs' }, sportsLiveOnlyToggle: { checked: true } };
+  const f = fixture({ elements });
+  f.controls.write = (_value, index) => index === 1 ? first.promise : undefined;
+  const saving = f.context.saveAppSettings(); await settle();
+  elements.sportsTeamSelect.value = 'ny';
+  elements.sportsLiveOnlyToggle.checked = false;
+  const newer = f.context.saveAppSettings();
+  assert.equal(f.context.sportsTeam, 'ny');
+  assert.equal(f.context.sportsLiveOnly, false);
+  first.resolve(); await saving; await newer;
+  assert.equal(f.context.sportsTeam, 'ny');
+  assert.equal(f.saved().sportsTeam, 'ny');
+  assert.equal(f.mirror().sportsTeam, 'ny');
+  assert.equal(f.context.sportsLiveOnly, false);
+  assert.equal(f.saved().sportsLiveOnly, false);
+  assert.equal(f.mirror().sportsLiveOnly, false);
+  assert.deepEqual(f.sportsUpdates.at(-1), { enabled: true, team: 'ny', liveOnly: false });
+});
 
 test('an ordinary preference save queued during device persistence retains the explicit device choice', async () => {
   const f = fixture(), save = deferred();
