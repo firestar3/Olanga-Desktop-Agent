@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#261f21">
+  <meta name="description" content="See what’s new in Olanga 1.6.7 for Windows, including live NBA scores, pinned timers and Spotify controls.">
+  <title>What’s new in Olanga 1.6.7</title>
+  <link rel="icon" type="image/svg+xml" href="assets/orb.svg">
+  <link rel="preload" href="assets/Outfit.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body class="release-page">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header studio-header"><div class="header-inner section-wrap">
+  <a class="brand" href="index.html" aria-label="Olanga home"><img src="assets/orb.svg" width="30" height="30" alt=""><span>olanga</span></a>
+  <nav aria-label="Main navigation"><a href="index.html#workspace">Inside Olanga</a><a href="docs.html">Docs</a><a href="whats-new.html" aria-current="page">What’s new</a></nav>
+  <details class="mobile-navigation"><summary aria-label="Navigation menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg></summary><nav aria-label="Explore Olanga"><a href="index.html#workspace">Inside Olanga</a><a href="docs.html">Docs</a><a href="whats-new.html" aria-current="page">What’s new</a><a data-open-tour aria-haspopup="dialog" href="assets/product-tour.mp4">Film</a><a href="https://github.com/firestar3/Olanga-Desktop-Agent">GitHub</a></nav></details>
+  <div class="header-actions">
+    <a class="header-film" data-open-tour aria-haspopup="dialog" href="assets/product-tour.mp4">Film</a>
+    <a class="header-source" href="https://github.com/firestar3/Olanga-Desktop-Agent">GitHub</a>
+    <a class="nav-download" href="index.html#download">Get Olanga</a>
+  </div>
+</div></header>
+<main id="main" class="release-content"><div class="section-wrap">
+  <div class="release-intro">
+    <div>
+      <p class="release-version">Olanga 1.6.7 for Windows</p>
+      <h1>Timers and live scores beside the orb.</h1>
+      <p class="command-lead">Follow the fourth quarter or keep an eye on your next timer while you work. Both use the same corner of your desktop. When you reach for the Windows taskbar, Olanga gives you room.</p>
+      <a class="button release-download" href="index.html#download">Get Olanga for Windows</a>
+    </div>
+    <fieldset class="card-preview">
+      <legend>Preview the desktop cards</legend>
+      <input type="radio" name="card" id="show-timers" checked><label for="show-timers">Timers</label>
+      <input type="radio" name="card" id="show-score"><label for="show-score">Live score</label>
+      <div class="card-stage">
+        <a class="capture-link timer-example" href="assets/timer-card.png" data-capture="Expanded timers" aria-label="Enlarge the timer card"><img src="assets/timer-card.png" width="365" height="390" alt="Five timers, reminders and alarms stacked above the corner orb."></a>
+        <a class="capture-link score-example" href="assets/score-card.png" data-capture="Live NBA score" aria-label="Enlarge the score card"><img src="assets/score-card.png" width="368" height="145" alt="Golden State leads Los Angeles 108 to 105 with 2:14 left in the fourth quarter."></a>
+      </div>
+      <p class="release-caption">Olanga’s desktop cards with sample timers and game data.</p>
+    </fieldset>
+  </div>
+  <div class="release-notes">
+    <section><h2>Follow your team.</h2><p>Choose any of the 30 NBA teams in <strong>User preferences → Live scores</strong>. Golden State is selected to start. During games the card checks ESPN about every 15 seconds, shows the quarter and game clock, and flags delayed updates. You can also show upcoming games and final scores. No API key is required.</p></section>
+    <section><h2>Keep time at a glance.</h2><p>In <strong>User preferences → Timer card</strong>, pin timers beside Olanga. Use the grip to see up to five timers, just the next one, or a tucked handle. Switch to the game in the same spot. When the last timer is dismissed, its card disappears.</p></section>
+    <section><h2>Make room on your desktop.</h2><p>Drag the score card’s grip to tuck it away while the score keeps updating. The orb’s five-second and one-hour hide options cover both the orb and its card. Point at the bottom taskbar and both disappear. Move away and they return without taking focus.</p></section>
+    <section><h2>Control Spotify from Home.</h2><p>Switch into Olanga and your floating controls give way to Home’s score and music cards. See the current track, pause, resume or skip through Spotify’s Windows media session. The cards stay on Home, and Olanga pauses music polling when you leave that tab.</p></section>
+    <section><h2>Forget one detail.</h2><p>Say “Forget where I live” to remove your saved city and keep your other preferences. If several entries match, Olanga asks which one you mean. You can give a new command while a question is pending, and follow-ups about tasks and timers keep track of the item you’re discussing.</p></section>
+    <section><h2>Keep control of unfinished work.</h2><p>Opening the Routines collection preserves your draft. Switching screen-edit examples clears the previous capture and approval. Undo dismisses any pending question and tells you whether the edit was cancelled, expired or could be reversed.</p></section>
+  </div>
+  <section class="release-update"><h2>Already using Olanga?</h2><p>Open <strong>Workspace → Apps &amp; updates</strong>, check for updates, then download. Choose <strong>Install &amp; restart</strong> once Olanga verifies the installer.</p><a href="https://github.com/firestar3/Olanga-Desktop-Agent/releases/tag/v1.6.7">Release notes and installer on GitHub</a></section>
+</div></main>
+<footer class="site-footer section-wrap"><a class="brand" href="index.html" aria-label="Olanga home"><img src="assets/orb.svg" width="29" height="29" alt=""><span>olanga</span></a><div><a href="index.html#questions">Questions</a><a href="privacy.html">Privacy</a><a href="docs.html#troubleshooting">Support</a><a href="https://github.com/firestar3/Olanga-Desktop-Agent" target="_blank" rel="noopener noreferrer">GitHub</a></div><span class="copyright">© 2026 Olanga</span></footer>
+<dialog class="tour-dialog" id="productfilm" aria-labelledby="tour-title">
+  <div class="tour-heading">
+    <h2 id="tour-title">Olanga product film</h2>
+    <form method="dialog"><button class="tour-close" autofocus aria-label="Close product tour"><svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></form>
+  </div>
+  <div class="film" data-film="product"><video id="film-product" controls tabindex="0" playsinline preload="none" width="1920" height="1080" poster="assets/product-tour-poster.jpg" aria-label="Olanga: a two-minute product tour" aria-describedby="tour-caption"><source src="assets/product-tour.mp4" type="video/mp4"><track kind="captions" src="assets/product-tour.en.vtt" srclang="en" label="English">Your browser does not support this video. <a href="assets/product-tour.mp4">Download the product tour</a>.</video><button class="film-play" hidden type="button" data-play="product"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><span>Watch the tour</span></button><p class="film-error" role="status" hidden>Couldn’t load the film. <a href="assets/product-tour.mp4">Open it directly.</a></p></div>
+  <div class="film-caption">
+    <p id="tour-caption">Actual Olanga 1.6.5 preview interface. Sample data and simulated services; timing edited.</p>
+    <details class="transcript">
+      <summary>Chapters &amp; transcript</summary>
+      <div id="transcript-product">
+        <nav aria-label="Film chapters"><ol class="film-chapter-list"><li><button type="button" class="chapter-seek" data-tour-seek="0" aria-controls="film-product" aria-label="Play Meet Olanga from 0:00"><span>0:00</span>Meet Olanga</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="5" aria-controls="film-product" aria-label="Play Music &amp; the orb from 0:05"><span>0:05</span>Music &amp; the orb</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="19" aria-controls="film-product" aria-label="Play Live scores · preview from 0:19"><span>0:19</span>Live scores · preview</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="31" aria-controls="film-product" aria-label="Play Memory from 0:31"><span>0:31</span>Memory</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="45" aria-controls="film-product" aria-label="Play Routines &amp; focus from 0:45"><span>0:45</span>Routines &amp; focus</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="59" aria-controls="film-product" aria-label="Play Screen assistance from 0:59"><span>0:59</span>Screen assistance</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="75" aria-controls="film-product" aria-label="Play Files &amp; undo from 1:15"><span>1:15</span>Files &amp; undo</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="86" aria-controls="film-product" aria-label="Play Notes, tasks &amp; News from 1:26"><span>1:26</span>Notes, tasks &amp; News</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="99" aria-controls="film-product" aria-label="Play Workspaces &amp; projects from 1:39"><span>1:39</span>Workspaces &amp; projects</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="110" aria-controls="film-product" aria-label="Play Appearance &amp; updates from 1:50"><span>1:50</span>Appearance &amp; updates</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="116" aria-controls="film-product" aria-label="Play Stay in your flow from 1:56"><span>1:56</span>Stay in your flow</button></li></ol></nav>
+        <details class="film-reading"><summary>Read the transcript</summary><div><p><span class="transcript-time">0:00</span> Meet Olanga. A little help, right where you work.</p>
+<p><span class="transcript-time">0:05</span> Play Spotify, set the volume to seventy-five percent, and keep going. Everyday controls stay close, with an orb you can call on from your desktop.</p>
+<p><span class="transcript-time">0:19</span> Coming next: follow the Warriors without leaving your work. Live scores stay nearby during a game. Tuck them away, or bring them inside Olanga.</p>
+<p><span class="transcript-time">0:31</span> Conversations carry context forward. Olanga can pick up useful preferences, recall them later, and use those details when they matter. See what it remembers, and forget anything.</p>
+<p><span class="transcript-time">0:45</span> Turn a familiar start into a routine. Choose your apps, tasks, and focus timer once. Then ask Olanga to run it, review it, and watch your session begin.</p>
+<p><span class="transcript-time">0:59</span> Need a second pair of eyes? Show Olanga what you&#39;re working on. Choose the allowed area, then review its proposed steps before approving an edit.</p>
+<p><span class="transcript-time">1:15</span> Find the right file. Preview a clearer set of names, apply the changes, and undo them when you need to.</p>
+<p><span class="transcript-time">1:26</span> Capture an idea in Notepad. Keep the next step in your checklist. Catch up with News. Each has its own place, without breaking the conversation.</p>
+<p><span class="transcript-time">1:39</span> Open a saved workspace. Ask about a project, and follow the answer back to the selected files it came from.</p>
+<p><span class="transcript-time">1:50</span> Make it feel like yours. Check for updates when you&#39;re ready.</p>
+<p><span class="transcript-time">1:56</span> Olanga. More done. Stay in your flow.</p></div></details>
+        <details class="film-reading"><summary>About this recording</summary><div><p><strong>On screen:</strong> The actual Olanga interface handles a typed Spotify and volume request with simulated playback results. The real corner orb and score card show sample states; the score updates, the card tucks away, and Home shows its score and music cards. Olanga learns, recalls and forgets a supported preference. A reviewed routine starts a real countdown and adds a checklist item. Desktop assistance shows a sample capture, the allowed edit area and proposed steps, stopping before execution approval. A disposable file is renamed and restored through the real preview, apply and checked-undo flow. Notepad, the Home checklist and News show their actual controls. A saved workspace selects a sample project; local search shows source excerpts before a simulated provider answer. The accent changes through Settings, followed by the start of a manual update check.</p><p><strong>About this recording:</strong> The app views come from Olanga’s production interface in a local 1.6.5 preview build. Sample Spotify, volume, app-launch, score-feed, News, AI and update responses stand in for external services. The microphone and text-to-speech were muted; commands were typed. Screen planning uses an authored document screenshot and simulated AI response. No native document edit, Google Docs integration or live service result is demonstrated. Timing is edited for the tour and does not measure response speed.</p><p>The film shows an earlier preview of the scores and Home cards included in the public 1.6.7 download. Memory, routines, timers, checklist, Notepad and appearance use the app’s local handlers. File rename and undo run on a disposable file, and project search runs on authored local files.</p></div></details>
+      </div>
+    </details>
+  </div>
+</dialog>
+<dialog class="screenshot-dialog capture-dialog" id="screenshot-dialog" aria-labelledby="capture-title">
+  <header><h2 id="capture-title">Olanga screenshot</h2><form method="dialog"><button class="dialog-close" autofocus>Close <span aria-hidden="true">×</span></button></form></header>
+  <div class="capture-view"></div>
+  <div class="capture-footer"><p>Olanga 1.6.7 with sample game and timer data.</p><a class="original-capture" target="_blank" rel="noopener">Open full screenshot</a></div>
+</dialog>
+</body>
+</html>

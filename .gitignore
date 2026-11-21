@@ -13,6 +13,14 @@ out/
 *.webm
 *.avi
 
+# The Pages site uses the finished distribution and a local preview server.
+/sites/olanga-web/*
+!/sites/olanga-web/preview.mjs
+!/sites/olanga-web/dist/
+/sites/olanga-web/dist/assets/recordings/
+/sites/olanga-web/dist/assets/companion-desktop.jpg
+!/sites/olanga-web/dist/assets/product-tour.mp4
+
 # The installer uses vosk-model-v2.tar.gz, not this extracted working copy.
 /model/
 

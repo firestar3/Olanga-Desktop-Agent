@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#261f21">
+  <meta name="description" content="Install Olanga for Windows, learn its voice commands, configure screen assistance and run the app from source.">
+  <title>Docs — Olanga</title>
+  <link rel="icon" type="image/svg+xml" href="assets/orb.svg">
+  <link rel="preload" href="assets/Outfit.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body class="docs-page">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header studio-header"><div class="header-inner section-wrap">
+  <a class="brand" href="index.html" aria-label="Olanga home"><img src="assets/orb.svg" width="30" height="30" alt=""><span>olanga</span></a>
+  <nav aria-label="Main navigation"><a href="index.html#workspace">Inside Olanga</a><a href="docs.html" aria-current="page">Docs</a><a href="whats-new.html">What’s new</a></nav>
+  <details class="mobile-navigation"><summary aria-label="Navigation menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg></summary><nav aria-label="Explore Olanga"><a href="index.html#workspace">Inside Olanga</a><a href="docs.html" aria-current="page">Docs</a><a href="whats-new.html">What’s new</a><a data-open-tour aria-haspopup="dialog" href="assets/product-tour.mp4">Film</a><a href="https://github.com/firestar3/Olanga-Desktop-Agent">GitHub</a></nav></details>
+  <div class="header-actions">
+    <a class="header-film" data-open-tour aria-haspopup="dialog" href="assets/product-tour.mp4">Film</a>
+    <a class="header-source" href="https://github.com/firestar3/Olanga-Desktop-Agent">GitHub</a>
+    <a class="nav-download" href="index.html#download">Get Olanga</a>
+  </div>
+</div></header>
+<main id="main" class="docs-main">
+  <div class="section-wrap docs-layout">
+    <aside class="docs-sidebar">
+      <details class="docs-contents" open>
+        <summary>On this page</summary>
+        <nav aria-label="Documentation sections"><ul>
+          <li><a href="#first-command">Try your first command</a></li>
+          <li><a href="#try-by-voice">Try it by voice</a></li>
+          <li><a href="#everyday-requests">Everyday requests</a></li>
+          <li><a href="#memory-that-follows-the-conversation">Conversational memory</a></li>
+          <li><a href="#your-work-ready-to-resume">Workspace</a></li>
+          <li><a href="#help-with-whats-on-your-screen">Screen assistance</a></li>
+          <li><a href="#local-commands-fewer-waits">Local commands</a></li>
+          <li><a href="#live-scores-and-spotify">Scores and Spotify</a></li>
+          <li><a href="#make-olanga-yours">Settings and the orb</a></li>
+          <li><a href="#updates-when-you-choose">Updates</a></li>
+          <li><a href="#troubleshooting">Troubleshooting &amp; bugs</a></li>
+          <li><a href="#privacy">Privacy</a></li>
+          <li><a href="#run-from-source">Run from source</a></li>
+        </ul></nav>
+      </details>
+    </aside>
+    <article class="docs-article">
+      <header>
+        <p class="docs-version">Version 1.6.7 · Windows 10/11 x64</p>
+        <h1>Olanga Docs</h1>
+        <p class="docs-intro">Set up the desktop assistant, try a voice command, or run Olanga from source.</p>
+        <a href="https://github.com/firestar3/Olanga-Desktop-Agent/blob/v1.6.7/README.md">Read the README on GitHub</a>
+      </header>
+    <section id="get-started" aria-labelledby="first-command">
+      <h2 id="first-command">Try your first command</h2>
+      <p>Start a timer you can watch on Home. All you need is Olanga and a keyboard.</p>
+      <ol>
+        <li>Run the <a href="index.html#download">Windows installer</a> and open Olanga. On the welcome screen, choose <strong>Use local commands without a key</strong>. If you’re already on Home, you’re ready.</li>
+        <li>In the command box on Home, type <strong>“Set a timer for 25 minutes called Focus”</strong> and press <kbd>Enter</kbd>.</li>
+        <li>Look under <strong>Timers</strong> for <strong>Focus</strong>. Once you see it count down, type <strong>“Cancel the Focus timer”</strong> and press <kbd>Enter</kbd>. The timer disappears.</li>
+      </ol>
+      <figure>
+        <a class="capture-link" href="assets/first-command-focus.png" data-capture="Focus timer on Home" data-caption="Olanga 1.6.7 after the typed command started a local timer.">
+          <picture><img src="assets/first-command-focus.png" width="1440" height="960" loading="lazy" decoding="async" alt="Olanga replies “Focus set for 25 minutes.” The Focus timer at the lower left reads 24:59."></picture>
+          <span class="capture-caption"><span>Focus counting down on Home</span><span class="enlarge">Enlarge</span></span>
+        </a>
+      </figure>
+      <p><a href="#try-by-voice">Try it by voice</a></p>
+    </section>
+    <section aria-labelledby="try-by-voice">
+      <h2 id="try-by-voice">Try it by voice</h2>
+      <ol>
+        <li>In <strong>Settings → Core settings → Speech recognition</strong>, choose <strong>On-device commands (English, review first)</strong> to use your microphone without a key.</li>
+        <li>Return to Home and unmute the microphone if needed. Say <strong>“Hey Olanga”</strong>, wait for the listening orb, then say <strong>“Set a timer for twenty-five minutes.”</strong></li>
+        <li>In <strong>Review what Olanga heard</strong>, check the words. Add <strong>“called Focus”</strong> at the end to give it the same name as before, then select <strong>Send request</strong>. The countdown appears under Timers.</li>
+      </ol>
+      <p>If the orb doesn’t respond, <a href="#microphone-help">check your microphone</a>. For cloud transcription, conversation or screen assistance, add your <a href="https://aistudio.google.com/apikey">Gemini API key</a> in Core settings. Push-to-talk is available in User preferences.</p>
+      <p>Windows speech is built in. Optional <strong>NVIDIA Magpie</strong> voices use a separate <a href="https://build.nvidia.com/settings/api-keys">NVIDIA API key</a>; choose the voice and use <strong>Save &amp; Test</strong> in Core settings.</p>
+      <p><strong>Requirements:</strong> Windows 10/11 x64; a microphone for voice input; internet and available provider quota for cloud features. Spotify controls require the Spotify desktop app, signed in. Library and playlist selection currently depend on English accessibility labels. The Windows installer is unsigned; release assets include its checksum and build metadata.</p>
+    </section>
+    <section aria-labelledby="everyday-requests">
+      <h2 id="everyday-requests">Everyday requests</h2>
+      <table>
+      <thead>
+      <tr>
+      <th scope="col">Try saying</th>
+      <th scope="col">What happens</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>“Play Spotify and raise the volume to 75%.”</td>
+      <td>Opens Spotify if needed, attempts playback, sets Windows volume and reports the result of each action.</td>
+      </tr>
+      <tr>
+      <td>“Play my liked songs on Spotify.”</td>
+      <td>Opens your Liked Songs collection and checks playback.</td>
+      </tr>
+      <tr>
+      <td>“Pause it.” / “What’s playing?”</td>
+      <td>Uses recent Spotify context to control playback or check the current track.</td>
+      </tr>
+      <tr>
+      <td>“Open Chrome, then move Chrome to the left.”</td>
+      <td>Opens and arranges a supported app window, checking each step.</td>
+      </tr>
+      <tr>
+      <td>“Set a timer for 25 minutes called Focus.”</td>
+      <td>Starts a named timer that keeps its saved deadline across restarts.</td>
+      </tr>
+      <tr>
+      <td>“Add buy milk to my tasks.”</td>
+      <td>Adds a checklist item. Ask to complete it or read your tasks later.</td>
+      </tr>
+      <tr>
+      <td>“Remind me to call Mom in 20 minutes.”</td>
+      <td>Saves a local reminder. Olanga must be running to alert you.</td>
+      </tr>
+      <tr>
+      <td>“Brief me.”</td>
+      <td>Reads the time, tasks and upcoming reminders, with headlines and weather when available.</td>
+      </tr>
+      <tr>
+      <td>“Explain the error on my screen.”</td>
+      <td>Asks to capture your screen, then uses Gemini to help explain it.</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>Supported compound requests run in order. Completed steps remain completed if a later step fails; results distinguish success, failure and anything that could not be verified. Press <strong>Escape</strong> in Olanga to cancel the remaining work.</p>
+    </section>
+    <section aria-labelledby="memory-that-follows-the-conversation">
+      <h2 id="memory-that-follows-the-conversation">Memory that follows the conversation</h2>
+      <p>Tell Olanga “I live in Seattle” or “I prefer concise answers,” and it can retain those supported details without making you fill in a profile. Local rules learn clear statements you make directly; learned changes appear with <strong>Undo</strong>. Saved facts and recent conversation help follow-up questions make sense.</p>
+      <p>Ask <strong>“What do you remember about me?”</strong>, <strong>“What memories did you use?”</strong> or <strong>“Stop learning.”</strong> Review, edit or delete saved memories in Workspace. Learning and using existing memories have separate controls. Explicitly saved memories are protected from silent replacement.</p>
+      <p><strong>“Forget where I live”</strong> removes your saved city and keeps your other preferences. If your city is part of a longer note, you can edit that note in Workspace or give Olanga its exact text to remove the whole note.</p>
+      <p>Learning stores supported personal details locally; it does not train a model or learn permission to act. Relevant enabled memories can accompany Gemini requests. Recent conversation expires automatically, while saved memories remain until you remove them.</p>
+    </section>
+    <section aria-labelledby="your-work-ready-to-resume">
+      <h2 id="your-work-ready-to-resume">Your work, ready to resume</h2>
+      <p>Open <strong>Workspace</strong> from the top bar to find the tools you use throughout the day.</p>
+      <ul>
+      <li><strong>Routines.</strong> Say “Create a routine called Focus” to open its editor, then save the exact commands you want. “Run routine Focus” opens a step-by-step review. Choose the steps and confirm before they run.</li>
+      <li><strong>Named workspaces.</strong> Combine a saved app layout, project, browser or editor session and optional routine. Preview a workspace before resuming it, with a result for each part.</li>
+      <li><strong>Files and projects.</strong> Preview file renames and moves before applying them. Search a selected project locally, then review source excerpts before asking Gemini about them.</li>
+      <li><strong>Notes, tasks and News.</strong> Keep notes with version history, manage your checklist and read a topic-based news digest with publishers, dates and source links. Headlines need no Gemini key; AI questions are optional. Enable Notepad and News in User preferences.</li>
+      <li><strong>Schedules and backups.</strong> Set once, daily or weekly reminders. Export supported personal content and review what a restore will replace; imported timers stay paused and schedules disabled until you resume them.</li>
+      </ul>
+      <p>Pin a timer under <strong>Settings → User preferences → Timer card</strong>. See the next timer beside the corner orb, expand up to five timers, or tuck the card away with its handle. Timers and live scores share one card position with a switch between them. The orb's temporary hide controls apply to both, and the timer card disappears when the last timer is dismissed.</p>
+      <p>Optional <a href="https://github.com/firestar3/Olanga-Desktop-Agent/blob/v1.6.7/extensions/README.md">browser and editor companions</a> connect selected tabs, documents and text to these workflows. <a href="https://github.com/firestar3/Olanga-Desktop-Agent/blob/v1.6.7/docs/PHONE_REMOTE.md">Phone remote</a>, local model connections and reviewed MCP calls are available in Work tools when you need them.</p>
+    </section>
+    <section aria-labelledby="help-with-whats-on-your-screen">
+      <h2 id="help-with-whats-on-your-screen">Help with what’s on your screen</h2>
+      <p>Ask Olanga to explain a screen or prepare an edit in a supported app. <strong>Desktop task</strong>, below the command box, also opens this workflow directly.</p>
+      <ol>
+      <li>Approve the screen capture and inspect the proposed target.</li>
+      <li>Review the action plan and confirm the Windows input before it runs.</li>
+      <li>See the result and what Olanga could verify from a fresh capture.</li>
+      </ol>
+      <p>The capture includes your primary display. Selecting an edit region limits where Olanga can act; it does not crop the image shared with Gemini.</p>
+      <p>Supported input includes clicks, typing, scrolling and bounded keyboard shortcuts. Some full-field text replacements offer <strong>Before</strong>, <strong>After</strong> and a checked <strong>Undo text edit</strong>. Other edits may not have undo. Verification concerns the visible result; it does not establish that edited code compiles or passes tests.</p>
+      <p>Screen tasks are limited to supported, accessible controls on the primary display. Elevated windows and terminal automation are unsupported. The <a href="https://github.com/firestar3/Olanga-Desktop-Agent/blob/v1.6.7/docs/ARCHITECTURE.md">architecture guide</a> explains the review, scope and cancellation rules.</p>
+    </section>
+    <section aria-labelledby="local-commands-fewer-waits">
+      <h2 id="local-commands-fewer-waits">Local commands, fewer waits</h2>
+      <p>Common app, music, volume, timer, memory and checklist requests use a local intent matcher. Supported typed commands need <strong>no model call</strong>. Reviewed on-device commands also avoid cloud transcription; questions outside the local command set can still use Gemini.</p>
+      <p>Olanga acknowledges a request while work begins and displays completed action results without waiting for speech to finish. Conversational replies can stream sentence by sentence. Clear questions and known memory answers avoid unnecessary routing work, while hidden panels pause work they do not need.</p>
+      <p>Response time depends on your hardware, network, voice engine and the app being controlled. The <a href="https://github.com/firestar3/Olanga-Desktop-Agent/blob/v1.6.7/docs/VALIDATION.md">validation report</a> records measured performance, test coverage and remaining device-dependent checks. <strong>Workspace → Diagnostics</strong> provides optional local timing and outcome measurements.</p>
+    </section>
+    <section aria-labelledby="live-scores-and-spotify">
+      <h2 id="live-scores-and-spotify">Live scores and Spotify</h2>
+      <p>Choose from all 30 NBA teams, with Golden State selected initially. The floating score card appears during a live game, checks ESPN about every 15 seconds and shows when updates are delayed. Its grip tucks the card into a slim strip while scores keep updating. When you enter Olanga, the floating card and orb make way for Home’s score and Spotify cards.</p>
+      <p>Enable scores in <strong>Settings → User preferences → Live scores</strong>. They need no AI key; ESPN updates may lag the broadcast. Spotify’s Home card reads the real Windows media session and changes playback only when you use its controls.</p>
+    </section>
+    <section aria-labelledby="make-olanga-yours">
+      <h2 id="make-olanga-yours">Make Olanga yours</h2>
+      <p><strong>User preferences</strong> contains conversation style, accents, contrast, orb glow, reduced motion, startup and shortcuts. <strong>Core settings</strong> keeps provider keys, speech recognition, microphone selection and guided audio checks together. <strong>Privacy</strong> links to memory, activity and diagnostic controls.</p>
+      <p>The corner orb has five customizable shortcuts. Enable <strong>Corner status light → All Lights</strong> to keep it visible while idle. Its colors show the current state: purple for idle, green for listening, orange for working and blue for speaking.</p>
+      <p>Moving the pointer onto the bottom Windows taskbar hides the corner orb and its timer or score card. Move the pointer off the taskbar and the controls return without taking focus from your app.</p>
+      <p>Closing the window keeps Olanga running in the tray. Choose <strong>Quit</strong> from its tray menu to exit. Timers and reminders cannot alert while the app is closed or Windows is asleep.</p>
+    </section>
+    <section aria-labelledby="updates-when-you-choose">
+      <h2 id="updates-when-you-choose">Updates, when you choose</h2>
+      <p>Go to <strong>Workspace → Apps &amp; updates</strong>, select <strong>Check for updates</strong>, then <strong>Download update</strong>. Once the installer is verified, choose <strong>Install &amp; restart</strong> to update the existing installation and retain your saved data.</p>
+      <p>Checks, downloads and installation are manual. The updater checks the installer against the release checksum and reports restart readiness separately from installation. There are no unattended updates or automatic rollback. Older versions with only a release-page link can use the <a href="index.html#download">Windows installer</a>.</p>
+    </section>
+    <section aria-labelledby="troubleshooting">
+      <h2 id="troubleshooting">Troubleshooting &amp; bugs</h2>
+      <h3 id="microphone-help">Olanga didn’t hear me</h3>
+      <p>If you chose local commands at setup, <a href="#try-by-voice">enable voice input</a> first. Unmute the microphone on Home. Open <strong>Settings → Core settings → Audio setup</strong>, select <strong>Refresh devices</strong>, and choose the microphone you’re speaking into. The <strong>Input level</strong> meter should move as you speak.</p>
+      <p>Select <strong>Check a spoken phrase</strong> and say <strong>“Olanga audio check.”</strong> Look for <strong>Local phrase recognized</strong>. If the meter stays still, check the microphone’s hardware mute and whether Windows allows desktop apps to use it.</p>
+      <h3>Spotify opened but didn’t play</h3>
+      <p>Open the Spotify desktop app, sign in, and start a track on this PC. Return to Olanga Home and look for that track’s title on the Spotify card. Type <strong>“Pause Spotify”</strong>, then <strong>“Resume Spotify.”</strong> You should hear the same track stop and start again. If a combined request only changed the volume, include Olanga’s reply for each action when you report it.</p>
+      <h3>I added my Gemini key, but requests fail</h3>
+      <p>Open <strong>Settings → Core settings → Gemini connection</strong>. If your key isn’t listed, enter it and choose <strong>Add key</strong>. Select <strong>Test Gemini connection</strong>. A successful test says <strong>“Gemini connection is ready.”</strong></p>
+      <p>If the test reports an invalid key, check that you copied the intended key from Google AI Studio. For a rate or quota limit, check the quota for that key’s project before retrying. For a connection error, check your internet connection. The <a href="#first-command">typed timer</a> works while you troubleshoot.</p>
+      <h3>Report a bug</h3>
+      <p><a href="https://github.com/firestar3/Olanga-Desktop-Agent/issues/new">Open a GitHub issue</a> with your Olanga and Windows versions, the exact command you typed or spoke, what you expected, and what happened. Include Olanga’s reply or the error text. Issues are public, so remove API keys and personal details before posting.</p>
+    </section>
+    <section aria-labelledby="privacy">
+      <h2 id="privacy">Privacy</h2>
+      <p>Wake-word detection runs locally. Idle microphone audio is not streamed to an AI provider. Activated cloud speech requests go to Gemini; questions can include relevant conversation and enabled memories. Screen assistance shares the images you approve. Magpie sends reply text to NVIDIA when selected.</p>
+      <p>API keys use Windows-backed encryption. Notes, memories, routines and other saved content stay in the local profile; most of that content is not encrypted by Olanga. There is no automatic analytics or crash-report upload. Optional diagnostics stay local unless you export and share them.</p>
+      <p>Read the <a href="privacy.html">privacy notice</a> for the data each feature shares, storage limits, provider policies and deletion controls. Do not post API keys, private screenshots or profile files in public issues.</p>
+    </section>
+    <section aria-labelledby="run-from-source">
+      <h2 id="run-from-source">Run from source</h2>
+      <p>Use Windows and Node.js <strong>22.12 or later</strong>:</p>
+      <pre><code class="language-powershell">git clone https://github.com/firestar3/Olanga-Desktop-Agent.git
+cd Olanga-Desktop-Agent
+npm ci
+npm start
+</code></pre>
+      <p>For the static checks and unit suite:</p>
+      <pre><code class="language-powershell">npm run check
+npm test
+</code></pre>
+      <p>The <a href="https://github.com/firestar3/Olanga-Desktop-Agent/blob/v1.6.7/docs/VALIDATION.md">validation guide</a> explains the separate renderer, voice and native checks, including those that interact with real apps. The <a href="https://github.com/firestar3/Olanga-Desktop-Agent/blob/v1.6.7/docs/ARCHITECTURE.md">architecture guide</a> covers the Electron app, local command path and integrations. Build instructions are in <a href="https://github.com/firestar3/Olanga-Desktop-Agent/blob/v1.6.7/docs/RELEASING.md">Releasing</a>.</p>
+    </section>
+    </article>
+  </div>
+</main>
+<footer class="site-footer section-wrap"><a class="brand" href="index.html" aria-label="Olanga home"><img src="assets/orb.svg" width="29" height="29" alt=""><span>olanga</span></a><div><a href="index.html#questions">Questions</a><a href="privacy.html">Privacy</a><a href="#troubleshooting">Support</a><a href="https://github.com/firestar3/Olanga-Desktop-Agent" target="_blank" rel="noopener noreferrer">GitHub</a></div><span class="copyright">© 2026 Olanga</span></footer>
+<dialog class="tour-dialog" id="productfilm" aria-labelledby="tour-title">
+  <div class="tour-heading">
+    <h2 id="tour-title">Olanga product film</h2>
+    <form method="dialog"><button class="tour-close" autofocus aria-label="Close product tour"><svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></form>
+  </div>
+  <div class="film" data-film="product"><video id="film-product" controls tabindex="0" playsinline preload="none" width="1920" height="1080" poster="assets/product-tour-poster.jpg" aria-label="Olanga: a two-minute product tour" aria-describedby="tour-caption"><source src="assets/product-tour.mp4" type="video/mp4"><track kind="captions" src="assets/product-tour.en.vtt" srclang="en" label="English">Your browser does not support this video. <a href="assets/product-tour.mp4">Download the product tour</a>.</video><button class="film-play" hidden type="button" data-play="product"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><span>Watch the tour</span></button><p class="film-error" role="status" hidden>Couldn’t load the film. <a href="assets/product-tour.mp4">Open it directly.</a></p></div>
+  <div class="film-caption">
+    <p id="tour-caption">Actual Olanga 1.6.5 preview interface. Sample data and simulated services; timing edited.</p>
+    <details class="transcript">
+      <summary>Chapters &amp; transcript</summary>
+      <div id="transcript-product">
+        <nav aria-label="Film chapters"><ol class="film-chapter-list"><li><button type="button" class="chapter-seek" data-tour-seek="0" aria-controls="film-product" aria-label="Play Meet Olanga from 0:00"><span>0:00</span>Meet Olanga</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="5" aria-controls="film-product" aria-label="Play Music &amp; the orb from 0:05"><span>0:05</span>Music &amp; the orb</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="19" aria-controls="film-product" aria-label="Play Live scores · preview from 0:19"><span>0:19</span>Live scores · preview</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="31" aria-controls="film-product" aria-label="Play Memory from 0:31"><span>0:31</span>Memory</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="45" aria-controls="film-product" aria-label="Play Routines &amp; focus from 0:45"><span>0:45</span>Routines &amp; focus</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="59" aria-controls="film-product" aria-label="Play Screen assistance from 0:59"><span>0:59</span>Screen assistance</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="75" aria-controls="film-product" aria-label="Play Files &amp; undo from 1:15"><span>1:15</span>Files &amp; undo</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="86" aria-controls="film-product" aria-label="Play Notes, tasks &amp; News from 1:26"><span>1:26</span>Notes, tasks &amp; News</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="99" aria-controls="film-product" aria-label="Play Workspaces &amp; projects from 1:39"><span>1:39</span>Workspaces &amp; projects</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="110" aria-controls="film-product" aria-label="Play Appearance &amp; updates from 1:50"><span>1:50</span>Appearance &amp; updates</button></li>
+<li><button type="button" class="chapter-seek" data-tour-seek="116" aria-controls="film-product" aria-label="Play Stay in your flow from 1:56"><span>1:56</span>Stay in your flow</button></li></ol></nav>
+        <details class="film-reading"><summary>Read the transcript</summary><div><p><span class="transcript-time">0:00</span> Meet Olanga. A little help, right where you work.</p>
+<p><span class="transcript-time">0:05</span> Play Spotify, set the volume to seventy-five percent, and keep going. Everyday controls stay close, with an orb you can call on from your desktop.</p>
+<p><span class="transcript-time">0:19</span> Coming next: follow the Warriors without leaving your work. Live scores stay nearby during a game. Tuck them away, or bring them inside Olanga.</p>
+<p><span class="transcript-time">0:31</span> Conversations carry context forward. Olanga can pick up useful preferences, recall them later, and use those details when they matter. See what it remembers, and forget anything.</p>
+<p><span class="transcript-time">0:45</span> Turn a familiar start into a routine. Choose your apps, tasks, and focus timer once. Then ask Olanga to run it, review it, and watch your session begin.</p>
+<p><span class="transcript-time">0:59</span> Need a second pair of eyes? Show Olanga what you&#39;re working on. Choose the allowed area, then review its proposed steps before approving an edit.</p>
+<p><span class="transcript-time">1:15</span> Find the right file. Preview a clearer set of names, apply the changes, and undo them when you need to.</p>
+<p><span class="transcript-time">1:26</span> Capture an idea in Notepad. Keep the next step in your checklist. Catch up with News. Each has its own place, without breaking the conversation.</p>
+<p><span class="transcript-time">1:39</span> Open a saved workspace. Ask about a project, and follow the answer back to the selected files it came from.</p>
+<p><span class="transcript-time">1:50</span> Make it feel like yours. Check for updates when you&#39;re ready.</p>
+<p><span class="transcript-time">1:56</span> Olanga. More done. Stay in your flow.</p></div></details>
+        <details class="film-reading"><summary>About this recording</summary><div><p><strong>On screen:</strong> The actual Olanga interface handles a typed Spotify and volume request with simulated playback results. The real corner orb and score card show sample states; the score updates, the card tucks away, and Home shows its score and music cards. Olanga learns, recalls and forgets a supported preference. A reviewed routine starts a real countdown and adds a checklist item. Desktop assistance shows a sample capture, the allowed edit area and proposed steps, stopping before execution approval. A disposable file is renamed and restored through the real preview, apply and checked-undo flow. Notepad, the Home checklist and News show their actual controls. A saved workspace selects a sample project; local search shows source excerpts before a simulated provider answer. The accent changes through Settings, followed by the start of a manual update check.</p><p><strong>About this recording:</strong> The app views come from Olanga’s production interface in a local 1.6.5 preview build. Sample Spotify, volume, app-launch, score-feed, News, AI and update responses stand in for external services. The microphone and text-to-speech were muted; commands were typed. Screen planning uses an authored document screenshot and simulated AI response. No native document edit, Google Docs integration or live service result is demonstrated. Timing is edited for the tour and does not measure response speed.</p><p>The film shows an earlier preview of the scores and Home cards included in the public 1.6.7 download. Memory, routines, timers, checklist, Notepad and appearance use the app’s local handlers. File rename and undo run on a disposable file, and project search runs on authored local files.</p></div></details>
+      </div>
+    </details>
+  </div>
+</dialog>
+<dialog class="screenshot-dialog capture-dialog" id="screenshot-dialog" aria-labelledby="capture-title">
+  <header><h2 id="capture-title">Focus timer on Home</h2><form method="dialog"><button class="dialog-close" autofocus>Close <span aria-hidden="true">×</span></button></form></header>
+  <div class="capture-view"></div>
+  <div class="capture-footer"><p>Olanga 1.6.7 after the typed command started a local timer.</p><a class="original-capture" href="assets/first-command-focus.png" target="_blank" rel="noopener">Open full screenshot</a></div>
+</dialog>
+</body>
+</html>

@@ -1,0 +1,46 @@
+name: Publish website
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: sites/olanga-web
+          persist-credentials: false
+      - name: Check the website files
+        working-directory: sites/olanga-web/dist
+        run: |
+          node --check app.js
+          for file in index.html docs.html whats-new.html privacy.html assets/product-tour.mp4 assets/product-tour.en.vtt; do
+            test -s "$file"
+          done
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: sites/olanga-web/dist
+
+  deploy:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v4
