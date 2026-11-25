@@ -4,43 +4,32 @@
 
 <h1 align="center">Olanga</h1>
 
-<p align="center"><strong>Voice control for your Windows desktop.</strong></p>
+<p align="center"><strong>An open-source voice assistant for Windows.</strong></p>
 
 <p align="center">
-  Open your apps. Put on your music. Pick up where you left off.<br>
-  An open-source assistant that works alongside you.
+  <strong><a href="https://firestar3.github.io/Olanga-Desktop-Agent/">Olanga website</a></strong>
+  · <a href="https://firestar3.github.io/Olanga-Desktop-Agent/#download">Download for Windows</a>
+  · <a href="https://firestar3.github.io/Olanga-Desktop-Agent/#productfilm">Watch the film</a>
+  · <a href="https://firestar3.github.io/Olanga-Desktop-Agent/docs.html">Docs</a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/firestar3/Olanga-Desktop-Agent/releases/latest">Download for Windows</a>
-  · <a href="#see-it-in-action">Watch the demo</a>
-  · <a href="#get-started">Get started</a>
-  · <a href="docs/ARCHITECTURE.md">How it works</a>
-</p>
+Say **“Open Chrome, then move Chrome to the left.”** Olanga opens the browser, arranges its window and reports how each step went. You can also type commands on Home. Everyday app, volume, timer and checklist commands run locally. Add Gemini to ask about an error on your screen or review a proposed edit.
 
-<p align="center">Windows 10/11 x64 · Local commands · Optional Gemini intelligence</p>
-
----
-
-Olanga brings voice, desktop controls and conversation into one Windows app. Ask it to open Spotify, set a timer, arrange your windows or help with an error on your screen. Combine supported actions in one request, ask a follow-up, and see what completed.
-
-A small corner orb keeps Olanga within reach while you work. **Workspace** holds your routines, memories, projects and saved app layouts. Familiar commands take a direct local path; Gemini handles questions and requests that need interpretation.
-
-**Olanga 1.6.7** adds live NBA scores, a timer card and Spotify controls on Home. Floating controls clear the bottom Windows taskbar as you reach for it. [Release notes](docs/releases/1.6.7.md).
+The corner orb stays within reach while you work in other apps. In **1.6.7**, you can pin a countdown or follow an NBA game beside it. Open Home to see the current Spotify track and control playback. [What’s new in 1.6.7](https://firestar3.github.io/Olanga-Desktop-Agent/whats-new.html)
 
 ## See it in action
 
-https://github.com/user-attachments/assets/67067be7-3325-4c5c-af52-1d5e71b19052
+[![Watch the two-minute Olanga product film](sites/olanga-web/dist/assets/product-tour-poster.jpg)](https://firestar3.github.io/Olanga-Desktop-Agent/#productfilm)
+
+Watch a Focus routine start a countdown, see Olanga recall a preference, and follow a screen edit up to the approval step. The film uses the 1.6.5 preview interface with sample data, simulated external services and edited timing. The player includes chapters, English captions and a transcript. [Watch the two-minute film](https://firestar3.github.io/Olanga-Desktop-Agent/#productfilm)
 
 ## Get started
 
-1. **Install Olanga.** Download the Windows installer from the [latest release](https://github.com/firestar3/Olanga-Desktop-Agent/releases/latest). The installer adds desktop and Start-menu shortcuts.
-2. **Choose how to start.** Select **Use local commands without a key** to try typed app, music, volume, timer and checklist commands. Add your own [Google Gemini API key](https://aistudio.google.com/apikey) when you want cloud transcription, conversation or screen assistance.
-3. **Make a request.** Type in the command box, or enable voice input and say **“Hey Olanga”**. Wait for the listening orb, then speak. Push-to-talk and reviewed on-device English recognition are available in Settings.
+1. Download the installer for **Windows 10 or 11 (x64)**, run it, and open Olanga. The current installer is unsigned. The GitHub release includes its checksum. [Download Olanga](https://firestar3.github.io/Olanga-Desktop-Agent/#download) · [Release assets](https://github.com/firestar3/Olanga-Desktop-Agent/releases/latest)
+2. Select **Use local commands without a key**. On Home, type **“Set a timer for 25 minutes called Focus”** and press **Enter**. You’ll see Focus counting down under **Timers**.
+3. Type **“Cancel the Focus timer”** to clear it. To try a spoken request, choose **On-device commands (English, review first)** under **Settings → Core settings → Speech recognition**. [First-command walkthrough](https://firestar3.github.io/Olanga-Desktop-Agent/docs.html#first-command) · [Voice setup](https://firestar3.github.io/Olanga-Desktop-Agent/docs.html#try-by-voice)
 
-Windows speech is built in. Optional **NVIDIA Magpie** voices use a separate [NVIDIA API key](https://build.nvidia.com/settings/api-keys); choose the voice and use **Save & Test** in Core settings.
-
-**Requirements:** Windows 10/11 x64; a microphone for voice input; internet and available provider quota for cloud features. Spotify controls require the Spotify desktop app, signed in. Library and playlist selection currently depend on English accessibility labels. The Windows installer is unsigned; release assets include its checksum and build metadata.
+Voice input needs a microphone. For cloud transcription, conversation or screen assistance, add your Gemini key in **Core settings**. Cloud features require internet access and available provider quota. Olanga uses the built-in Windows voice by default. Optional NVIDIA Magpie voices use a separate key. [Get a Gemini key](https://aistudio.google.com/apikey) · [Get an NVIDIA key](https://build.nvidia.com/settings/api-keys)
 
 ## Everyday requests
 
@@ -98,17 +87,13 @@ Screen tasks are limited to supported, accessible controls on the primary displa
 
 ## Local commands, fewer waits
 
-Common app, music, volume, timer, memory and checklist requests use a local intent matcher. Supported typed commands need **no model call**. Reviewed on-device commands also avoid cloud transcription; questions outside the local command set can still use Gemini.
-
-Olanga acknowledges a request while work begins and displays completed action results without waiting for speech to finish. Conversational replies can stream sentence by sentence. Clear questions and known memory answers avoid unnecessary routing work, while hidden panels pause work they do not need.
-
-Response time depends on your hardware, network, voice engine and the app being controlled. The [validation report](docs/VALIDATION.md) records measured performance, test coverage and remaining device-dependent checks. **Workspace → Diagnostics** provides optional local timing and outcome measurements.
+Olanga recognizes common app, music, volume, timer, memory and checklist requests on your PC. It can show each action’s result while the spoken reply is still playing. Questions outside the local command set can use Gemini. For timings on your own PC, open **Workspace → Diagnostics**. [Performance measurements and test coverage](docs/VALIDATION.md)
 
 ## Live scores and Spotify
 
 Choose from all 30 NBA teams, with Golden State selected initially. The floating score card appears during a live game, checks ESPN about every 15 seconds and shows when updates are delayed. Its grip tucks the card into a slim strip while scores keep updating. When you enter Olanga, the floating card and orb make way for Home’s score and Spotify cards.
 
-Enable scores in **Settings → User preferences → Live scores**. They need no AI key; ESPN updates may lag the broadcast. Spotify’s Home card reads the real Windows media session and changes playback only when you use its controls.
+Enable scores in **Settings → User preferences → Live scores**. ESPN updates can lag the broadcast. For music, sign in to the Spotify desktop app and start a track on this PC. Olanga’s Home card reads the track from Spotify’s Windows media session. Library and playlist selection currently depend on English accessibility labels.
 
 ## Make Olanga yours
 
@@ -124,7 +109,7 @@ Closing the window keeps Olanga running in the tray. Choose **Quit** from its tr
 
 Go to **Workspace → Apps & updates**, select **Check for updates**, then **Download update**. Once the installer is verified, choose **Install & restart** to update the existing installation and retain your saved data.
 
-Checks, downloads and installation are manual. The updater checks the installer against the release checksum and reports restart readiness separately from installation. There are no unattended updates or automatic rollback. Older versions with only a release-page link can use the [Windows installer](https://github.com/firestar3/Olanga-Desktop-Agent/releases/latest).
+If your installed version only offers a release-page link, use the [Windows installer](https://firestar3.github.io/Olanga-Desktop-Agent/#download). To uninstall, search the Windows Start menu for **Add or remove programs**, find **Olanga**, and choose **Uninstall**. The privacy notice explains how to remove saved local data separately.
 
 ## Privacy
 
@@ -154,7 +139,9 @@ npm test
 
 The [validation guide](docs/VALIDATION.md) explains the separate renderer, voice and native checks, including those that interact with real apps. The [architecture guide](docs/ARCHITECTURE.md) covers the Electron app, local command path and integrations. Build instructions are in [Releasing](docs/RELEASING.md).
 
-Found a problem? [Open an issue](https://github.com/firestar3/Olanga-Desktop-Agent/issues) with your Olanga version, Windows version and the steps to reproduce it.
+## Troubleshooting
+
+If Olanga can’t hear you, Spotify opens without playing, or a Gemini request fails, the troubleshooting guide gives you a check you can run inside the app. If the problem persists, include your Olanga and Windows versions, the exact request, and the reply or error when you open an issue. [Troubleshooting guide](https://firestar3.github.io/Olanga-Desktop-Agent/docs.html#troubleshooting) · [Report a bug](https://github.com/firestar3/Olanga-Desktop-Agent/issues/new)
 
 ---
 
